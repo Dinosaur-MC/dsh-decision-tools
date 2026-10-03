@@ -201,9 +201,10 @@ export const Config = z.object({
   timeoutMs: z.number().default(120000),
   toolName: z.string().default('decision'),  // 这才是模型看到的工具名
   // keepAlive 可为 "5m" 这类时长串或秒数；未设则不下发该字段，用服务端默认 5m。
-  // 实现时先确认 schemastery 的联合类型 API：若 z.union([z.string(), z.number()])
-  // 不可用，退化为 z.any()（校验交给服务端），不得为此引入新依赖。
-  keepAlive: z.union([z.string(), z.number()]).optional(),
+  // 已实测确认（schemastery 3.18.4）：z.union 存在；可选性用 .required(false) ——
+  // 该库**没有** .optional()，写它会在插件加载时直接抛错。
+  // Config({}) 实测得到 {baseUrl, defaultModel, timeoutMs, toolName}（keepAlive 被省略）。
+  keepAlive: z.union([z.string(), z.number()]).required(false),
 });
 
 export function apply(ctx, config) {
@@ -350,14 +351,18 @@ urgency score   1.154 / 2       p={1:0.708, 2:0.223, 0:0.069}              conf=
 
 **命令**
 ```
-node --check lib/*.js && node --test test/
+node --test "test/*.test.mjs"
 ```
+
+**两个不能用的写法（本机 Node 22.22.1 实测）**：
+- `node --test test/` —— 目录形式被当成模块路径去 `require`，报 `MODULE_NOT_FOUND`。必须用带引号的 glob。
+- `node --check lib/*.js` —— `--check` 只接受单个文件；bash 会展开 glob 但只检查第一个之外的会报「too many arguments」。逐文件检查。
 
 **严格性**：`client.test.mjs` 与 `validate.test.mjs` 必须能在**没有 Ollama 运行**的环境下通过（全靠假服务与注入）。`smoke/live.mjs` 是唯一依赖真机的入口。
 
 ## 7. 验收标准
 
-1. `node --check lib/*.js` 全通过，`node --test test/` 全绿。
+1. 每个 `lib/*.js` 逐文件 `node --check` 通过，`node --test "test/*.test.mjs"` 全绿。
 2. `plugin_manager(action=install_bundle, target=<包绝对路径>)` 返回 `application: applied`（此步会请求审批）。
 3. `cordis_inspect_query(platform=host, provider=Tool, method=listTools)` 结果中出现 `decision`，且 `parameters` 含 `state`/`questions`/`model`。
 4. 在本会话真调一次 `decision`（三型混合题），返回三型答案且 `usage` 有值 —— 证明端到端可用。
