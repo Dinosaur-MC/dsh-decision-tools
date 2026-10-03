@@ -1860,15 +1860,19 @@ MSG
 #   decision-tools-tool — 注册 `decision` 工具（模型可见名由配置项 toolName 决定），
 #     本插件不依赖平台，任何环境都注册。使用指引在工具 description 里，不注册 prompt 段（ADR-5）。
 #
-# 覆盖默认配置时，配置**必须写在行的 `config:` 键下**（平铺在行上会被静默忽略）；（patch 会替换整行 config，因此要重述全部字段）：
-#   - insert:
-#       - id: decision-tools-tool
-#         name: 'dsh-decision-tools'
-#         baseUrl: 'http://localhost:11434'
-#         defaultModel: 'tev1:latest'
-#         timeoutMs: 180000
-#         toolName: 'decision'
-#         keepAlive: '30m'
+# 两种操作要分清：
+#   ① 新增一行 —— 用 `- insert:`（本 bundle 自己的 patch 就是干这个，见下方活代码）。
+#   ② 覆盖既有行 —— 用**裸 `id`、不加 `insert`**；被给的字段替换该行字段。
+# 配置**必须写在 `config:` 键下**；平铺在行上会被**静默忽略**（EntryOptions 只认
+# id/name/config/group/disabled/inject/intercept/isolate，且只有 options.config 会传给插件）。
+# `config` 被**整体替换、不深合并**，故覆盖时需**重述全部字段**：
+#   - id: decision-tools-tool
+#     config:
+#       baseUrl: 'http://localhost:11434'
+#       defaultModel: 'tev1:0.8b'
+#       timeoutMs: 180000
+#       toolName: 'decision'
+#       keepAlive: '30m'
 
 - insert:
     - id: decision-tools-tool
