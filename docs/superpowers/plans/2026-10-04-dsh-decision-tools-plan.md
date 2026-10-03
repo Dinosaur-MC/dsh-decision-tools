@@ -806,7 +806,7 @@ MSG
 import http from 'node:http';
 
 /**
- * @param {(request: { method: string, url: string, raw: string, json: unknown }) => { status?: number, body?: unknown, hang?: boolean } | 'destroy'} handler
+ * @param {(request: { method: string, url: string, raw: string, json: unknown }) => { status?: number, body?: unknown, hang?: boolean, truncate?: boolean } | 'destroy'} handler
  */
 export async function startFakeOllama(handler) {
   const requests = [];
@@ -823,6 +823,15 @@ export async function startFakeOllama(handler) {
       const reply = handler(record);
       if (reply === 'destroy') { req.socket.destroy(); return; }
       if (reply.hang) return; // 永不响应：用于测超时与取消
+      if (reply.truncate) {
+        // 先发响应头与半个 body，等数据真正刷出后再掐断 socket —— 于是客户端是在
+        // **读 body** 时失败（undici 抛 TypeError: terminated），而不是在 fetch 阶段
+        // 失败。这正是「body 读取也必须被守卫」要覆盖的路径：不加守卫时它会逃成一个
+        // 没有 kind 的裸错误，绕过 @throws {SystemOneError} 的契约。
+        res.writeHead(reply.status ?? 200, { 'content-type': 'application/json' });
+        res.write('{"model":"tev1:0.8b","answers":', () => { res.socket.destroy(); });
+        return;
+      }
       res.writeHead(reply.status ?? 200, { 'content-type': 'application/json' });
       res.end(typeof reply.body === 'string' ? reply.body : JSON.stringify(reply.body ?? {}));
     });
@@ -975,6 +984,21 @@ test('调用方取消 → aborted，且立即生效（不被 timeoutMs 兜住）
     // 这条耗时断言就是为那个回归设的 —— 规格 §4.3 明写「工具被取消能真中断」。
     const elapsed = Date.now() - started;
     assert.ok(elapsed < 2000, `cancel 应立即生效，实际耗时 ${elapsed}ms（timeoutMs 是 30000）`);
+  });
+});
+
+test('body 读取中途断连 → SystemOneError，而不是没有 kind 的裸 TypeError', async () => {
+  await withServer(() => ({ truncate: true }), async (fake) => {
+    const error = await failure({ baseUrl: fake.baseUrl, body: BODY, timeoutMs: 5000 });
+    // 这条用例钉住的是：响应头已到、body 读到一半失败时，错误仍必须被映射。
+    // 若 callSystemOne 里 `await response.text()` 落在 try 之外，这里收到的会是
+    // undici 的 TypeError: terminated —— 没有 kind，Task 4 的工具按 kind 分派就会崩。
+    assert.ok(
+      error instanceof SystemOneError,
+      `期望 SystemOneError，实际 ${error?.constructor?.name}: ${error?.message}`,
+    );
+    assert.equal(error.kind, 'unreachable');
+    assert.match(error.hint, /ollama serve/);
   });
 });
 
@@ -1173,7 +1197,7 @@ export async function callSystemOne({
 node --test "test/*.test.mjs"
 ```
 
-Expected: PASS —— `# fail 0`，共 31 个 test（19 + 12）。
+Expected: PASS —— `# fail 0`，共 32 个 test（19 + 13）。
 
 - [ ] **Step 6: 语法与 LF 校验**
 
@@ -1199,7 +1223,7 @@ client.js 不感知 DSH，便于将来复用到 CLI 或评测装置。
 
 新增 lib/client.js（callSystemOne / SystemOneError，含 11 种 kind）
 新增 test/fake-ollama.mjs（node:http 可编程假服务，记录请求体）
-新增 test/client.test.mjs（13 个用例，含超时/取消可区分、注入 fetchImpl）
+新增 test/client.test.mjs（13 个用例，含超时/取消【含生效耗时】可区分、body 读取中断、注入 fetchImpl）
 MSG
 ```
 
