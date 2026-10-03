@@ -153,5 +153,3 @@ vite.config.ts.timestamp-*
 # Turbo Repo
 .turbo
 
-# 匿名调研输入：不入库、不引用（用户 2026-10-04 裁定）。保留在工作区仅作离线参考。
-docs/superpowers/reviews/
