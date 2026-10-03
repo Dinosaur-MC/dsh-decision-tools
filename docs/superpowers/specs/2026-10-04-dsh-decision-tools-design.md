@@ -160,13 +160,28 @@ dsh-decision-tools/
     - id: decision-tools-tool
       name: 'dsh-decision-tools'
       # 无 disabled 条件：本插件不依赖平台，任何环境都注册。
-      # 可选 per-machine 覆盖 —— 配置**必须写在 `config:` 键下**；把字段平铺在行上会被
-      # **静默忽略**（`EntryOptions` 只认 id/name/config/group/disabled/inject；只有
-      # options.config 会传给插件）。patch 会**替换整行 config**，故启用时需重述全部字段：
-      #   config:
-      #     baseUrl: 'http://localhost:11434'
-      #     defaultModel: 'tev1:0.8b'
+      # 本行不需要任何配置，故没有 `config:` 键 —— Config 五个键全走插件默认值。
 ```
+
+**两种操作必须分清（2026-10-04 第二次勘误）**：
+
+| 操作 | 形状 |
+|---|---|
+| **新增一行**（本 bundle 的 patch 就是干这个） | `- insert:` 下列出该行；行内可有 `config:` |
+| **覆盖既有行**（per-machine 覆盖走这条） | **裸 `id` + 无 `insert`**，见下 |
+
+```yaml
+# 覆盖既有行：patch 顶层写 id，不加 insert；被给的字段替换该行字段。
+- id: decision-tools-tool
+  config:
+    baseUrl: 'http://localhost:11434'
+    defaultModel: 'tev1:0.8b'
+    timeoutMs: 180000
+    toolName: 'decision'
+    keepAlive: '30m'
+```
+
+配置**必须写在 `config:` 键下**；平铺在行上会被**静默忽略**（`EntryOptions` 只认 `id/name/config/group/disabled/inject/intercept/isolate`，且只有 `options.config` 会传给插件）。`config` 被**整体替换、不深合并**，故覆盖时需**重述全部字段**。
 
 > **规格勘误（2026-10-04，由 Task 5 实现者实测发现）**：本节初稿在注释示例里把 `baseUrl`/`defaultModel` **平铺在行上**，并配了一句「配置字段直接写在行上」的说明 —— **因果完全反了**。实测证据：`@deepseek-ai/cordis-plugin-loader` 的 `EntryOptions` 只有 `config?: any`（注释 "Config passed to the plugin"），其余键是 `id/name/group/disabled/inject`；该包 `lib/index.js:461` 是 `registry.plugin(plugin, this.options.config, …)`，**只有 `options.config` 会传给插件**，未知的平铺键既不进 config 也不报错。官方带配置模板（`templates/mcp/cordis.patch.yml`）、第一方 `dsh-base/cordis.patch.yml` 与本机活 profile（`~/.dsh/profiles/web/cordis.yml`，124 处 `config:`）一律用 `config:` 包裹。**症状（静默失效）记对了，归因记反了。** 该错注曾同时存在于本节与实施计划 Task 5 的提交信息文本中；本条为唯一权威更正。
 

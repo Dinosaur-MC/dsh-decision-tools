@@ -2148,7 +2148,7 @@ One call, three question types, one shared state:
   "questions": [
     { "name": "label", "type": "choice",
       "instructions": "Which label fits this ticket?",
-      "criteria": { "billing": "Payments and refunds", "bug": "Software errors" } },
+      "criteria": { "billing": "Payments and refunds", "bug": "Software error or outage", "account": "Login, access or account settings" } },
     { "name": "refund", "type": "noul",
       "instructions": "Is the customer requesting a refund?" },
     { "name": "urgency", "type": "score",
@@ -2158,12 +2158,19 @@ One call, three question types, one shared state:
 }
 ```
 
-Returns one line per question plus a usage line:
+Returns one line per question plus the usage and byte-size lines. **Use the real run
+verbatim — do not stitch this block from test fixtures** (an earlier revision did, which is
+why its input and output did not correspond). Real `tev1:0.8b` run, reproducible via the
+tracked `smoke/live.mjs`:
 
-    label    choice  bug      p={bug=0.9593, account=0.0343, billing=0.0063}  conf=0.829
-    refund   noul    P(true)=0.4751
-    urgency  score   1.1542 / 2  p={1=0.7075, 2=0.2234, 0=0.0691}  conf=0.304
-    (usage: input_tokens=799 output_tokens=4)
+    label    choice  bug  p={bug=0.9648, account=0.0293, billing=0.0059}  conf=0.847
+    refund   noul    P(true)=0.5045
+    urgency  score   1.1235 / 2  p={1=0.7369, 2=0.1933, 0=0.0698}  conf=0.337
+    (usage: input_tokens=796 output_tokens=4)
+    体积: state=113B body=682B
+
+The probabilities, score and token counts are model output and vary by model/machine; the
+two byte counts describe the request above and stay put. State this in both READMEs.
 
 ## Question types
 
