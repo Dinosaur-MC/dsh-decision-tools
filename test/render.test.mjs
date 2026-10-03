@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { renderAnswers } from '../lib/render.js';
+import { LIMITS } from '../lib/validate.js';
 
 /** 取出渲染出的纯文本。 */
 function textOf(value) {
@@ -116,6 +117,24 @@ test('体积告警：body_warning 原样追加；无字段时不得凭空产生�
   })[0];
   assert.doesNotMatch(plain.text, /超过建议/);
   assert.match(plain.text, /^体积: state=20000B body=20480B$/m);
+  // 逐字全文相等：不依赖任何措辞。凡是在 render 里自行判断阈值、自行拼一句告警的
+  // 实现，无论它把话怎么说，都会在这里打红 —— 这才是 §4.8 那条约束的承重断言。
+  assert.equal(plain.text, 'q  noul    P(true)=0.4751\n体积: state=20000B body=20480B');
+
+  // 任何「在 render 里比较某个有限阈值」的实现都会在这里多打一行 ⇒ 逐字相等打红。
+  // 该值远高于 maxBodyBytes(65536)，故连「内联硬上限」那一族变体也一并关掉。
+  // render 是纯函数，这个值在单测里完全合法（它不可能来自生产路径，那由 V8 挡住）。
+  const huge = renderAnswers({}, {
+    model: 'tev1:0.8b',
+    answers: { q: { type: 'noul', noul: 0.4751 } },
+    state_bytes: 20000,
+    body_bytes: 1e15,
+  })[0];
+  assert.equal(huge.text, 'q  noul    P(true)=0.4751\n体积: state=20000B body=1000000000000000B');
+
+  // 这条负例的全部意义在于 body_bytes **高于**软阈值；常量一旦被调高越过它，
+  // 该用例会静默退化成恒真 —— 这行把那种退化变成红灯。（同理，上面的 1e15 不受影响。）
+  assert.ok(20480 > LIMITS.softBodyBytes, '负例 fixture 必须高于 softBodyBytes，否则本条恒真');
 
   // 空字符串与「没有该键」必须同义：不得打印空行（否则模型会读到一行空白）。
   const empty = renderAnswers({}, {
