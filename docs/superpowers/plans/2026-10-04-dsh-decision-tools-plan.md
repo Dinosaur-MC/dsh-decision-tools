@@ -2270,7 +2270,7 @@ git log --oneline
 git status --short
 ```
 
-Expected: 6 个提交；`git status` 干净（`.temp/` 与 `node_modules/` 已被 gitignore）。
+Expected: 6 个任务各有一次提交（**不是**全仓只有 6 个提交 —— 实际历史提交数远多于此）；`git status` 干净（`.temp/` 与 `node_modules/` 已被 gitignore）。
 
 ---
 

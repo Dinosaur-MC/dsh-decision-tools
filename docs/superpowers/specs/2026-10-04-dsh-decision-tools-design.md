@@ -28,6 +28,8 @@ Ollama v0.35.0 起提供 System One 决策能力（`POST /v1/systemone`），由
 | 三型混用 | 同一请求内 `choice`+`noul`+`score` 可并存，返回结构符合 OpenAPI |
 | `tev1:0.8b` 实测 | 冷启 ~12.0s 返回；`label=bug`(0.959)、`refund=0.475`、`urgency=1.154` |
 | `tev1:latest` 实测 | 冷启 ~18.5s；`label=billing`、`refund=0.040`、`urgency=1.914` —— **与 0.8B 结论不同** |
+
+> **冷/热耗时勘误（2026-10-04 由 Task 6 实测补正）**：上表两个数字是**未区分冷热的单次采样**。区分后实测（`ollama` 已加载 vs `ollama stop` 后首跑）：`tev1:0.8b` **冷 14.26s / 热 11.14s**；`tev1:latest` **冷 15.66s / 热 8.01s**。⇒ 冷启约 **14–16s**、热跑约 **8–11s**，故默认 `timeoutMs: 120000` 留有充裕余量；`keep_alive` 的意义是避免反复回到冷态。README 写的是这次**区分冷热**的实测值，与上表单值并存不矛盾（上表为早期单次采样）。
 | `clef-flash:latest` 实测 | **任何请求都 500**：`{"error":{"code":500,"message":"Clef: non-finite logit"}}`。已复现三种：纯文本多题、带 base64 图片、最小单题 `noul` |
 | `noul` 命名 | 唯一合法字符串是 `noul`；写 `boolean` 会 400（本次实测踩到） |
 | 服务端硬限 | 无图 ≤64 KiB、带图 ≤32 MiB；`questions` 1–64 个；`choice`/`score` 选项 2–26；不支持流式与 tools |
@@ -490,6 +492,6 @@ THIRD_PARTY_NOTICES
 
 - Ollama 决策能力文档：<https://docs.ollama.com/capabilities/decision>
 - Ollama System One API 参考（含完整 OpenAPI）：<https://docs.ollama.com/api/systemone>
-- 用户提供的研究综述：`.temp/Decision LLM.md`（Decision LLM 背景与生态）
+- 用户提供的**匿名背景材料**（Decision LLM 相关综述，未入库、不具名 —— 用户 2026-10-04 裁定：不入库、不引用、归匿名材料）
 - 本机先例：`G:\LAB\202608\dsh-win-multi-bash`（免构建插件形态）、`G:\LAB\202608\memory`（TS 构建形态）
 - 本机实测：见第 2 节，探测产物在 `.temp/probe/`（不入库）
