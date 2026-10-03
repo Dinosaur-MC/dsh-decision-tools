@@ -228,8 +228,25 @@ test('合法请求返回 body，且只带服务端认识的字段', () => {
   assert.deepEqual(prepareRequest(base()), {
     model: 'tev1:0.8b',
     state: TICKET,
-    questions: [CHOICE_Q],
+    questions: { label: CHOICE_Q },
   });
+});
+
+test('V10 线格式：questions 被转成「题名 → 问题对象」的映射，不是数组（ADR-6）', () => {
+  // 本机实测：数组形状被服务端在**解析阶段**拒绝（HTTP 400
+  // "Value looks like object, but can't find closing '}' symbol"，0.071s 返回），
+  // 对象形状才 200。这条用例是那个真机事实在本地套件里的落点。
+  const body = prepareRequest(base({
+    questions: [
+      { name: 'a', type: 'noul', instructions: 'First?' },
+      { name: 'b', type: 'noul', instructions: 'Second?' },
+    ],
+  }));
+  assert.equal(Array.isArray(body.questions), false, 'questions 不能是数组');
+  assert.equal(typeof body.questions, 'object');
+  assert.deepEqual(Object.keys(body.questions), ['a', 'b'], '键为题名，且保持模型给的顺序');
+  assert.equal(body.questions.a.instructions, 'First?');
+  assert.equal(body.questions.b.instructions, 'Second?');
 });
 
 test('model 参数覆盖 defaultModel；keepAlive 存在时下发 keep_alive', () => {
@@ -308,10 +325,12 @@ test('instructions 必填', () => {
 
 test('V8 边界：正好 65536 字节通过，再多 1 字节被拒', () => {
   // 与 prepareRequest 组装出的 body 逐字段一致，才能精确落在边界上。
+  // 注意 questions 必须是 V10 转换后的**对象映射**形状 —— 用数组会让这个 helper
+  // 与真实 body 长度不同，二分会落在错的边界上（该测试本就用于探测 body 形状漂移）。
   const overhead = (n) => Buffer.byteLength(JSON.stringify({
     model: 'tev1:0.8b',
     state: 'x'.repeat(n),
-    questions: [CHOICE_Q],
+    questions: { label: CHOICE_Q },
   }), 'utf8');
 
   let lo = 0;
@@ -517,7 +536,16 @@ export function prepareRequest({ state, questions, model, defaultModel, keepAliv
     validateQuestion(`questions[${index}]`, question, seenNames);
   }
 
-  const body = { model: resolvedModel, state, questions };
+  // V10（ADR-6）：工具面对模型是**有序数组**，而线格式必须是**对象映射**。
+  // 本机实测数组形状会被服务端在解析阶段拒绝（HTTP 400
+  // "Value looks like object, but can't find closing '}' symbol"，0.071s 返回），
+  // 对象形状才 200。这一步转换是 ADR-2（工具面用数组）的必然代价。
+  // 题名唯一（V2）正是这个映射有定义的前提 —— 重名会让后一个静默覆盖前一个。
+  // 64 KiB 必须按转换后的真实线格式度量，故 V8 在下面按 body 量。
+  const questionsByName = Object.fromEntries(
+    questions.map((question) => [question.name, question]),
+  );
+  const body = { model: resolvedModel, state, questions: questionsByName };
   if (keepAlive !== undefined) body.keep_alive = keepAlive;
 
   const bytes = Buffer.byteLength(JSON.stringify(body), 'utf8');
@@ -537,7 +565,7 @@ export function prepareRequest({ state, questions, model, defaultModel, keepAliv
 node --test "test/*.test.mjs"
 ```
 
-Expected: PASS —— `# fail 0`，共 13 个 test。
+Expected: PASS —— `# fail 0`，共 14 个 test。
 
 - [ ] **Step 8: 语法检查与 LF 校验**
 
@@ -566,7 +594,7 @@ DSH 的紧凑 schema DSL 只有 type/enum/const，表达不了 1-64 题、2-26 �
 
 新增 scripts/link-peers.mjs（从 process.execPath 推导 dsh 位置，不使用 child_process）
 新增 lib/validate.js（prepareRequest / DecisionValidationError / LIMITS）
-新增 test/validate.test.mjs（13 个用例，含 64 KiB 边界二分）
+新增 test/validate.test.mjs（14 个用例，含 V10 线格式映射与 64 KiB 边界二分）
 新增 package.json（type=module、files 白名单、peerDeps）
 MSG
 ```
@@ -749,7 +777,7 @@ export function renderAnswers(_args, value) {
 node --test "test/*.test.mjs"
 ```
 
-Expected: PASS —— `# fail 0`，共 19 个 test（13 + 6）。
+Expected: PASS —— `# fail 0`，共 20 个 test（14 + 6）。
 
 - [ ] **Step 5: 语法与 LF 校验**
 
@@ -820,6 +848,18 @@ export async function startFakeOllama(handler) {
       const record = { method: req.method, url: req.url, raw, json };
       requests.push(record);
 
+      // 线格式契约守卫（ADR-6）：真实服务端要求 questions 是「题名 → 问题对象」的
+      // 映射，数组会在**解析阶段**被拒（本机实测 HTTP 400
+      // "Value looks like object, but can't find closing '}' symbol"）。
+      // 假服务照做 —— 否则整套本地测试在结构上无法发现这类线格式违规，
+      // 而"本地全绿 + 真机全挂"正是这个缺陷第一次溜过去的原因。
+      if (json !== undefined && json.questions !== undefined
+        && (json.questions === null || typeof json.questions !== 'object' || Array.isArray(json.questions))) {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: "Value looks like object, but can't find closing '}' symbol" }));
+        return;
+      }
+
       const reply = handler(record);
       if (reply === 'destroy') { req.socket.destroy(); return; }
       if (reply.hang) return; // 永不响应：用于测超时与取消
@@ -861,10 +901,12 @@ import assert from 'node:assert/strict';
 import { callSystemOne, SystemOneError } from '../lib/client.js';
 import { startFakeOllama } from './fake-ollama.mjs';
 
+// 这是**线格式**的 body：Task 3 的 client 层直接收 body、不经过 prepareRequest，
+// 所以 questions 必须是对象映射 —— 假服务现在会像真服务一样拒绝数组（ADR-6）。
 const BODY = {
   model: 'tev1:0.8b',
   state: 'Our checkout has returned 500 errors since 9am.',
-  questions: [{ name: 'q', type: 'noul', instructions: 'Is this English?' }],
+  questions: { q: { name: 'q', type: 'noul', instructions: 'Is this English?' } },
 };
 
 const OK = {
@@ -1123,7 +1165,8 @@ function toHttpError(status, text, model) {
   }
   if (status === 400) {
     return new SystemOneError(`Ollama 拒绝了请求：${detail}`, {
-      kind: 'invalid_request', status, hint: '合法问题类型只有 choice、noul、score。',
+      kind: 'invalid_request', status,
+      hint: '问题类型只允许 choice、noul、score；questions 必须是由题名索引的对象映射（不是数组）；choice/score 的选项数需在 2–26。',
     });
   }
   if (status === 500 && detail.includes(BROKEN_MODEL_MARKER)) {
@@ -1197,7 +1240,7 @@ export async function callSystemOne({
 node --test "test/*.test.mjs"
 ```
 
-Expected: PASS —— `# fail 0`，共 32 个 test（19 + 13）。
+Expected: PASS —— `# fail 0`，共 33 个 test（20 + 13）。
 
 - [ ] **Step 6: 语法与 LF 校验**
 
@@ -1669,7 +1712,7 @@ test('model 参数逐次覆盖默认模型', async () => {
 node --test "test/*.test.mjs"
 ```
 
-Expected: PASS —— `# fail 0`，共 41 个 test（13 + 6 + 12 + 3 + 7）。
+Expected: PASS —— `# fail 0`，共 43 个 test（14 + 6 + 13 + 3 + 7）。
 
 - [ ] **Step 8: 语法与 LF 校验**
 
