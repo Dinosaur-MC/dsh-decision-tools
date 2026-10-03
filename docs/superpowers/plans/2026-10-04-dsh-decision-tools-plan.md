@@ -1355,6 +1355,14 @@ export const TOOL_DESCRIPTION = [
   '`confidence` measures how concentrated the distribution is (1 - H/ln N); it is NOT accuracy.',
   'Low confidence means the model is torn between options: read `probabilities` instead of the chosen',
   'answer, and escalate that question to your own reasoning rather than trusting it.',
+  'These answers are PROBABILITIES, not proof. Never treat a `decision` result as correctness',
+  'evidence, and never let it be the sole basis for a pass/allow decision — that requires',
+  'artifact-level evidence. Use it for triage only, never as the final word.',
+  'This tool must NOT decide routing, and must NOT be the basis of any fail-open or fail-closed',
+  'policy: that belongs to deterministic rules, otherwise a broken decision model would break',
+  'routing entirely.',
+  'The tev1 family returns only probabilities and never text, so when a human-readable rationale',
+  'must be preserved as evidence, use a generative model instead.',
 ].join(' ');
 
 export const PARAMETERS = {
@@ -1516,7 +1524,7 @@ Expected: PASS —— 3 个 test 全绿。若 `parameterSchemaSpecToJsonSchema` 
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import z from '@deepseek-ai/schemastery';
 import { PARAMETERS, TOOL_DESCRIPTION } from './parameters.js';
-import { prepareRequest } from './validate.js';
+import { prepareRequest, LIMITS } from './validate.js';
 import { renderAnswers } from './render.js';
 import { callSystemOne } from './client.js';
 
@@ -1540,7 +1548,7 @@ export const Config = z.object({
 
 /**
  * 返回值 schema。宿主会用它对**每一个成功返回值**做强校验，
- * 因此这里的字段必须与 `callSystemOne` 的返回严格对应；
+ * 因此这里的字段必须与 `execute` 的返回严格对应；
  * 用 `additionalProperties: true` 容忍 Ollama 新增字段。
  */
 export const OUTPUT_SCHEMA = {
@@ -1550,6 +1558,11 @@ export const OUTPUT_SCHEMA = {
     model: { type: 'string', required: true },
     answers: { type: 'object', additionalProperties: true, required: true },
     usage: { type: 'object', additionalProperties: true },
+    // 体积可归因（需求 M2，见 Task 7 与规格 §4.8）。这三个字段**由本插件自己产出**，
+    // 不是 Ollama 的回包字段，故必须显式声明 —— schema 是 additionalProperties:false。
+    state_bytes: { type: 'number' },
+    body_bytes: { type: 'number' },
+    body_warning: { type: 'string' },
   },
 };
 
@@ -1572,7 +1585,27 @@ export function apply(ctx, config = {}) {
         defaultModel,
         keepAlive,
       });
-      return callSystemOne({ baseUrl, body, timeoutMs, signal: exec?.signal });
+      const result = await callSystemOne({ baseUrl, body, timeoutMs, signal: exec?.signal });
+
+      // 体积可归因（需求 M2）。body_bytes 必须按**已转换的线格式**度量 —— 与 V8 的硬守卫
+      // 同一口径，否则模型看到的数与真正的上限余量对不上。
+      // state 可能是字符串，也可能是对象/数组（CONTENT_SPEC），故按序列化后的字节数报。
+      const stateText = typeof body.state === 'string' ? body.state : JSON.stringify(body.state);
+      const stateBytes = Buffer.byteLength(stateText, 'utf8');
+      const bodyBytes = Buffer.byteLength(JSON.stringify(body), 'utf8');
+      const warning = bodyBytes > LIMITS.softBodyBytes
+        ? `请求体 ${bodyBytes} 字节，已超过建议的 ${LIMITS.softBodyBytes} 字节：`
+          + '可考虑拆成多次调用，或缩小 state。'
+        : undefined;
+
+      // 注意：宿主要求返回的是 JSON 值（否则 snapshotToolValue 会拒绝），
+      // 所以 warning 为 undefined 时**整个键都不能出现**，不能写成 body_warning: undefined。
+      return {
+        ...result,
+        state_bytes: stateBytes,
+        body_bytes: bodyBytes,
+        ...(warning === undefined ? {} : { body_warning: warning }),
+      };
     },
   }));
 }
@@ -1733,7 +1766,15 @@ test('model 参数逐次覆盖默认模型', async () => {
 node --test "test/*.test.mjs"
 ```
 
-Expected: PASS —— `# fail 0`，共 44 个 test（14 + 6 + 14 + 3 + 7：validate + render + client + parameters + tool）。
+Expected: PASS —— `# fail 0`，共 48 个 test（15 + 9 + 14 + 3 + 7：validate + render + client + parameters + tool）。
+（15/9 是 Task 7 之后的口径；Task 7 在 Task 4 之前执行。）
+
+**Task 7 delta 对本任务的追加要求（体积可归因的产出侧）** —— 上面的实现已含，测试侧需同步：
+
+- `test/tool.test.mjs` 里断言 `output.schema.properties` 键集的那一处，期望值追加 `'state_bytes', 'body_bytes', 'body_warning'`（顺序与 `OUTPUT_SCHEMA` 一致）；`additionalProperties === false` 的断言保持不变。
+- 在已有的 execute 往返用例里追加断言：返回值含数值型 `state_bytes` 与 `body_bytes`，且 **`body_bytes` 等于该次真实请求体的字节数**（可用 `Buffer.byteLength(fake.requests[0].raw, 'utf8')` 与返回值比对 —— 这条比"存在即可"强，它钉住的是**按转换后线格式度量**这个口径）。
+- 小 state 的场景下**不得**出现 `body_warning` 键（`'body_warning' in value === false`），因为宿主要求返回是 JSON 值。
+- 不新增用例文件；上述断言并入既有用例，故 Task 4 的用例数仍为 **7**。
 
 - [ ] **Step 8: 语法与 LF 校验**
 
@@ -2254,3 +2295,181 @@ Expected: 6 个提交；`git status` 干净（`.temp/` 与 `node_modules/` 已�
 ## Execution Handoff
 
 Plan complete and saved to `docs/superpowers/plans/2026-10-04-dsh-decision-tools-plan.md`.
+
+---
+
+## Task 7: 需求 delta —— 题名禁纯数字 + 体积可归因
+
+> **执行顺序**：本任务**在 Task 4 之前执行**。它修改 Task 1/Task 2 的**已交付件**（`lib/validate.js` 的 V2 与 `LIMITS`、`lib/render.js` 的输出），而 Task 4 的工具契约要消费这些改动。编号为 7 是因为它在本轮 SDD **运行途中**由需求 delta 追加；**不重排既有 1–6 的编号**，以免造成大量交叉引用漂移（`task-brief` 脚本按标题文字匹配任务号，与位置无关，故这样是安全的）。
+>
+> **来源与权威性**：来自两份**跨会话产出**的工作区调研 —— `docs/superpowers/reviews/2026-10-04-ai-tiku-painpoint-research.md` 与 `…tessera-dev-painpoint-research.md`（各约 30 KB）。**用户 2026-10-04 裁定：它们是「参考输入」，不是约束。** 控制器按技术价值逐条取舍：本任务做两件**便宜且已明确**的事（M3 的数字题名、M2 的体积回显）；重项（M1 引用式 `state`、M5 审计 JSONL、M3 的 `orderPolicy`）已进规格 §10 的 v2 台账并注明触发条件。
+>
+> **计数口径变化（本任务改变了用例数，在此显式声明以免漂移）**：本任务之后各文件用例数为 `validate 15 / render 9 / client 14`，合计 **38**；Task 4 完成后为 **48**。计划中 Task 1/2/3 的 `Expected` 行（14 / 20 / 34）记录的是**各自执行当时**的值，属历史记录，**此后一律以本任务与 Task 4 的计数为准**。
+
+**Files:**
+- Modify: `lib/validate.js`
+- Modify: `test/validate.test.mjs`
+- Modify: `lib/render.js`
+- Modify: `test/render.test.mjs`
+
+- [ ] **Step 1: 写失败的测试**
+
+在 `test/validate.test.mjs` 末尾追加：
+
+```js
+test('V2 续：题名不得为纯数字串（纯数字会被 JS 对象映射重排，破坏有序批量语义）', () => {
+  expectReject(
+    base({ questions: [{ name: '1', type: 'noul', instructions: 'x' }] }),
+    /不能是纯数字/,
+  );
+  // 非纯数字题名不受影响。注意本规则比实际的「整数索引键」集合略宽
+  // （"01" 其实不会被重排，这里同样会拒），宁可多拒也不错排。
+  assert.doesNotThrow(() => prepareRequest(base({ questions: [{ name: 'q1', type: 'noul', instructions: 'x' }] })));
+  assert.doesNotThrow(() => prepareRequest(base({ questions: [{ name: '1a', type: 'noul', instructions: 'x' }] })));
+});
+```
+
+在 `test/render.test.mjs` 末尾追加（fixture 写在函数内部，避免与文件既有常量重名）：
+
+```js
+test('体积口径：value 带 state_bytes/body_bytes 时追加一行', () => {
+  const value = {
+    model: 'tev1:0.8b',
+    answers: { q: { type: 'noul', noul: 0.4751 } },
+    usage: { input_tokens: 799, output_tokens: 1 },
+    state_bytes: 101,
+    body_bytes: 634,
+  };
+  const [block] = renderAnswers({}, value);
+  assert.match(block.text, /^体积: state=101B body=634B$/m);
+});
+
+test('体积告警：body_warning 原样追加；缺失时不得凭空产生告警', () => {
+  const warned = renderAnswers({}, {
+    model: 'tev1:0.8b',
+    answers: { q: { type: 'noul', noul: 0.4751 } },
+    state_bytes: 20000,
+    body_bytes: 20480,
+    body_warning: '请求体 20480 字节，已超过建议的 16384 字节：可考虑拆成多次调用，或缩小 state。',
+  })[0];
+  assert.match(warned.text, /^体积: state=20000B body=20480B$/m);
+  assert.match(warned.text, /已超过建议的 16384 字节/);
+
+  const plain = renderAnswers({}, {
+    model: 'tev1:0.8b',
+    answers: { q: { type: 'noul', noul: 0.4751 } },
+    state_bytes: 1,
+    body_bytes: 2,
+  })[0];
+  assert.doesNotMatch(plain.text, /超过建议/);
+});
+
+test('体积口径：字段缺失时不打印该行（向后兼容）', () => {
+  const [block] = renderAnswers({}, {
+    model: 'tev1:0.8b',
+    answers: { q: { type: 'noul', noul: 0.4751 } },
+  });
+  assert.doesNotMatch(block.text, /体积:/);
+});
+```
+
+- [ ] **Step 2: 运行测试确认失败**
+
+```bash
+node --test "test/*.test.mjs"
+```
+
+Expected: FAIL —— 新增四条用例失败（纯数字题名当前会被放行；`体积:` 行当前不存在）。
+
+- [ ] **Step 3: 写实现**
+
+`lib/validate.js` —— `LIMITS` 增加一项（**策略值，不是实测值**）：
+
+```js
+export const LIMITS = {
+  maxQuestions: 64,
+  minOptions: 2,
+  maxOptions: 26,
+  maxBodyBytes: 65536,
+  /**
+   * 体积告警的**策略**阈值（硬上限的 1/4），**不是**实测退化点。
+   * 超过它只让工具层产出一行提示、让模型有机会自行拆批，**不改变任何拒绝行为**。
+   * 本机从未测量「state 体积 → 判定质量」的曲线，故 description 里不得把它写成经验上限。
+   */
+  softBodyBytes: 16384,
+};
+```
+
+`lib/validate.js` —— 在题名校验里，紧跟 `seenNames.add(question.name);` 之后插入：
+
+```js
+  // V2 续：题名不得是纯数字串。线格式把 questions 编码成 JS 对象映射，而对象的
+  // 整数样键（"1"/"42"）会被重排到最前，静默破坏模型给的「有序批量」语义。
+  if (/^\d+$/.test(question.name)) {
+    throw new DecisionValidationError(
+      `${at}.name 不能是纯数字（收到 ${JSON.stringify(question.name)}）：`
+      + '线格式用对象映射承载 questions，纯数字题名会被 JS 重排键序，破坏「有序批量」语义；'
+      + '请改用 q1 这类题名。',
+    );
+  }
+```
+
+`lib/render.js` —— `renderAnswers` 里，在 `usage` 段落之后、`return` 之前插入：
+
+```js
+  // 体积口径（需求 M2）：让「这次为什么慢 / 为什么退化」可归因，也让模型看得见
+  // 自己离 64 KiB 硬上限还有多远。是否告警、阈值多少属于**策略**，由工具层决定并
+  // 通过 body_warning 传入；render 只呈现 —— 保持纯函数、零 import。
+  if (Number.isFinite(value?.state_bytes) && Number.isFinite(value?.body_bytes)) {
+    lines.push(`体积: state=${value.state_bytes}B body=${value.body_bytes}B`);
+  }
+  if (typeof value?.body_warning === 'string' && value.body_warning !== '') {
+    lines.push(value.body_warning);
+  }
+```
+
+- [ ] **Step 4: 运行测试确认通过**
+
+```bash
+node --test "test/*.test.mjs"
+```
+
+Expected: PASS —— `# fail 0`，共 38 个 test（15 + 9 + 14：validate + render + client）。
+
+- [ ] **Step 5: 语法与 LF 校验**
+
+```bash
+node --check lib/validate.js
+node --check lib/render.js
+for f in lib/validate.js lib/render.js test/validate.test.mjs test/render.test.mjs; do
+  printf '%s CR=%s\n' "$f" "$(tr -cd '\r' < "$f" | wc -c)"
+done
+```
+
+Expected: 两个 `node --check` 均通过；四个文件 `CR=0`（真实字节计数，不得靠 grep 目视）。
+
+- [ ] **Step 6: 提交**
+
+```bash
+git add lib/validate.js lib/render.js test/validate.test.mjs test/render.test.mjs
+git commit -F - <<'MSG'
+feat(delta): 题名禁纯数字串 + 返回值体积可归因
+
+来源：两份跨会话工作区调研（docs/superpowers/reviews/2026-10-04-*.md）。
+用户 2026-10-04 裁定其为「参考输入，非约束」；控制器按技术价值取舍后采纳两件
+便宜且已明确的事，重项（引用式 state、审计 JSONL、orderPolicy）进规格 §10 的 v2 台账。
+
+1. V2 续：题名不得为纯数字串。线格式把 questions 编码成 JS 对象映射，对象的整数样键
+   （"1"/"42"）会被重排到最前，静默破坏「有序批量」语义 —— 这一条在 ADR-6 里被记录为
+   「已知边界」却一直没有禁止，本次堵上。规则用 /^\d+$/ 比实际的整数索引集合略宽
+   （"01" 不会被重排但同样会拒），宁可多拒也不错排。
+
+2. 体积可归因：render 在 value 带 state_bytes/body_bytes 时追加一行体积口径，并在
+   body_warning 存在时原样追加告警行。阈值与告警策略留在工具层（Task 4）——
+   render 保持纯函数、零 import。LIMITS.softBodyBytes = 16384 明确标注为**策略值**
+   （硬上限的 1/4），不是实测退化点；本机没有测过「state 体积 → 判定质量」的曲线，
+   故 description 里不得出现任何未经测量的「经验批量上限」。
+
+新增 4 条用例（validate 1 条、render 3 条）。此后计数口径为 15/9/14，合计 38。
+MSG
+```
