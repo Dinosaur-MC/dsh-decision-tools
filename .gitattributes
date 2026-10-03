@@ -1,0 +1,19 @@
+# 文本/代码文件统一 LF（用户 2026-10-01 跨项目裁定）。
+# 目的：Windows 检出/提交时不引入 CR，避免伪 diff 与行尾污染。
+* text=auto eol=lf
+
+# 二进制例外：显式声明，避免把二进制里的 0x0D 当行尾改写。
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.zip binary
+*.gz binary
+*.exe binary
+*.dll binary
+*.node binary
