@@ -2330,7 +2330,7 @@ Plan complete and saved to `docs/superpowers/plans/2026-10-04-dsh-decision-tools
 
 > **执行顺序**：本任务**在 Task 4 之前执行**。它修改 Task 1/Task 2 的**已交付件**（`lib/validate.js` 的 V2 与 `LIMITS`、`lib/render.js` 的输出），而 Task 4 的工具契约要消费这些改动。编号为 7 是因为它在本轮 SDD **运行途中**由需求 delta 追加；**不重排既有 1–6 的编号**，以免造成大量交叉引用漂移（`task-brief` 脚本按标题文字匹配任务号，与位置无关，故这样是安全的）。
 >
-> **来源与权威性**：来自两份**跨会话产出**的工作区调研 —— `docs/superpowers/reviews/2026-10-04-ai-tiku-painpoint-research.md` 与 `…tessera-dev-painpoint-research.md`（各约 30 KB）。**用户 2026-10-04 裁定：它们是「参考输入」，不是约束。** 控制器按技术价值逐条取舍：本任务做两件**便宜且已明确**的事（M3 的数字题名、M2 的体积回显）；重项（M1 引用式 `state`、M5 审计 JSONL、M3 的 `orderPolicy`）已进规格 §10 的 v2 台账并注明触发条件。
+> **来源与权威性（匿名化）**：这些需求项的来源是**匿名调研输入**（无出处、无归属）。**用户 2026-10-04 裁定：它们是「参考输入」，不是约束；且不入库、不引用、归匿名材料。** 控制器按技术价值逐条取舍：本任务做两件**便宜且已明确**的事（M3 的数字题名、M2 的体积回显）；重项（M1 引用式 `state`、M5 审计 JSONL、M3 的 `orderPolicy`）已进规格 §10 的 v2 台账并注明触发条件。
 >
 > **计数口径变化（本任务改变了用例数，在此显式声明以免漂移）**：本任务之后各文件用例数为 `validate 15 / render 9 / client 14`，合计 **38**；Task 4 完成后为 **48**。计划中 Task 1/2/3 的 `Expected` 行（14 / 20 / 34）记录的是**各自执行当时**的值，属历史记录，**此后一律以本任务与 Task 4 的计数为准**。
 
@@ -2591,7 +2591,7 @@ git add lib/validate.js lib/render.js test/validate.test.mjs test/render.test.mj
 git commit -F - <<'MSG'
 feat(delta): 题名禁纯数字串 + 返回值体积可归因
 
-来源：两份跨会话工作区调研（docs/superpowers/reviews/2026-10-04-*.md）。
+来源：匿名调研输入（无出处、无归属；用户 2026-10-04 裁定：不入库、不引用、归匿名材料）。
 用户 2026-10-04 裁定其为「参考输入，非约束」；控制器按技术价值取舍后采纳两件
 便宜且已明确的事，重项（引用式 state、审计 JSONL、orderPolicy）进规格 §10 的 v2 台账。
 
