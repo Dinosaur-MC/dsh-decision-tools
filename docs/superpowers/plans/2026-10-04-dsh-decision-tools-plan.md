@@ -325,7 +325,7 @@ test('V8 边界：正好 65536 字节通过，再多 1 字节被拒', () => {
   assert.ok(overhead(lo + 1) > LIMITS.maxBodyBytes);
 
   assert.doesNotThrow(() => prepareRequest(base({ state: 'x'.repeat(lo) })));
-  expectReject(base({ state: 'x'.repeat(lo + 1) }), /请求体 \d+ 字节，超过服务端上限 65536 字节；/);
+  expectReject(base({ state: 'x'.repeat(lo + 1) }), /请求体 \d+ 字节，超过服务端上限 65536 字节（64 KiB）；请缩减 state/);
 });
 
 test('LIMITS 与服务端文档一致', () => {
@@ -566,7 +566,7 @@ DSH 的紧凑 schema DSL 只有 type/enum/const，表达不了 1-64 题、2-26 �
 
 新增 scripts/link-peers.mjs（从 process.execPath 推导 dsh 位置，不使用 child_process）
 新增 lib/validate.js（prepareRequest / DecisionValidationError / LIMITS）
-新增 test/validate.test.mjs（12 个用例，含 64 KiB 边界二分）
+新增 test/validate.test.mjs（13 个用例，含 64 KiB 边界二分）
 新增 package.json（type=module、files 白名单、peerDeps）
 MSG
 ```
