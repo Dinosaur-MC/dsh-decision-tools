@@ -1,8 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { name, inject, Config, apply } from '../lib/index.js';
+import { resolveSoftBodyBytes } from '../lib/tool.js';
 import { TOOL_DESCRIPTION } from '../lib/parameters.js';
+import { LIMITS } from '../lib/validate.js';
 import { startFakeOllama } from './fake-ollama.mjs';
+
+/**
+ * 计数口径（各文件用例数；改动本文件时必须同步更新，本仓没有任何自动核对）：
+ * `validate 15 + render 9 + client 14 + parameters 3 + tool 7 = 48`
+ * → 2026-10-04 本文件新增 3 条（可配置的体积告警），此后为
+ * `validate 15 + render 9 + client 14 + parameters 3 + tool 10 = 51`。
+ */
 
 /**
  * 一个够用的假 ctx：**刻意只提供 tools**。
@@ -157,6 +166,116 @@ test('execute 把服务端错误映射成 SystemOneError', async () => {
 
     assert.equal(error.name, 'SystemOneError');
     assert.equal(error.kind, 'model_missing');
+  } finally {
+    await fake.close();
+  }
+});
+
+/**
+ * 一个 body 确实**越过默认软阈值**（`LIMITS.softBodyBytes`）的 payload：5000 字节 state。
+ * 三条新用例共用它，且各自都断言 `body_bytes > LIMITS.softBodyBytes` —— 否则"没有告警"
+ * 这类否定式断言会静默退化成恒真，无法区分"开关关了"与"从来没到过阈值"。
+ */
+const BIG_ARGS = {
+  state: 'x'.repeat(5000),
+  questions: [{ name: 'q', type: 'noul', instructions: 'Yes?' }],
+};
+
+/** 走真实注册路径：apply(Config(...)) 之后调用已注册工具的 execute。 */
+async function executeWith(baseUrl, config, args) {
+  const { registered, ctx } = fakeCtx();
+  apply(ctx, Config({ baseUrl, ...config }));
+  return registered[0].execute(args, { signal: undefined });
+}
+
+test('softBodyBytes 配置改变告警出现的位置（阈值两侧，经 execute 验证）', async () => {
+  const fake = await startFakeOllama(() => ({ status: 200, body: ANSWERS }));
+  try {
+    const run = (config) => executeWith(fake.baseUrl, config, BIG_ARGS);
+
+    const byDefault = await run({});
+    const lowThreshold = await run({ softBodyBytes: 2000 });
+    const highThreshold = await run({ softBodyBytes: 20000 });
+
+    // 同一 payload、同一假服务端：三次 execute 度到的 body 必须逐字节一致，
+    // 否则"阈值两侧"的对比不成立。
+    assert.equal(byDefault.body_bytes, lowThreshold.body_bytes);
+    assert.equal(lowThreshold.body_bytes, highThreshold.body_bytes);
+    // 承重前提：该 payload 必须高于默认阈值，否则本用例静默退化成恒真。
+    assert.ok(
+      byDefault.body_bytes > LIMITS.softBodyBytes,
+      `fixture body ${byDefault.body_bytes} 必须高于 softBodyBytes ${LIMITS.softBodyBytes}`,
+    );
+
+    // 未设 ⇒ 回落到 LIMITS.softBodyBytes（该默认值只有 validate.js 一处来源）。
+    assert.equal('body_warning' in byDefault, true);
+    assert.match(
+      byDefault.body_warning,
+      new RegExp(`已超过建议的 ${LIMITS.softBodyBytes} 字节`),
+    );
+
+    // 自定义阈值的**下方**（2000 < body）：告警，且文案引用的是配置值而非默认值。
+    assert.equal('body_warning' in lowThreshold, true);
+    assert.match(lowThreshold.body_warning, /已超过建议的 2000 字节/);
+
+    // 自定义阈值的**上方**（20000 > body）：同一个 body 却没有告警。
+    assert.equal('body_warning' in highThreshold, false);
+    assert.equal(highThreshold.body_warning, undefined);
+  } finally {
+    await fake.close();
+  }
+});
+
+test('bodyWarning: false 时任何体积都不产出 body_warning 键（经 execute 验证）', async () => {
+  const fake = await startFakeOllama(() => ({ status: 200, body: ANSWERS }));
+  try {
+    const run = (config) => executeWith(fake.baseUrl, config, BIG_ARGS);
+
+    const off = await run({ bodyWarning: false });
+    // 承重前提：关掉开关时 body 仍远高于阈值，故"键不存在"只可能来自开关。
+    assert.ok(
+      off.body_bytes > LIMITS.softBodyBytes,
+      `fixture body ${off.body_bytes} 必须高于 softBodyBytes ${LIMITS.softBodyBytes}`,
+    );
+    assert.equal('body_warning' in off, false);
+    // 也不得退化成 `false` 或空串：宿主按无损失 JSON 校验，schema 里它是 string。
+    assert.equal(off.body_warning, undefined);
+
+    // 未设与显式 true 都必须**照常告警** —— 否则"关闭"可能只是"从来没告警过"。
+    assert.equal('body_warning' in await run({}), true);
+    assert.equal('body_warning' in await run({ bodyWarning: true }), true);
+  } finally {
+    await fake.close();
+  }
+});
+
+test('absurd softBodyBytes（1e9）被静默钳到 maxBodyBytes，行为等同上限', async () => {
+  // 机制断言：钳制在 execute 层面**几乎不可观测**（任何 ≥ maxBodyBytes 的阈值都不会
+  // 触发告警，因为 prepareRequest 先按同一字节数拒绝），所以"生效值"本身是这条规则
+  // 唯一的承重点 —— 少了它，一个"完全不钳制"的实现也能通过下面全部断言。
+  assert.equal(resolveSoftBodyBytes(1e9), LIMITS.maxBodyBytes);
+  assert.equal(resolveSoftBodyBytes(LIMITS.maxBodyBytes + 1), LIMITS.maxBodyBytes);
+  // 钳制只在顶端：未越上限的值必须原样通过。
+  assert.equal(resolveSoftBodyBytes(2000), 2000);
+  // 未设 ⇒ 回落 LIMITS.softBodyBytes。
+  assert.equal(resolveSoftBodyBytes(undefined), LIMITS.softBodyBytes);
+
+  const fake = await startFakeOllama(() => ({ status: 200, body: ANSWERS }));
+  try {
+    const absurd = await executeWith(fake.baseUrl, { softBodyBytes: 1e9 }, BIG_ARGS);
+    const atCap = await executeWith(
+      fake.baseUrl,
+      { softBodyBytes: LIMITS.maxBodyBytes },
+      BIG_ARGS,
+    );
+
+    // execute 层面：1e9 的结果与显式 maxBodyBytes **完全相同**（同一 payload 下都不告警），
+    // 即它被折到上限，而不是按 1e9 的原值另走一条路。
+    assert.deepEqual(absurd, atCap);
+    assert.equal('body_warning' in absurd, false);
+    // 承重前提：body 高于默认阈值，否则上面两条都不表达"被钳到上限"。
+    assert.ok(absurd.body_bytes > LIMITS.softBodyBytes);
+    assert.ok(absurd.body_bytes <= LIMITS.maxBodyBytes);
   } finally {
     await fake.close();
   }

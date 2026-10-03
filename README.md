@@ -80,6 +80,13 @@ stay put.
 | `timeoutMs` | `120000` | per-request budget, including cold model load |
 | `toolName` | `decision` | the name the model sees |
 | `keepAlive` | unset | passed through as `keep_alive`; unset uses the server default |
+| `softBodyBytes` | unset (falls back to `LIMITS.softBodyBytes`, 4096) | body size in bytes above which the result carries a `body_warning` |
+| `bodyWarning` | unset (on) | `false` never emits `body_warning`; unset or `true` keeps it on |
+
+`softBodyBytes` is silently clamped to `LIMITS.maxBodyBytes` (65536) — a threshold above
+that byte cap could never fire — and a threshold set above the model's **real** capacity
+(its `num_ctx`) silently makes the warning useless; nothing inside the plugin can detect
+that, so the server's token check stays the authoritative guard.
 
 Override in `cordis.patch.yml` by nesting the fields under the row's `config:` key. To
 **override the existing row**, use a bare `id` and **no `insert`**. Fields written
@@ -122,10 +129,11 @@ The defaults above are the ones declared in `lib/tool.js` (`Config`).
    (~3.33 bytes/token), so a ~8 KB body already returns HTTP 400
    `prompt 0 has <N> tokens; expected 1–<M> (input is never truncated)`, mapped to
    `context_overflow` — the input is **not** truncated and no partial answer is returned.
-   The plugin's advisory size threshold sits well inside that ceiling
-   (`LIMITS.softBodyBytes = 4096` B ≈ 1230 tokens ≈ 60 % of 2050), so it can warn
-   **before** the server rejects: crossing it only adds a `body_warning` to the result and
-   changes no rejection behaviour. The authoritative guard stays the server's token check.
+   The plugin's **default** advisory size threshold sits well inside that ceiling
+   (configurable `softBodyBytes`, default `LIMITS.softBodyBytes = 4096` B ≈ 1230 tokens,
+   ≈ 60 % of 2050), so it can warn **before** the server rejects: crossing it only adds a
+   `body_warning` to the result and changes no rejection behaviour. The authoritative guard
+   stays the server's token check.
    Byte count is a crude proxy, though: dense scripts (CJK) and ID-heavy text tokenize
    worse than 3.33 B/token and this threshold under-protects on such input.
 6. **Bounded decisions only.** This plugin answers bounded questions whose candidate set is known up front. Open-ended generation, reasoning chains, and candidates that must be discovered while thinking still belong to a generative model.

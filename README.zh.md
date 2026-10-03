@@ -77,6 +77,12 @@
 | `timeoutMs` | `120000` | 单次请求预算，含冷加载 |
 | `toolName` | `decision` | 模型看到的工具名 |
 | `keepAlive` | 未设 | 透传为 `keep_alive`；未设则用服务端默认 |
+| `softBodyBytes` | 未设（回落到 `LIMITS.softBodyBytes`，4096） | 超过该字节数的 body 会在返回值里带一行 `body_warning` |
+| `bodyWarning` | 未设（开启） | `false` 时永不产出 `body_warning`；未设或 `true` 则保持开启 |
+
+`softBodyBytes` 会被**静默钳到** `LIMITS.maxBodyBytes`（65536）—— 高于该字节硬上限的阈值
+永远不可能触发；而把阈值设到模型**真实**容量（其 `num_ctx`）之上会让告警**静默失效**，
+插件内部无从检测这一点 —— 权威守卫始终是服务端的 token 检查。
 
 在 `cordis.patch.yml` 里**覆盖既有行**要用**裸 `id`、不带 `insert`**，并把字段写在行的
 `config:` 键**下**。把字段**平铺在行上**会被静默忽略，也没有任何告警 —— 插件只会按默认值运行。
@@ -114,9 +120,10 @@
    因此 **约 8 KB 的 body 就会返回 HTTP 400**
    `prompt 0 has <N> tokens; expected 1–<M> (input is never truncated)`，
    映射为 `context_overflow` —— 输入**不会被截断**，也不会给出部分答案。
-   本插件的体积告警阈值**远在该上限之内**（`LIMITS.softBodyBytes = 4096` B
-   ≈ 1230 token ≈ 2050 的 60 %），故能在服务端拒绝**之前**响；越过它只在返回值里
-   多一行 `body_warning`，**不改变任何拒绝行为**，权威守卫仍是服务端的 token 检查。
+   本插件的**默认**体积告警阈值**远在该上限之内**（可配置的 `softBodyBytes`，默认
+   `LIMITS.softBodyBytes = 4096` B ≈ 1230 token ≈ 2050 的 60 %），故能在服务端拒绝
+   **之前**响；越过它只在返回值里多一行 `body_warning`，**不改变任何拒绝行为**，
+   权威守卫仍是服务端的 token 检查。
    注意字节数只是**粗糙代理**：中日韩等密集文字与 ID 密集文本的 token/字节比
    远差于 3.33，此时该阈值**保护不足**。
 6. **只解决「有界判定」。** 候选集合已知且有界的问题才归本插件；开放式生成、需要推理链、候选要边想边发现的情形，仍须交给生成式模型。
