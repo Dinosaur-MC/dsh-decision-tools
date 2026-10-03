@@ -102,6 +102,29 @@ test('execute 打到 /v1/systemone 并原样返回 answers', async () => {
   } finally {
     await fake.close();
   }
+
+  // 同源的第二条：服务端回包**不含 usage** 时，返回值里也**不得出现** usage 键。
+  // 宿主对每个成功返回值跑 snapshotJsonValue，值为 `undefined` 的 own key 会让它判定
+  // 「不是无损 JSON」并抛 ToolOutputError —— 于是一次完全成功的调用被报成工具失败。
+  // 因此这里用一个只有 model/answers 的回包驱动一次真实往返（同一用例，不新增用例）。
+  const noUsage = await startFakeOllama(() => ({
+    status: 200,
+    body: { model: ANSWERS.model, answers: ANSWERS.answers },
+  }));
+  try {
+    const { registered, ctx } = fakeCtx();
+    apply(ctx, Config({ baseUrl: noUsage.baseUrl }));
+
+    const value = await registered[0].execute(
+      { state: 'x', questions: [{ name: 'label', type: 'noul', instructions: 'Yes?' }] },
+      { signal: undefined },
+    );
+
+    assert.equal('usage' in value, false);
+    assert.equal('body_warning' in value, false);
+  } finally {
+    await noUsage.close();
+  }
 });
 
 test('execute 的本地校验错误不会发出网络请求', async () => {
