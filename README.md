@@ -114,7 +114,13 @@ The defaults above are the ones declared in `lib/tool.js` (`Config`).
 3. First call includes model load (measured on this machine: 14.3 s cold and
    11.1 s warm for `tev1:0.8b`; 15.7 s cold and 8.0 s warm for `tev1:latest`).
 4. No streaming, no tool calling, one request one response.
-5. Server limits: 64 KiB request without images, 64 questions, 2–26 options per question.
+5. Server limits: 64 KiB request without images, 64 questions, 2–26 options per
+   question. The binding limit is usually smaller: the effective context is the model's
+   own `num_ctx`, not the architecture's context length. On this machine
+   `ollama show tev1:0.8b` reports `context length 262144` but `num_ctx = 2050`, so a
+   ~16 KiB body already returns HTTP 400
+   `prompt 0 has <N> tokens; expected 1–<M> (input is never truncated)`, mapped to
+   `context_overflow` — the input is **not** truncated and no partial answer is returned.
 6. **Bounded decisions only.** This plugin answers bounded questions whose candidate set is known up front. Open-ended generation, reasoning chains, and candidates that must be discovered while thinking still belong to a generative model.
 
 ## Development

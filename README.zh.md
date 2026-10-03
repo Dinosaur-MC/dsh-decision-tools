@@ -107,7 +107,12 @@
 3. 首次调用含模型加载（本机实测：`tev1:0.8b` 冷 14.3 s、热 11.1 s；
    `tev1:latest` 冷 15.7 s、热 8.0 s）。
 4. 无流式、无工具调用，一请求一响应。
-5. 服务端硬限：无图请求 64 KiB、64 题、每题 2–26 个选项。
+5. 服务端硬限：无图请求 64 KiB、64 题、每题 2–26 个选项。但真正先撞上的往往更小：
+   有效上下文是该模型自己的 `num_ctx`，不是架构声明的 context length。本机
+   `ollama show tev1:0.8b` 显示 `context length 262144`，而 `num_ctx = 2050`，
+   因此约 16 KiB 的 body 就会返回 HTTP 400
+   `prompt 0 has <N> tokens; expected 1–<M> (input is never truncated)`，
+   映射为 `context_overflow` —— 输入**不会被截断**，也不会给出部分答案。
 6. **只解决「有界判定」。** 候选集合已知且有界的问题才归本插件；开放式生成、需要推理链、候选要边想边发现的情形，仍须交给生成式模型。
 
 ## Development

@@ -60,7 +60,14 @@ test('413 → too_large', async () => {
   );
 });
 
-test('400 → invalid_request，带出服务端原文与合法类型清单', async () => {
+// 本机实测的服务端原文（`.temp/ctx-probe/probe.out`，`node .temp/ctx-probe/probe.mjs` 可复现）：
+// 16226 字节的 body → HTTP 400。注意 `1` 与 `2050` 之间是 **en dash U+2013**，不是 ASCII 连字 ——
+// 这里是逐字节照抄真机响应，不是手写的近似串。
+const CONTEXT_OVERFLOW_BODY = '{"error":"prompt 0 has 2359 tokens; expected 1–2050 (input is never truncated)"}';
+/** 同一个错误的容忍写法：ASCII 连字 + 数字两侧多余空白。 */
+const CONTEXT_OVERFLOW_BODY_TOLERANT = '{"error":"prompt 0 has 12 tokens; expected 1 -  88 (input is never truncated)"}';
+
+test('400 → invalid_request，带出服务端原文与合法类型清单；上下文溢出则 → context_overflow', async () => {
   await withServer(
     () => ({ status: 400, body: { error: 'question "urgent": type must be choice, noul, or score' } }),
     async (fake) => {
@@ -76,6 +83,31 @@ test('400 → invalid_request，带出服务端原文与合法类型清单', asy
       assert.doesNotMatch(error.hint, /对象映射|数组/);
     },
   );
+
+  // 续：真机上唯一会发生的 400 是**上下文溢出** —— 有效上限是模型的 num_ctx（本机
+  // tev1:0.8b = 2050），不是架构声明的 context length（262144）。这一支若不从 400 里分出来，
+  // 调用方拿到的 hint 会把它指向一个 ADR-6 之后不可能存在的原因（题型/选项数/题名）。
+  await withServer(() => ({ status: 400, body: CONTEXT_OVERFLOW_BODY }), async (fake) => {
+    const error = await failure({ baseUrl: fake.baseUrl, body: BODY, timeoutMs: 5000 });
+    assert.equal(error.kind, 'context_overflow');
+    assert.equal(error.status, 400);
+    assert.match(error.message, /请求超出模型上下文：2359 token，上限 2050。/,
+      'message 必须同时给出服务端报的实际 token 数与上限');
+    assert.match(error.message, /input is never truncated/, '服务端原文必须保持可用');
+    assert.match(error.hint, /缩减 state/);
+    assert.match(error.hint, /num_ctx/, 'hint 必须给出调高该模型 num_ctx 这条路');
+    assert.match(error.hint, /更大的模型/, 'hint 必须给出换模型这条路');
+    assert.match(error.hint, /未被截断/, '必须明说输入未被截断，别让调用方以为拿到了部分答案');
+    assert.doesNotMatch(error.hint, /choice|noul|score|数组|对象映射/,
+      '溢出与请求形状无关，hint 不得回落到形状类建议');
+  });
+
+  // 容忍写法：ASCII 连字、数字两侧空白。服务端把 en dash 换成 `-` 时不能退化成 invalid_request。
+  await withServer(() => ({ status: 400, body: CONTEXT_OVERFLOW_BODY_TOLERANT }), async (fake) => {
+    const error = await failure({ baseUrl: fake.baseUrl, body: BODY, timeoutMs: 5000 });
+    assert.equal(error.kind, 'context_overflow');
+    assert.match(error.message, /请求超出模型上下文：12 token，上限 88。/);
+  });
 });
 
 test('线格式守卫：假服务以与真服务同形的 400 拒绝数组形状的 questions（ADR-6）', async () => {
