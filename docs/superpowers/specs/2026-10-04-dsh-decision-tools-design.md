@@ -233,7 +233,7 @@ export async function callSystemOne({
 1. 发送**已组装好的** `body`（`{ model, state, questions }` + 可选 `keep_alive`）。**`questions` 的数组→对象转换与 64 KiB 体积检查都不在这里** —— 两者都在 `prepareRequest`（见 **ADR-6** 与 §4.6 的 V8/V10）。本函数不对 body 的形状做任何假设，它只负责传输。
 2. 超时：`AbortSignal.timeout(timeoutMs)` 与调用方 `signal` 用 `AbortSignal.any([...])` 合并。**这个合并是硬要求，不是优化**：调用方取消时必须在毫秒级**真正中止** `fetch`，**不得**退化成等 `timeoutMs` 到点。退化的代价是隐蔽的 —— 分类仍可能正确地报 `aborted`（因为另有 `signal?.aborted` 检查），但 socket 会白白挂到超时上限（默认 120s）。该性质由 `test/client.test.mjs` 的**耗时断言**钉住（< 2000ms，而该用例的 `timeoutMs` 是 30000），仅靠 `kind` 断言无法发现退化。
 3. 响应解析与错误映射（见 §4.7）。**body 读取本身也必须被守卫**：响应头已到达、body 尚未读完时 socket 断开（undici 抛 `TypeError: terminated`），或信号在读取途中触发 —— 两者都必须映射成带 `kind` 的 `SystemOneError`（见 §4.7 的 mid-body 行），不得逃成没有 `kind` 的裸错误，否则按 `kind` 分派的上层会把它当成未处理异常。
-4. 成功时返回 `{ answers, usage }` **原样**，不重写、不归一化。
+4. 成功时返回 `{ model, answers, usage? }` **原样**（`usage` 缺席时该键整个不出现），不重写、不归一化。
 
 **可测试性**：`fetchImpl` 与 `signal` 均可注入 ⇒ 单测无需真实网络；`baseUrl` 可指向假服务端口。
 
@@ -262,7 +262,7 @@ export function apply(ctx, config) {
 }
 ```
 
-`execute(args, exec)` 流程：`validate` → `callSystemOne` → 返回 `{ answers, usage }`。
+`execute(args, exec)` 流程：`validate` → `callSystemOne` → 返回 `{ model, answers, usage?, state_bytes, body_bytes, body_warning? }`（两个可选键缺席时整个不出现）。
 
 ### 4.5 参数 schema（精确）
 
@@ -477,7 +477,7 @@ THIRD_PARTY_NOTICES
 | **M5 · 可复算的审计落盘**：追加型 JSONL（题面哈希 / 模型 / 选项顺序 / 答案 / 概率 / conf / 耗时 / usage / 代码版本），默认落工作区 `.temp/` 之下，只追加、不写仓库其他文件 | 出现「需要在使用现场复算判定比率」的需求时 |
 | **M3 的 `orderPolicy: 'as-given' \| 'rotate'` 能力**：调研实测选项反序会翻转 **5/6** 的答案。v1 已把「选项顺序会改变答案」写进 description 并登记为已知限制；**做成能力**需要 N 倍上游调用，且需先测出轮换对准确率的真实增益 | 有准确率数据支持轮换收益时 |
 | **M2 的软阈值**：v1 已采纳「体积回显」（`state_bytes`/`body_bytes`）。**软阈值告警**的阈值若要写成实测值而非策略值，需要先测「state 体积 → 判定质量」的曲线 | 测出该曲线时 |
-| **`softBodyBytes` 与那条负例 fixture 的耦合**：`test/render.test.mjs` 里「超阈值却不带 `body_warning` ⇒ 不得告警」的用例，靠的就是它的 `body_bytes` **高于** `LIMITS.softBodyBytes`。**若 `softBodyBytes` 被调高到超过该 fixture 的值，这条用例会退化成恒真**（不再能发现 render 侧内联阈值）。同理会波及 `maxBodyBytes`。⇒ **任何一次调整这两个常量都必须复核该 fixture 仍然高于软阈值**。残留缺口已知且窄：一个把阈值内联成 `65536` 之类的实现一度能静默通过。**控制器原先写的理由（"那落在真实的拒绝区，不在渲染层可观测范围内"）是错的** —— `test/render.test.mjs` 单测的是**纯渲染函数**、从不调用 `prepareRequest`，所以 `body_bytes: 1e15` 这样的 fixture 在那里**完全合法**且能观测到它。修复轮 2 已加入该 fixture，残留缺口随之关闭 | 调整 `LIMITS` 中任一上限时 |
+| **`softBodyBytes` 与那条负例 fixture 的耦合**：`test/render.test.mjs` 里「超阈值却不带 `body_warning` ⇒ 不得告警」的用例，靠的就是它的 `body_bytes` **高于** `LIMITS.softBodyBytes`。**若 `softBodyBytes` 被调高到超过该 fixture 的值，这条用例会退化成恒真**（不再能发现 render 侧内联阈值）。同理会波及 `maxBodyBytes`。⇒ **任何一次调整这两个常量都必须复核该 fixture 仍然高于软阈值**。残留缺口已知且窄：一个把阈值内联成 `65536` 之类的实现一度能静默通过。**控制器原先写的理由（"那落在真实的拒绝区，不在渲染层可观测范围内"）是错的** —— `test/render.test.mjs` 单测的是**纯渲染函数**、从不调用 `prepareRequest`，所以 `body_bytes: 1e15` 这样的 fixture 在那里**完全合法**且能观测到它。修复轮 2 已加入该 fixture ⇒ **任何 < 1e15 的阈值（即本仓代码里出现的全部取值）都能被观测到**，该缺口就此收敛；理论残留仅剩「内联一个 ≥ 1e15 的阈值」，无实践意义 | 调整 `LIMITS` 中任一上限时 |
 | **M6 的两条工程口径**：① 超时按「热态短（实测 0.09–0.2s，5s 足够）、冷态有界放宽（另加 `min(基线×2, 60s)`，且只在探测说未驻留时加）」—— 把冷加载算进短超时会 **100% 打挂第一个请求**；② 熔断要区分错误类型（请求/配置类 400/413/白名单外**不计**，不可用类超时/5xx/连接失败**计**），命中时**不发请求、不等超时** | v1 单次调用形态没有熔断需求；出现常驻调用方时 |
 | 视觉支持（路径式 `images`） | 上游修复 clef 的 `non-finite logit` |
 | 独立客户端包 / CLI | 出现 DSH 之外的消费方（例如评测装置 C 方案） |

@@ -1860,7 +1860,7 @@ MSG
 #   decision-tools-tool — 注册 `decision` 工具（模型可见名由配置项 toolName 决定），
 #     本插件不依赖平台，任何环境都注册。使用指引在工具 description 里，不注册 prompt 段（ADR-5）。
 #
-# 覆盖默认配置时，字段**直接写在行上**（patch 会替换整行 config，因此要重述全部字段）：
+# 覆盖默认配置时，配置**必须写在行的 `config:` 键下**（平铺在行上会被静默忽略）；（patch 会替换整行 config，因此要重述全部字段）：
 #   - insert:
 #       - id: decision-tools-tool
 #         name: 'dsh-decision-tools'
@@ -2185,19 +2185,26 @@ Returns one line per question plus a usage line:
 | `toolName` | `decision` | the name the model sees |
 | `keepAlive` | unset | passed through as `keep_alive`; unset uses the server default |
 
-Override in `cordis.patch.yml` by writing the fields directly on the row.
+Override in `cordis.patch.yml` by nesting the fields under the row's `config:` key. Fields written **flat on the row** are silently ignored.
 
 ## Known limitations
 
 1. **`clef` / `clef-flash` are broken on Ollama 0.35.1.** Every request — plain text,
-   with an image, or a single minimal `noul` — returns
-   `500 {"message":"Clef: non-finite logit"}`. Vision is therefore not supported.
+   with an image, or a single minimal `noul` — returns a 500 whose body is
+   `{"error":"{\"error\":{\"code\":500,\"message\":\"Clef: non-finite logit\",\"type\":\"server_error\"}}"}`.
+   Vision is therefore not supported.
 2. **Bigger is not necessarily more correct.** On the same ticket, `tev1:0.8b`
    answered `bug` while `tev1:latest` (4.2B) answered `billing` — and `billing` is
    the weaker answer given the text. Verify per task.
-3. First call includes model load (measured: ~12 s for 0.8b, ~18.5 s for 4.2B).
+3. First call includes model load. **Cold vs warm measured separately**: `tev1:0.8b`
+   cold ≈14.3 s / warm ≈11.1 s; `tev1:latest` cold ≈15.7 s / warm ≈8.0 s
+   (earlier `~12 s` / `~18.5 s` were unlabeled single samples). `keep_alive` avoids
+   repeatedly returning to the cold state.
 4. No streaming, no tool calling, one request one response.
 5. Server limits: 64 KiB request without images, 64 questions, 2–26 options per question.
+6. **Bounded decisions only.** This plugin answers bounded questions whose candidate
+   set is known up front. Open-ended generation, reasoning chains, and candidates
+   that must be discovered while thinking still belong to a generative model.
 
 ## Development
 
