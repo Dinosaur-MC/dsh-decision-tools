@@ -346,10 +346,13 @@ const parameters = {
 | `AbortError` 且由 `timeoutMs` 触发 | `timeout` | 「{model} 在 {timeoutMs}ms 内未返回；首次调用含模型加载（实测 0.8B ~12s / 4.2B ~18.5s），可调大 timeoutMs」 |
 | HTTP 404 | `model_missing` | 「模型 {model} 未下载：`ollama pull {model}`」 |
 | HTTP 413 | `too_large` | 「请求体超过服务端上限（无图 64 KiB）」 |
-| HTTP 400 | `invalid_request` | 原样带出服务端 `error` 字段 + 我们的定位提示 |
+| HTTP 400 **且** body 匹配 `prompt 0 has <N> tokens; expected 1[–-]<M>` | `context_overflow` | 「请求超出模型上下文：<N> token，上限 <M>（**输入未被截断**）」+ 三条可行动项：缩减 `state`／调高该模型 `num_ctx` 后重启／换有效 `num_ctx` 更大的模型 |
+| HTTP 400 其他 | `invalid_request` | 原样带出服务端 `error` 字段 + 我们的定位提示（**注意：经 `prepareRequest` 发出的请求不可能再有形状问题**，故这一支实际上很少触发） |
 | HTTP 500 且 body 含 `non-finite logit` | `model_broken` | 「{model} 在 Ollama 0.35.1 上有已知缺陷（Clef: non-finite logit），请改用 tev1 系模型」 |
 | HTTP 500 其他 | `server_error` | 原样带出服务端 `error` |
 | 2xx 但 body 非 JSON / 缺 `answers` | `bad_response` | 「Ollama 返回了无法解析的响应」 |
+
+> **上下文上限的实测口径（2026-10-04，本机 Ollama 0.35.1）**：`ollama show tev1:0.8b` 与 `tev1:latest` 在 Model 段声明 `context length 262144`，但 **Parameters 里 `num_ctx = 2050`**；`clef-flash:latest` 为 `num_ctx = 16384`。**跑的是 `num_ctx`，不是声明的 context length —— 差两个数量级。** 超上下文时服务端**不静默截断**：16226 B 的 body 在 **30 ms** 内回 400 `prompt 0 has 2359 tokens; expected 1–2050 (input is never truncated)`（明文声明不截断并给出精确 token 数）；70226 B 回 413（64 KiB 字节门）。⇒ **两条独立上限**：服务端 64 KiB **字节**（413）与每模型 `num_ctx` **token**（400）；对这类英文文本 2050 token ≈ 13–14 KB，**token 门通常先于字节门触发**，故"通过 64 KiB 检查"完全不代表能跑。冻结证据：`.temp/ctx-probe/{probe.mjs,probe.out,models.out}`。**已知未决**：`LIMITS.softBodyBytes = 16384` 是**字节**策略阈值，≈2350 token 已超过 2050 ⇒ 该告警可能在硬失败之后才响；按 token 重新校准需要一个分词器，尚未做（v2）。
 | 响应头**已到达**、body 读完前 socket 断开（undici `TypeError: terminated`），或信号在读取途中触发 | `unreachable`（读取中断连）/ `aborted` / `timeout`（信号） | 复用各自对应行的文案；见下方注 |
 
 映射结果以抛 `SystemOneError` 表达；`tool.js` 把它转成工具错误结果（`isError`），**不吞异常、不降级为猜测**。
@@ -434,7 +437,7 @@ urgency  score   1.154 / 2  p={1=0.7075, 2=0.2234, 0=0.0691}  conf=0.304
 |---|---|
 | `test/fake-ollama.mjs` | `node:http` 起一个可编程假服务：按路由返回预设状态码/body，记录收到的请求体 |
 | `test/validate.test.mjs` | V1–V9 全矩阵：64/65 题、重复名、非法 type、1/2/26/27 选项、score 传对象、noul 传非法键、65536/65537 字节、空 model |
-| `test/client.test.mjs` | 三型正常返回（含 `usage`）、404→`model_missing`、413→`too_large`、400→`invalid_request`、500+`non-finite logit`→`model_broken`、500 其他→`server_error`、连接拒绝→`unreachable`、超时→`timeout`、非 JSON→`bad_response`、`AbortSignal` 合并可中断 |
+| `test/client.test.mjs` | 三型正常返回（含 `usage`）、404→`model_missing`、413→`too_large`、400 上下文溢出→`context_overflow`（抓出 token 数与上限）、400 其他→`invalid_request`、500+`non-finite logit`→`model_broken`、500 其他→`server_error`、连接拒绝→`unreachable`、超时→`timeout`、非 JSON→`bad_response`、`AbortSignal` 合并可中断 |
 | `test/render.test.mjs` | 三型渲染文本快照；概率降序；`score` 显示 `x / N-1` |
 | `test/schema.test.mjs` | `parameterSchemaSpecToJsonSchema(parameters)` 投影快照；断言 `questions.items.additionalProperties === false`、`state` 有 3 个 `oneOf` 分支 |
 | `smoke/live.mjs` | 可选：真打本机 Ollama，三型各跑一次并打印结论与耗时（默认不跑） |
