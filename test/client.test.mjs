@@ -109,15 +109,38 @@ test('超时 → timeout，提示首次调用含模型加载', async () => {
   });
 });
 
-test('调用方取消 → aborted（与超时可区分）', async () => {
+test('调用方取消 → aborted，且立即生效（不被 timeoutMs 兜住）', async () => {
   await withServer(() => ({ hang: true }), async (fake) => {
     const controller = new AbortController();
+    const started = Date.now();
     const pending = callSystemOne({
       baseUrl: fake.baseUrl, body: BODY, timeoutMs: 30000, signal: controller.signal,
     });
     setTimeout(() => controller.abort(), 50);
     const error = await pending.then(() => null, (e) => e);
     assert.equal(error.kind, 'aborted');
+    // 关键：取消必须真正中止 fetch，而不是等 timeoutMs 到点。
+    // 若把 AbortSignal.any 换成只传 timeoutSignal，kind 仍是 'aborted'
+    // （toTransportError 里另有 signal?.aborted 检查保持分类正确），
+    // 但那时代价是 socket 一直挂到 timeoutMs（本任务 30s、Task 4 默认 120s）。
+    // 这条耗时断言就是为那个回归设的 —— 规格 §4.3 明写「工具被取消能真中断」。
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed < 2000, `cancel 应立即生效，实际耗时 ${elapsed}ms（timeoutMs 是 30000）`);
+  });
+});
+
+test('body 读取中途断连 → SystemOneError，而不是没有 kind 的裸 TypeError', async () => {
+  await withServer(() => ({ truncate: true }), async (fake) => {
+    const error = await failure({ baseUrl: fake.baseUrl, body: BODY, timeoutMs: 5000 });
+    // 这条用例钉住的是：响应头已到、body 读到一半失败时，错误仍必须被映射。
+    // 若 callSystemOne 里 `await response.text()` 落在 try 之外，这里收到的会是
+    // undici 的 TypeError: terminated —— 没有 kind，Task 4 的工具按 kind 分派就会崩。
+    assert.ok(
+      error instanceof SystemOneError,
+      `期望 SystemOneError，实际 ${error?.constructor?.name}: ${error?.message}`,
+    );
+    assert.equal(error.kind, 'unreachable');
+    assert.match(error.hint, /ollama serve/);
   });
 });
 
