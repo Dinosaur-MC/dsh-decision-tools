@@ -159,12 +159,14 @@ test('V8 边界：正好 65536 字节通过，再多 1 字节被拒', () => {
 test('LIMITS 冻结：4 项服务端硬限 + 1 项本地策略阈值', () => {
   // softBodyBytes 不是服务端限制，是本地的**策略**阈值（非实测退化点）；
   // 它同样被逐字锁定，避免有人顺手调小/调大而不留痕。
+  // 4096 B ≈ 1230 token ≈ 60% 的 tev1:0.8b num_ctx=2050（实测 3.33 B/token），
+  // 依据与已知局限见 lib/validate.js 该常量的注释。
   assert.deepEqual(LIMITS, {
     maxQuestions: 64,
     minOptions: 2,
     maxOptions: 26,
     maxBodyBytes: 65536,
-    softBodyBytes: 16384,
+    softBodyBytes: 4096,
   });
 });
 

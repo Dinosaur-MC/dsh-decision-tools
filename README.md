@@ -117,10 +117,17 @@ The defaults above are the ones declared in `lib/tool.js` (`Config`).
 5. Server limits: 64 KiB request without images, 64 questions, 2–26 options per
    question. The binding limit is usually smaller: the effective context is the model's
    own `num_ctx`, not the architecture's context length. On this machine
-   `ollama show tev1:0.8b` reports `context length 262144` but `num_ctx = 2050`, so a
-   ~16 KiB body already returns HTTP 400
+   `ollama show tev1:0.8b` reports `context length 262144` but `num_ctx = 2050`, and
+   measured on real English technical prose that ceiling is only ~6.8 KiB of body
+   (~3.33 bytes/token), so a ~8 KB body already returns HTTP 400
    `prompt 0 has <N> tokens; expected 1–<M> (input is never truncated)`, mapped to
    `context_overflow` — the input is **not** truncated and no partial answer is returned.
+   The plugin's advisory size threshold sits well inside that ceiling
+   (`LIMITS.softBodyBytes = 4096` B ≈ 1230 tokens ≈ 60 % of 2050), so it can warn
+   **before** the server rejects: crossing it only adds a `body_warning` to the result and
+   changes no rejection behaviour. The authoritative guard stays the server's token check.
+   Byte count is a crude proxy, though: dense scripts (CJK) and ID-heavy text tokenize
+   worse than 3.33 B/token and this threshold under-protects on such input.
 6. **Bounded decisions only.** This plugin answers bounded questions whose candidate set is known up front. Open-ended generation, reasoning chains, and candidates that must be discovered while thinking still belong to a generative model.
 
 ## Development
