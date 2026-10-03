@@ -1913,12 +1913,18 @@ git commit -F - <<'MSG'
 feat(bundle): 接线为可安装的 DSH bundle
 
 cordis.patch.yml 插入一行 decision-tools-tool，指向包名 dsh-decision-tools
-（经 exports["."] 解析到 lib/index.js）。配置字段直接写在行上 —— patch 会替换
-整行 config，无 config: 包裹层。
+（经 exports["."] 解析到 lib/index.js）。本插件不需要任何配置，故该行只有 id/name；
+**若将来要覆盖配置，必须写在行的 `config:` 键下** —— 平铺在行上会被静默忽略
+（EntryOptions 只认 id/name/config/group/disabled/inject，只有 options.config 会传给插件）。
 
 package.json 声明 dsh.bundle.patch，使 install_bundle 能找到接线。
 MSG
 ```
+
+> **控制器勘误（第十一处错误，由 Task 5 实现者实测发现）**：上面这段提交信息在修订前写的是「配置字段直接写在行上 —— patch 会替换整行 config，**无 config: 包裹层**」，**因果完全反了**。实测依据：`@deepseek-ai/cordis-plugin-loader` 的 `EntryOptions` 只有 `config?: any`；该包 `lib/index.js:461` 只把 `options.config` 传给插件；官方与第一方模板及本机活 profile（124 处 `config:`）一律用 `config:` 包裹。**症状（平铺则静默失效）记对了，归因记反了。**
+>
+> **影响面**：patch 的活代码只有 `id`/`name`，**不影响能否挂载**；受损的是注释示例 —— 照抄会静默失效，恰好制造出该事实警告过的症状。**已提交的 `a6fc183` 提交信息与 `cordis.patch.yml` 的注释都含这句错注**，属不可改历史（提交信息）与需修注释（文件）；本勘误是唯一权威更正。规格 §4.2 同错，已同步更正。
+> **另**：注释示例里的 `tev1:latest` 是随手写的，与冻结默认 `tev1:0.8b` 不一致 ⇒ 一并统一，否则 Task 6 的 README 默认值表会与 patch 注释对不上。
 
 - [ ] **Step 6: 安装到 web profile**
 
