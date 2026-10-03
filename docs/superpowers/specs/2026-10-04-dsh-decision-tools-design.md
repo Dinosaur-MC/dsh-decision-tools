@@ -39,11 +39,11 @@ Ollama v0.35.0 起提供 System One 决策能力（`POST /v1/systemone`），由
 | 事实 | 来源 |
 |---|---|
 | 工具注册 | `ctx.tools.register(defineTool({...}))`，`defineTool` 由 `@deepseek-ai/dsh-tools@0.2.0-rc.2` 导出 |
-| 硬依赖注入 | `inject: ['tools', 'systemPrompt']` 两个键均有效 |
+| 硬依赖注入 | `inject: ['tools']` 即可满足本插件（不注册 prompt 段，见 ADR-5）。`'systemPrompt'` 也是有效键，但本插件不再需要 |
 | 参数 DSL | `ParameterSchemaSpec`：标量 / `array{items}` / `object{properties, additionalProperties(必填)}` / `json` / `oneOf`(≥2 分支)；必填是逐属性的 `required: true` |
-| 结果 schema | `output: { schema: ValueSchemaSpec, render(args, value) => ContentBlock[] }` |
-| prompt 段 | `ctx.systemPrompt.section({ name, order, text })` |
-| 配置 | `@deepseek-ai/schemastery` 的 `z` |
+| 结果 schema | `output: { schema: ValueSchemaSpec, render(args, value) => ContentBlock[] }`；宿主会用它对**每个成功返回值**强校验 |
+| prompt 段（本插件不使用，见 ADR-5） | `ctx.systemPrompt.section({ name, order, text })`，`order` 应取自中央注册表 `ctx.systemPrompt.getSectionOrder("NAME")`。**实测三条**：①`SECTION_ORDERS` 的 32 个具名槽位（`HARNESS_IDENTITY:-1000` … `DEPLOYMENT_PERSONA_SUFFIX:10200`）**全部被第一方占用，没有留给第三方工具的槽位**；②`getSectionOrder` 是裸查表，未注册名返回 `undefined`，随即被 `section()` 的 finite 检查抛错；③`section()` 只拦非有限 order，去重键是 `name` 而非 `order` ⇒ 裸魔数不会被拦住，同 order 合法 |
+| 配置 | `@deepseek-ai/schemastery` 的 `z`。**没有 `.optional()`**，可选性写 `.required(false)` |
 | 免构建先例 | `G:\LAB\202608\dsh-win-multi-bash`：手写 ESM `lib/*.js` + `package.json` 的 `dsh.bundle.patch` + `cordis.patch.yml` 的 `insert:` 行 |
 
 ## 3. 架构决策
@@ -80,6 +80,20 @@ Ollama v0.35.0 起提供 System One 决策能力（`POST /v1/systemone`），由
 
 **理由**：实测同一题 0.8B 与 4.2B 给出不同答案（`bug` vs `billing`），而 4.2B 的答案在题面（500 错误、结账不可用）下并不更合理。**不存在「大就是好」**，调用方需要能按题选模型并自行测量。
 
+### ADR-5：不注册 prompt 段，指引只放在工具 description
+
+**决定**：`inject` 只需 `['tools']`；不调用 `ctx.systemPrompt.section()`；所有使用指引（何时用/何时不用、`noul` 是概率、`confidence` 不是正确率、`score` 的 0..N-1 尺度、一批多题）全部写在 `TOOL_DESCRIPTION` 里。原 `DECISION_SECTION` 中描述里没有的两点（「0.475 不等于否」的具体例子、「低置信度就升级给自己」）**并入 description**。
+
+**理由（三条，按分量排序）**：
+
+1. **重复**。原计划的 prompt 段与工具 description 逐句比对约 85% 同义，等于把同一份指引发两遍，prompt 成本翻倍而信息量不增。
+2. **没有合法槽位可放**。实测 `SECTION_ORDERS` 的 32 个具名槽位全部被第一方占用（`TOOL_*` 由各工具具名占用、`MCP_SERVERS` 由 `dsh-mcp-client` 占用、`TOOLS_SDK` 由 `dsh-tools` 本体的 `tools:sdk` 段占用），**没有留给第三方工具的槽位**；而 `getSectionOrder(name)` 是裸查表，传未注册名得到 `undefined`，会被 `section()` 的 finite 检查抛错。所以任何写法都只能二选一：裸魔数（不受中央管理、且可能撞上未来新增槽位），或借用别人的槽名（语义不实）。
+3. **机制强度**。`practices.md` 原则 4 要求「use the weakest mechanism that suffices」。工具 description 只在该工具被考虑时呈现，比全局 prompt 段更聚焦；而 `practices.md` 也明确「Do not listen to `system-prompt/assemble` to add or remove tools or text」。
+
+**代价与接受**：失去一条全局行为提醒（「有界判定优先用 decision，而不是自己猜」）。这个提醒本就写在 description 里；若日后实测发现模型在明显该用 decision 的场合不用它，再按 ADR-6 重开此议题 —— 届时必须先用 `cordis_inspect_query` 查清当时的注册表是否有新槽位。
+
+**撤回的旧写法**：本规格早期版本写过 `ctx.systemPrompt.section({ name: 'tool:decision', order: 105 })`。该 `105` 抄自 `G:\LAB\202608\dsh-win-multi-bash` 里 **vendored 的 0.1.7 时代副本**，不是现行惯例：现行版本全部 26 处 section 注册**无一使用裸数字**，一律 `getSectionOrder("NAME")`。105 落在 `DEPLOYMENT_PERSONA_PREFIX(0)` 与 `PLAN_POLICY(500)` 之间，而工具段位全部在 1000–3000 —— 不只是魔数，还在**错误的 band** 里。
+
 ## 4. 组件设计
 
 ### 4.1 包结构
@@ -93,14 +107,14 @@ dsh-decision-tools/
 │  ├─ client.js                  # SystemOneClient
 │  ├─ validate.js                # 本地前置校验（纯函数，便于单测）
 │  ├─ render.js                  # answers → ContentBlock[]
-│  ├─ prompt.js                  # DECISION_SECTION 常量
 │  └─ tool.js                    # defineTool 定义 + apply()
 ├─ test/
 │  ├─ fake-ollama.mjs            # node:http 假服务，供各测试复用
 │  ├─ client.test.mjs
 │  ├─ validate.test.mjs
 │  ├─ render.test.mjs
-│  └─ schema.test.mjs
+│  ├─ parameters.test.mjs        # 契约结构不变量（零 DSH 依赖，因 parameters.js 零 import）
+│  └─ tool.test.mjs              # 装配与端到端（对假 Ollama）
 ├─ smoke/live.mjs                # 可选真机冒烟（不进 CI、不入包）
 ├─ README.md · README.zh.md
 ├─ LICENSE (MIT) · THIRD_PARTY_NOTICES
@@ -194,7 +208,7 @@ export async function callSystemOne({
 
 ```js
 export const name = 'decision-tools';        // 插件身份，不是工具名
-export const inject = ['tools', 'systemPrompt'];
+export const inject = ['tools'];              // 只注册工具，不碰 systemPrompt（ADR-5）
 export const Config = z.object({
   baseUrl: z.string().default('http://localhost:11434'),
   defaultModel: z.string().default('tev1:0.8b'),
@@ -208,9 +222,10 @@ export const Config = z.object({
 });
 
 export function apply(ctx, config) {
-  const toolName = config.toolName;
-  ctx.tools.register(defineTool({ name: toolName, description, parameters, output, execute }));
-  ctx.systemPrompt.section({ name: `tool:${toolName}`, order: 105, text: DECISION_SECTION });
+  // 只注册工具。使用指引全部在 description 里，不注册 prompt 段（ADR-5）。
+  ctx.tools.register(defineTool({
+    name: config.toolName, description, parameters, output, execute,
+  }));
 }
 ```
 
@@ -304,15 +319,18 @@ urgency score   1.154 / 2       p={1:0.708, 2:0.223, 0:0.069}              conf=
 
 **理由**：模型读逐行文本比读嵌套 JSON 更省 token、更不易误读；概率按降序排列，让「次优选项」可见（用于阈值判断与不确定性识别）。完整原始 JSON 仍可通过 `output.schema` 取到。
 
-### 4.9 prompt 段（`lib/prompt.js`）
+### 4.9 使用指引的落点：只有工具 description（ADR-5）
 
-控制在 ~10 行，只讲模型自己看不出来的事：
+不注册 prompt 段（理由见 ADR-5）。全部指引写进 `TOOL_DESCRIPTION`，必须覆盖以下六点，缺一不可 —— 这六点原计划分散在 prompt 段与 description 两处，现合并到一处：
 
-1. **何时用** `decision`：候选集合已知且有界（路由、分类、过滤、打分、重排）；需要的是概率而非文字；同一批材料要问多题（一次请求问完）。
-2. **何时不用**：开放式生成、需要推理链、候选需要边想边发现 —— 那些留给 System 2。
-3. **`noul` 返回的是概率不是布尔**：`0.475` 不等于「否」，它是「真」的概率。
-4. **`confidence` 是分布集中度不是正确率**：`conf=0.30` 表示模型在多档间摇摆，此时应看 `probabilities` 而非只看结论。
-5. **阈值升级**：低置信度时把该题升级给 System 2 处理，而不是直接采信。
+1. **何时用**：候选集合已知且有界（路由、分类、过滤、相关性、打分）；需要的是概率而非文字。
+2. **何时不用**：开放式生成、需要推理链、候选要边想边发现 —— 留给 System 2。
+3. **一批多题**：同一材料的所有问题放在**一次**调用里（上限 64 题）；不要循环一题一次调用，那会重复发送整个 `state`。
+4. **`noul` 是概率不是布尔**：返回值是「真」的概率。带一个具体例子（`0.475` 不代表「否」，而是 47.5% 的概率为是）。
+5. **`confidence` 是分布集中度不是正确率**：`1 − H(p)/ln N`。低 confidence 表示模型在多个选项间摇摆 ⇒ 此时应读 `probabilities` 而不是只看被选中的结论。
+6. **低置信度时升级**：把该题交回自己的推理，而不是直接采信。
+
+另外 description 里要顺带给出数值边界（`choice`/`score` 2–26 项；`score` 报在 `0..N-1` 尺度上、不归一化），因为这些是模型自己推不出来的。
 
 ### 4.10 配置项
 

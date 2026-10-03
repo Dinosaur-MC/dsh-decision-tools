@@ -4,7 +4,7 @@
 
 **Goal:** 把本机 Ollama 的 System One 决策能力（`POST /v1/systemone`）注册成 DSH 的一个模型可见工具 `decision`，一次调用可问 1–64 道 `choice`/`noul`/`score` 混合题并共享同一 `state`。
 
-**Architecture:** 纯 JS 免构建的 Cordis 插件（照搬 `G:\LAB\202608\dsh-win-multi-bash` 形态）。核心逻辑按「与 harness 无关」与「接触 ctx」切分：`parameters.js`/`prompt.js`/`validate.js`/`render.js`/`client.js` 五个模块零 DSH 依赖（前四个零依赖，`client.js` 只用 `fetch`/`AbortSignal` 标准 API），只有 `tool.js` 接触 `ctx`。这样绝大部分逻辑可以用 `node:test` 独立测，且将来做 CLI 或评测装置可直接复用。
+**Architecture:** 纯 JS 免构建的 Cordis 插件（照搬 `G:\LAB\202608\dsh-win-multi-bash` 形态）。核心逻辑按「与 harness 无关」与「接触 ctx」切分：`parameters.js`/`validate.js`/`render.js`/`client.js` 四个模块零 DSH 依赖（前三个零依赖，`client.js` 只用 `fetch`/`AbortSignal` 标准 API），只有 `tool.js` 接触 `ctx`。这样绝大部分逻辑可以用 `node:test` 独立测，且将来做 CLI 或评测装置可直接复用。**不注册 prompt 段**（ADR-5）：使用指引全部在工具 description 里，`inject` 只需 `tools`。
 
 **Tech Stack:** Node.js 22（`node:test`、`node:http`、内建 `fetch`/`AbortSignal`）；`@deepseek-ai/dsh-tools`（`defineTool`）、`@deepseek-ai/schemastery`（`Config`）、`@deepseek-ai/cordis`（插件宿主）——三者均为 **peerDependencies**，运行时由宿主提供，开发期用软链接入。零新增第三方依赖。
 
@@ -19,7 +19,8 @@
 - **临时/探测产物写 `.temp/`**（已 gitignore），不入库。
 - **服务端硬限**：无图请求体 ≤ **65536 字节**；`questions` **1–64**；`choice`/`score` 候选项 **2–26**；问题类型只有 `choice`、`noul`、`score`（**没有** `boolean`）。
 - **默认配置值**：`baseUrl='http://localhost:11434'`、`defaultModel='tev1:0.8b'`、`timeoutMs=120000`、`toolName='decision'`、`keepAlive` 未设。
-- **已验证的宿主事实**（不得凭记忆改写）：DSH profile = `web`；`@deepseek-ai/dsh-tools@0.2.0-rc.2`；`inject: ['tools','systemPrompt']` 两键均有效；`defineTool` 的参数与输出都用**紧凑 DSL**（`ValueSchemaSpec`/`ParameterSchemaSpec`），**不是**裸 JSON Schema；`object` 节点**必须**写 `additionalProperties`；`oneOf` **至少 2 个分支**；`required: true` 是**逐属性**注解；`ContentBlock` 形状是 `{ type: 'text', text: string }`。
+- **已验证的宿主事实**（不得凭记忆改写）：DSH profile = `web`；`@deepseek-ai/dsh-tools@0.2.0-rc.2`；本插件 `inject` 只需 `['tools']`；`defineTool` 的参数与输出都用**紧凑 DSL**（`ValueSchemaSpec`/`ParameterSchemaSpec`），**不是**裸 JSON Schema；**宿主用 `output.schema` 对每个成功返回值强校验**；参数由注册表 `validateArgs` 强校验；`object` 节点**必须**写 `additionalProperties`；`oneOf` **至少 2 个分支**；`required: true` 是**逐属性**注解；该 DSL **没有** `minItems`/`maxProperties` 类关键字；`ContentBlock` 形状是 `{ type: 'text', text: string }`。
+- **不注册 prompt 段**（ADR-5）：`SECTION_ORDERS` 的 32 个具名槽位全部被第一方占用，没有留给第三方工具的槽位；`getSectionOrder(name)` 对未注册名返回 `undefined`，会被 `section()` 的 finite 检查抛错；`section()` 去重键是 `name` 而非 `order`，故裸魔数不会被拦住（这正是必须避免它的原因）。全部指引写进 `TOOL_DESCRIPTION`。
 - **宿主会对返回值强校验**：`defineTool` 的 `output.schema` 是「每一个成功返回值都要被它校验通过的」schema，写窄了会让正常返回变成工具失败。
 - **测试命令固定为** `node --test "test/*.test.mjs"`。**不要**用 `node --test test/` —— 在 Node 22.22.1 上它会把 `test/` 当模块路径去 `require`，报 `MODULE_NOT_FOUND`。
 - **不得在 Node 里用 `child_process` 抓子进程输出**（本机沙箱下管道 stdio 会 EPERM）。需要发现路径时用 `process.execPath` 推导。
@@ -32,8 +33,7 @@
 |---|---|---|
 | `package.json` | 包元信息、`files` 白名单、peerDeps、`dsh.bundle.patch` | — |
 | `cordis.patch.yml` | 把插件行插进 composition | — |
-| `lib/parameters.js` | 工具的模型可见契约：描述 + 参数 schema（纯数据） | 无 |
-| `lib/prompt.js` | system prompt 段落文本（纯数据） | 无 |
+| `lib/parameters.js` | 工具的模型可见契约：描述（含全部使用指引）+ 参数 schema（纯数据，零 import） | 无 |
 | `lib/validate.js` | 语义前置校验 + 组装请求体（DSL 表达不了的限制都在这里） | 无 |
 | `lib/render.js` | `answers` → 紧凑逐行文本 | 无 |
 | `lib/client.js` | HTTP 调用、超时/取消、错误映射 | 无（只用标准 API） |
@@ -1192,7 +1192,6 @@ MSG
 
 **Files:**
 - Create: `lib/parameters.js`
-- Create: `lib/prompt.js`
 - Create: `lib/tool.js`
 - Create: `lib/index.js`
 - Test: `test/parameters.test.mjs`
@@ -1201,12 +1200,11 @@ MSG
 **Interfaces:**
 - Consumes: Task 1 的 `prepareRequest`/`DecisionValidationError`；Task 2 的 `renderAnswers`；Task 3 的 `callSystemOne`/`SystemOneError`
 - Produces:
-  - `PARAMETERS`（`ParameterSchemaSpec`，键顺序 `state`、`questions`、`model`）、`TOOL_DESCRIPTION`
-  - `DECISION_SECTION`（string）
-  - `name = 'decision-tools'`、`inject = ['tools','systemPrompt']`、`Config`（schemastery）、`apply(ctx, config)`
+  - `PARAMETERS`（`ParameterSchemaSpec`，键顺序 `state`、`questions`、`model`）、`TOOL_DESCRIPTION`（**承载全部使用指引**，见 ADR-5）
+  - `name = 'decision-tools'`、`inject = ['tools']`、`Config`（schemastery）、`apply(ctx, config)`
   - `lib/index.js` 转出以上四者
 
-- [ ] **Step 1: 写工具契约数据**
+- [ ] **Step 1: 写工具契约数据（含全部使用指引）**
 
 创建 `lib/parameters.js`：
 
@@ -1241,13 +1239,17 @@ export const TOOL_DESCRIPTION = [
   'Answer bounded decision questions about a shared piece of state with a local System One model.',
   'Use it for routing, classification, filtering, relevance judgement and scoring — tasks whose',
   'candidate set is known up front and whose useful answer is a probability rather than prose.',
-  'Ask several questions in ONE call: they all share `state`, and asking them separately re-sends it.',
   'Do not use it for open-ended generation or for problems that need a chain of reasoning.',
+  'Ask every question about the same material in ONE call (up to 64). Never loop one call per item:',
+  'each call re-sends the whole `state`.',
   'Question types: `choice` (pick one of 2-26 named options),',
-  '`noul` (probability that a statement is true; it returns a NUMBER, not a boolean),',
-  '`score` (probability-weighted average over 2-26 ordered levels, reported on the 0..N-1 scale).',
+  '`noul` (probability that a statement is true), and',
+  '`score` (probability-weighted average over 2-26 ordered levels).',
+  'Reading the answers: `noul` returns a NUMBER, not a boolean — 0.475 does not mean "no", it means',
+  'a 47.5% chance of yes. `score` is reported on the 0..N-1 level scale, not normalised to 0-1.',
   '`confidence` measures how concentrated the distribution is (1 - H/ln N); it is NOT accuracy.',
-  'When confidence is low, read the probabilities instead of trusting the chosen answer.',
+  'Low confidence means the model is torn between options: read `probabilities` instead of the chosen',
+  'answer, and escalate that question to your own reasoning rather than trusting it.',
 ].join(' ');
 
 export const PARAMETERS = {
@@ -1325,38 +1327,7 @@ export const PARAMETERS = {
 };
 ```
 
-- [ ] **Step 2: 写 prompt 段文本**
-
-创建 `lib/prompt.js`：
-
-```js
-/**
- * 挂进 system prompt 的 decision 工具使用说明。
- *
- * 只讲模型自己看不出来的事：什么时候该用、noul 是概率不是布尔、
- * confidence 是集中度不是正确率、以及怎么用它做阈值升级。
- * @module dsh-decision-tools/prompt
- */
-
-export const DECISION_SECTION = [
-  '## decision tool (System 1 bounded judgements)',
-  'Use `decision` when the candidate set is known and finite (routing, classification, filtering,',
-  'relevance, scoring) and the useful answer is a probability rather than prose. Do NOT use it for',
-  'open-ended generation or for problems that need a chain of reasoning — those stay with you.',
-  'Ask every question about the same material in ONE call (up to 64). Never loop one call per item:',
-  'each call re-sends the whole state.',
-  'Reading the answers:',
-  '1. `noul` returns the probability that the statement is TRUE — a number, not a boolean.',
-  '   0.475 does not mean "no"; it means a 47.5% chance of yes.',
-  '2. `confidence` is how concentrated the distribution is (1 - H/ln N), not correctness.',
-  '   Low confidence means the model is torn between options: read `probabilities`, not `choice`.',
-  '3. `score` is the probability-weighted average of zero-based level indices, ranging 0..N-1.',
-  '   It is not normalised to 0-1.',
-  'When confidence is low, escalate that question to your own reasoning instead of trusting the answer.',
-].join('\n');
-```
-
-- [ ] **Step 3: 写失败的契约测试**
+- [ ] **Step 2: 写失败的契约测试**
 
 创建 `test/parameters.test.mjs`：
 
@@ -1411,7 +1382,7 @@ test('能投影成 JSON Schema，且 required 只含 state 与 questions', () =>
 });
 ```
 
-- [ ] **Step 4: 运行确认失败**
+- [ ] **Step 3: 运行确认失败**
 
 ```bash
 node --test "test/parameters.test.mjs"
@@ -1419,7 +1390,7 @@ node --test "test/parameters.test.mjs"
 
 Expected: FAIL —— `Cannot find module '.../lib/parameters.js'`。
 
-- [ ] **Step 5: 运行确认通过**
+- [ ] **Step 4: 运行确认通过**
 
 ```bash
 node --test "test/parameters.test.mjs"
@@ -1427,20 +1398,19 @@ node --test "test/parameters.test.mjs"
 
 Expected: PASS —— 3 个 test 全绿。若 `parameterSchemaSpecToJsonSchema` 抛错，就是 DSL 写错了（最常见：object 分支漏 `additionalProperties`，或 `oneOf` 少于两个分支）。
 
-- [ ] **Step 6: 写装配层**
+- [ ] **Step 5: 写装配层**
 
 创建 `lib/tool.js`：
 
 ```js
 /**
- * decision 工具的装配：把纯逻辑模块接到 DSH 的 tools 与 systemPrompt 服务上。
+ * decision 工具的装配：把纯逻辑模块接到 DSH 的 tools 服务上。
  * 本文件是唯一接触 `ctx` 的地方。
  * @module dsh-decision-tools/tool
  */
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import z from '@deepseek-ai/schemastery';
 import { PARAMETERS, TOOL_DESCRIPTION } from './parameters.js';
-import { DECISION_SECTION } from './prompt.js';
 import { prepareRequest } from './validate.js';
 import { renderAnswers } from './render.js';
 import { callSystemOne } from './client.js';
@@ -1451,8 +1421,8 @@ import { callSystemOne } from './client.js';
  */
 export const name = 'decision-tools';
 
-/** 两个服务都必须就位：没有 tools 无法注册工具，没有 systemPrompt 挂不上用法说明。 */
-export const inject = ['tools', 'systemPrompt'];
+/** 只需要 tools：使用指引全部在工具 description 里，不注册 prompt 段（ADR-5）。 */
+export const inject = ['tools'];
 
 export const Config = z.object({
   baseUrl: z.string().default('http://localhost:11434'),
@@ -1500,12 +1470,6 @@ export function apply(ctx, config = {}) {
       return callSystemOne({ baseUrl, body, timeoutMs, signal: exec?.signal });
     },
   }));
-
-  ctx.systemPrompt.section({
-    name: `tool:${toolName}`,
-    order: 105,
-    text: DECISION_SECTION,
-  });
 }
 ```
 
@@ -1520,7 +1484,7 @@ export function apply(ctx, config = {}) {
 export { name, inject, Config, apply } from './tool.js';
 ```
 
-- [ ] **Step 7: 写装配测试**
+- [ ] **Step 6: 写装配测试**
 
 创建 `test/tool.test.mjs`：
 
@@ -1530,16 +1494,17 @@ import assert from 'node:assert/strict';
 import { name, inject, Config, apply } from '../lib/index.js';
 import { startFakeOllama } from './fake-ollama.mjs';
 
-/** 一个够用的假 ctx：只实现被用到的两个服务。 */
+/**
+ * 一个够用的假 ctx：**刻意只提供 tools**。
+ * 本插件不注册 prompt 段（ADR-5），所以缺少 systemPrompt 时 apply 必须照常工作 ——
+ * 这个假 ctx 本身就是那条不变量的守卫：一旦有人再加回 systemPrompt 调用，测试会直接崩。
+ */
 function fakeCtx() {
   const registered = [];
-  const sections = [];
   return {
     registered,
-    sections,
     ctx: {
       tools: { register: (definition) => { registered.push(definition); return () => {}; } },
-      systemPrompt: { section: (section) => { sections.push(section); return () => {}; } },
     },
   };
 }
@@ -1552,7 +1517,7 @@ const ANSWERS = {
 
 test('插件导出形状与默认配置', () => {
   assert.equal(name, 'decision-tools');
-  assert.deepEqual(inject, ['tools', 'systemPrompt']);
+  assert.deepEqual(inject, ['tools']);
   assert.equal(typeof apply, 'function');
   assert.deepEqual(Config({}), {
     baseUrl: 'http://localhost:11434',
@@ -1562,8 +1527,8 @@ test('插件导出形状与默认配置', () => {
   });
 });
 
-test('默认 toolName 配置下的工具名、schema 与 prompt 段', () => {
-  const { registered, sections, ctx } = fakeCtx();
+test('默认 toolName 配置下的工具名与 schema', () => {
+  const { registered, ctx } = fakeCtx();
   apply(ctx, Config({}));
 
   assert.equal(registered.length, 1);
@@ -1578,18 +1543,12 @@ test('默认 toolName 配置下的工具名、schema 与 prompt 段', () => {
   );
   assert.equal(typeof definition.output.render, 'function');
   assert.equal(typeof definition.execute, 'function');
-
-  assert.equal(sections.length, 1);
-  assert.equal(sections[0].name, 'tool:decision');
-  assert.equal(sections[0].order, 105);
-  assert.match(sections[0].text, /decision tool/);
 });
 
-test('toolName 配置会同时改工具名与 prompt 段名', () => {
-  const { registered, sections, ctx } = fakeCtx();
+test('toolName 配置改变工具名', () => {
+  const { registered, ctx } = fakeCtx();
   apply(ctx, Config({ toolName: 'decide' }));
   assert.equal(registered[0].name, 'decide');
-  assert.equal(sections[0].name, 'tool:decide');
 });
 
 test('execute 打到 /v1/systemone 并原样返回 answers', async () => {
@@ -1663,29 +1622,29 @@ test('model 参数逐次覆盖默认模型', async () => {
 });
 ```
 
-- [ ] **Step 8: 运行全部测试**
+- [ ] **Step 7: 运行全部测试**
 
 ```bash
 node --test "test/*.test.mjs"
 ```
 
-Expected: PASS —— `# fail 0`，共 40 个 test（31 + 3 + 6）。
+Expected: PASS —— `# fail 0`，共 41 个 test（13 + 6 + 12 + 3 + 7）。
 
-- [ ] **Step 9: 语法与 LF 校验**
+- [ ] **Step 8: 语法与 LF 校验**
 
 ```bash
-for f in lib/parameters.js lib/prompt.js lib/tool.js lib/index.js; do node --check "$f" || echo "SYNTAX FAIL $f"; done
-for f in lib/parameters.js lib/prompt.js lib/tool.js lib/index.js test/parameters.test.mjs test/tool.test.mjs; do
+for f in lib/parameters.js lib/tool.js lib/index.js; do node --check "$f" || echo "SYNTAX FAIL $f"; done
+for f in lib/parameters.js lib/tool.js lib/index.js test/parameters.test.mjs test/tool.test.mjs; do
   printf "%-34s CR=%s\n" "$f" "$(tr -cd '\r' < "$f" | wc -c)"
 done
 ```
 
 Expected: 每个 `CR=0`，无 `SYNTAX FAIL`。
 
-- [ ] **Step 10: 提交**
+- [ ] **Step 9: 提交**
 
 ```bash
-git add lib/parameters.js lib/prompt.js lib/tool.js lib/index.js test/parameters.test.mjs test/tool.test.mjs
+git add lib/parameters.js lib/tool.js lib/index.js test/parameters.test.mjs test/tool.test.mjs
 git commit -F - <<'MSG'
 feat(tool): decision 工具装配与模型可见契约
 
@@ -1693,15 +1652,18 @@ feat(tool): decision 工具装配与模型可见契约
 共享同一 state。多条目判定（给 N 篇文档各打一次分）在一次请求里问完，避免重复传 state。
 
 参数契约单独放在 parameters.js 且零 import，使契约测试不依赖宿主包解析。
-prompt 段只讲模型看不出来的事：noul 是概率不是布尔、confidence 是集中度不是正确率、
-低置信度时应读分布并升级给自己处理。
+使用指引全部写在工具 description 里、不注册 prompt 段（ADR-5）：SECTION_ORDERS 的
+32 个具名槽位全被第一方占用，没有留给第三方工具的槽位，而 getSectionOrder 对未注册名
+返回 undefined 会被 section() 抛错；且原计划里那段文字与 description 约 85% 同义。
+description 因此吸收了原 prompt 段独有的两点：0.475 不代表否的具体例子、低置信度升级。
+
+假 ctx 刻意只提供 tools —— 它本身就是"不依赖 systemPrompt"这条不变量的守卫。
 
 新增 lib/parameters.js（PARAMETERS / TOOL_DESCRIPTION）
-新增 lib/prompt.js（DECISION_SECTION）
-新增 lib/tool.js（name/inject/Config/apply，唯一接触 ctx 的文件）
+新增 lib/tool.js（name/inject/Config/apply，唯一接触 ctx 的文件，inject 仅 ['tools']）
 新增 lib/index.js（转出包入口）
 新增 test/parameters.test.mjs（3 个用例，含投影为 JSON Schema）
-新增 test/tool.test.mjs（6 个用例，含假 ctx 与不发网络请求的断言）
+新增 test/tool.test.mjs（7 个用例，含假 ctx 与不发网络请求的断言）
 MSG
 ```
 
@@ -1728,7 +1690,7 @@ MSG
 #
 # 行说明：
 #   decision-tools-tool — 注册 `decision` 工具（模型可见名由配置项 toolName 决定），
-#     并把用法说明挂进 system prompt。本插件不依赖平台，任何环境都注册。
+#     本插件不依赖平台，任何环境都注册。使用指引在工具 description 里，不注册 prompt 段（ADR-5）。
 #
 # 覆盖默认配置时，字段**直接写在行上**（patch 会替换整行 config，因此要重述全部字段）：
 #   - insert:
@@ -2147,16 +2109,17 @@ Expected: 6 个提交；`git status` 干净（`.temp/` 与 `node_modules/` 已�
 | §3 ADR-1 纯 JS 免构建 | Global Constraints + Task 1 Step 3（无构建链） |
 | §3 ADR-2 单工具 + 数组式 questions | Task 4（`PARAMETERS.questions` 是数组，仅注册一个工具） |
 | §3 ADR-3 v1 不做视觉 | 无 `images` 参数；Task 6 Step 2 复测 clef 缺陷 |
-| §3 ADR-4 model 可逐次覆盖 | Task 1 Step 6（`prepareRequest`）+ Task 4 Step 7（覆盖测试） |
+| §3 ADR-4 model 可逐次覆盖 | Task 1 Step 6（`prepareRequest`）+ Task 4 Step 6（覆盖测试） |
+| §3 ADR-5 不注册 prompt 段 | Task 4 Step 1（description 吸收全部指引）+ Step 6（假 ctx **不提供** `systemPrompt`，作不变量守卫；并断言 `inject === ['tools']`） |
 | §4.2 patch 与行/模块对应 | Task 5 Step 1–3 |
 | §4.3 SystemOneClient | Task 3 |
-| §4.4 tool.js 与 apply | Task 4 Step 6 |
-| §4.5 参数 schema | Task 4 Step 1 + Step 3（结构不变量测试） |
+| §4.4 tool.js 与 apply | Task 4 Step 5 |
+| §4.5 参数 schema | Task 4 Step 1 + Step 2（结构不变量测试） |
 | §4.6 校验规则 V1–V9 | Task 1 Step 6 + Step 4（每个 V 都有对应用例） |
 | §4.7 错误映射表（8 行） | Task 3 Step 4 实现 + Step 2 用例：`unreachable`/`timeout`/`model_missing`/`too_large`/`invalid_request`/`model_broken`/`server_error`/`bad_response` 八行**逐行有用例**；额外覆盖 `aborted`（调用方取消，与超时可区分）。`transport` 与 `http_error` 是兜底分支，无直接用例 |
 | §4.8 渲染 | Task 2 |
-| §4.9 prompt 段 | Task 4 Step 2 + Step 7（断言 `name`/`order`） |
-| §4.10 配置项 | Task 4 Step 6 + Step 7（`Config({})` 逐字断言） |
+| §4.9 使用指引只放 description（ADR-5） | Task 4 Step 1（description 覆盖规格列出的六点）+ Step 2 的 `parameters.test.mjs`（断言点明 noul 非布尔、confidence 非正确率）+ Step 6 的 `tool.test.mjs`（假 ctx 无 `systemPrompt`） |
+| §4.10 配置项 | Task 4 Step 5 + Step 6（`Config({})` 逐字断言） |
 | §6 测试计划 | Task 1–4 的 test 文件；`fake-ollama.mjs` 在 Task 3 |
 | §7 验收标准 1–6 | Task 5 Step 4/6/7/8/9 + Task 6 Step 8（LF 用真实字节计数） |
 | §8 已知限制 | Task 6 Step 2（复测）+ Step 5/6（写入 README） |
