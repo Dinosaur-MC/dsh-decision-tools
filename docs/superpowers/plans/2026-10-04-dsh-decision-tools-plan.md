@@ -2444,6 +2444,102 @@ node --test "test/*.test.mjs"
 Expected: PASS —— `# fail 0`，共 38 个 test（15 + 9 + 14：validate + render + client）。
 > 38 这个数是**含**上文「同步 `LIMITS` 断言」之后的。漏掉那一步会得到 37/1 —— 这正是控制器初稿的缺陷。
 
+---
+
+### Task 7 · 修复轮 1（Task 7 评审后追加；**三处全部计数中立，仍是 38**）
+
+评审判 Approved，但指出一处**真实的测试缺口**：用例 B 的「无告警」fixture 用了 `body_bytes: 2`，**低于软阈值** ⇒ 一个**在 `render.js` 里硬编码自己那份 16384 阈值**的实现能通过全部用例 —— 而 §4.8 明令**策略不得进入渲染层**。也就是说那条架构约束当前**不可验证**。本修复轮把它变成可验证，并顺手关掉两个同文件的计数中立项。
+
+- [ ] **Step R1: 改三处（只动两个测试文件）**
+
+**(a) 用例 B 的负例 fixture 必须**高于**阈值** —— 这是本轮的主项。`test/render.test.mjs`：
+
+```js
+test('体积告警：body_warning 原样追加；无字段时不得凭空产生告警（即使已超阈值）', () => {
+  const warned = renderAnswers({}, {
+    model: 'tev1:0.8b',
+    answers: { q: { type: 'noul', noul: 0.4751 } },
+    state_bytes: 20000,
+    body_bytes: 20480,
+    body_warning: '请求体 20480 字节，已超过建议的 16384 字节：可考虑拆成多次调用，或缩小 state。',
+  })[0];
+  assert.match(warned.text, /^体积: state=20000B body=20480B$/m);
+  assert.match(warned.text, /已超过建议的 16384 字节/);
+
+  // 关键：body_bytes **高于**软阈值却**不带** body_warning ⇒ 必须没有任何告警。
+  // 若 render 自己内联了 16384 这个阈值，这一条会红 —— 它钉住的正是
+  // 「策略属于工具层，render 只呈现」这条 §4.8 约束。
+  const plain = renderAnswers({}, {
+    model: 'tev1:0.8b',
+    answers: { q: { type: 'noul', noul: 0.4751 } },
+    state_bytes: 20000,
+    body_bytes: 20480,
+  })[0];
+  assert.doesNotMatch(plain.text, /超过建议/);
+  assert.match(plain.text, /^体积: state=20000B body=20480B$/m);
+
+  // 空字符串与「没有该键」必须同义：不得打印空行（否则模型会读到一行空白）。
+  const empty = renderAnswers({}, {
+    model: 'tev1:0.8b',
+    answers: { q: { type: 'noul', noul: 0.4751 } },
+    body_bytes: 20480,
+    body_warning: '',
+  })[0];
+  assert.doesNotMatch(empty.text, /\n\s*$/);
+  assert.equal(empty.text, plain.text.replace('state=20000B body=20480B', 'body=20480B'));
+});
+```
+
+> 注：末条比较用拼接而非硬编码整串，是为了同时钉住「空串 == 缺键」且不把列宽写死。若实现者发现更直接的等价写法，可用，但**必须同时断言：空串与缺键的输出逐字相同**。
+
+**(b) LIMITS 用例改名**（`test/validate.test.mjs`）—— 现在它锁的 5 个键里有 1 个不是服务端限制，名字说大了：
+
+```js
+test('LIMITS 冻结：4 项服务端硬限 + 1 项本地策略阈值', () => {
+```
+
+**(c) V2 报错里的补救子句补断言**（`test/validate.test.mjs`）—— 现在只 match 了「不能是纯数字」，没钉住它告诉调用方怎么办：
+
+```js
+  expectReject(
+    base({ questions: [{ name: '1', type: 'noul', instructions: 'x' }] }),
+    /不能是纯数字[\s\S]*请改用 q1/,
+  );
+```
+
+**(d) `LIMITS.softBodyBytes` 的注释不得断言一个会失效的推导**（`lib/validate.js`）。现注释写「硬上限的 1/4」，而值是字面量 `16384` ⇒ 将来 `maxBodyBytes` 一旦变动，这句话**静默变假**（正是本项目反复出现的「文档与实现漂移」）。改为不依赖推导的措辞：
+
+```js
+  /**
+   * 体积告警的**策略**阈值，**不是**实测退化点：超过它只让工具层产出一行提示、
+   * 让模型有机会自行拆批，**不改变任何拒绝行为**。
+   * 本机从未测量「state 体积 → 判定质量」的曲线，故 description 里不得把它写成经验上限。
+   * 取值参照当时的硬上限（65536 的 1/4 = 16384）；**若 maxBodyBytes 变动，此处需重新评估**。
+   */
+  softBodyBytes: 16384,
+```
+
+**(e) 不改**：§4.8 说告警「紧随其后」，而实现让两条独立判定 ⇒ 理论上 `body_warning` 可以不带 `体积:` 行出现。评审者判定**不可达**（Task 4 的契约只在两个字节字段都有限时才产出告警），并明确建议**不要改** —— 因为「因为兄弟字段缺失就把告警吞掉」比多打一行更糟。控制器采纳：保持实现，仅在 §4.8 加一句说明。
+
+- [ ] **Step R2: 跑测试**
+
+```bash
+node --test "test/*.test.mjs"
+```
+
+Expected: PASS —— `# fail 0`，共 **38** 个 test（计数不变：本轮只改 fixture 与断言，不新增用例）。
+
+- [ ] **Step R3: 变异自检（本轮必须做的三枪，且每枪先证明落地）**
+
+1. **主项**：在 `lib/render.js` 里把告警改成**内联策略阈值**（例如 `value.body_bytes > 16384` 就直接 push 固定文案）⇒ **(a) 的 `doesNotMatch` 必须变红**。若它仍绿，说明本轮的加固没生效。
+2. 删掉 `&& value.body_warning !== ''` ⇒ **(a) 的空串断言必须变红**（此前这一枪是 38/38 全绿 = 无承重）。
+3. 把 `LIMITS` 断言改回四项子集比较 ⇒ **(b) 改名后的用例**应仍绿（改名不影响强度），但**全对象 `deepEqual` 被换成子集时必须红** —— 若不然，说明断言被削弱了。
+
+- [ ] **Step R4: LF 与提交**
+
+四个文件 CR=0；提交信息说明「本轮把 §4.8 的『策略不进渲染层』从不可验证变为可验证」，并注明计数仍为 38。
+
+
 - [ ] **Step 5: 语法与 LF 校验**
 
 ```bash
