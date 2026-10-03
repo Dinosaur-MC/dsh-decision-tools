@@ -156,8 +156,8 @@ test('V8 边界：正好 65536 字节通过，再多 1 字节被拒', () => {
   expectReject(base({ state: 'x'.repeat(lo + 1) }), /请求体 \d+ 字节，超过服务端上限 65536 字节（64 KiB）；请缩减 state/);
 });
 
-test('LIMITS 与服务端文档一致', () => {
-  // softBodyBytes 不是服务端限制，是本地的**策略**阈值（硬上限的 1/4，非实测退化点）；
+test('LIMITS 冻结：4 项服务端硬限 + 1 项本地策略阈值', () => {
+  // softBodyBytes 不是服务端限制，是本地的**策略**阈值（非实测退化点）；
   // 它同样被逐字锁定，避免有人顺手调小/调大而不留痕。
   assert.deepEqual(LIMITS, {
     maxQuestions: 64,
@@ -171,7 +171,7 @@ test('LIMITS 与服务端文档一致', () => {
 test('V2 续：题名不得为纯数字串（纯数字会被 JS 对象映射重排，破坏有序批量语义）', () => {
   expectReject(
     base({ questions: [{ name: '1', type: 'noul', instructions: 'x' }] }),
-    /不能是纯数字/,
+    /不能是纯数字[\s\S]*请改用 q1/,
   );
   // 非纯数字题名不受影响。注意本规则比实际的「整数索引键」集合略宽
   // （"01" 其实不会被重排，这里同样会拒），宁可多拒也不错排。

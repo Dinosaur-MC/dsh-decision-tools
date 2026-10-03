@@ -94,7 +94,7 @@ test('体积口径：value 带 state_bytes/body_bytes 时追加一行', () => {
   assert.match(block.text, /^体积: state=101B body=634B$/m);
 });
 
-test('体积告警：body_warning 原样追加；缺失时不得凭空产生告警', () => {
+test('体积告警：body_warning 原样追加；无字段时不得凭空产生告警（即使已超阈值）', () => {
   const warned = renderAnswers({}, {
     model: 'tev1:0.8b',
     answers: { q: { type: 'noul', noul: 0.4751 } },
@@ -105,13 +105,29 @@ test('体积告警：body_warning 原样追加；缺失时不得凭空产生告�
   assert.match(warned.text, /^体积: state=20000B body=20480B$/m);
   assert.match(warned.text, /已超过建议的 16384 字节/);
 
+  // 关键：body_bytes **高于**软阈值却**不带** body_warning ⇒ 必须没有任何告警。
+  // 若 render 自己内联了 16384 这个阈值，这一条会红 —— 它钉住的正是
+  // 「策略属于工具层，render 只呈现」这条 §4.8 约束。
   const plain = renderAnswers({}, {
     model: 'tev1:0.8b',
     answers: { q: { type: 'noul', noul: 0.4751 } },
-    state_bytes: 1,
-    body_bytes: 2,
+    state_bytes: 20000,
+    body_bytes: 20480,
   })[0];
   assert.doesNotMatch(plain.text, /超过建议/);
+  assert.match(plain.text, /^体积: state=20000B body=20480B$/m);
+
+  // 空字符串与「没有该键」必须同义：不得打印空行（否则模型会读到一行空白）。
+  const empty = renderAnswers({}, {
+    model: 'tev1:0.8b',
+    answers: { q: { type: 'noul', noul: 0.4751 } },
+    state_bytes: 20000,
+    body_bytes: 20480,
+    body_warning: '',
+  })[0];
+  assert.doesNotMatch(empty.text, /\n\s*$/);
+  // 直接断言「空串」与「缺键」的输出逐字相同（比拼接期望串更强，也不写死任何列宽）。
+  assert.equal(empty.text, plain.text);
 });
 
 test('体积口径：字段缺失时不打印该行（向后兼容）', () => {
