@@ -213,17 +213,16 @@ export class SystemOneError extends Error {
 }
 
 export async function callSystemOne({
-  baseUrl, model, state, questions, keepAlive,
-  timeoutMs, signal, fetchImpl = fetch,
-}) { /* 见 4.3 职责 1–5 */ }
+  baseUrl, body, timeoutMs, signal, fetchImpl = fetch,
+}) { /* 见 4.3 职责 1–4 */ }
 ```
 
 **职责**：
-1. 组装 body：`{ model, state, questions }` + 可选 `keep_alive`
-2. 发送前做 64 KiB 体积检查（`Buffer.byteLength(JSON.stringify(body))`）
-3. 超时：`AbortSignal.timeout(timeoutMs)` 与调用方 `signal` 用 `AbortSignal.any([...])` 合并
-4. 响应解析与错误映射（见 4.7）
-5. 成功时返回 `{ answers, usage }` **原样**，不重写、不归一化
+
+1. 发送**已组装好的** `body`（`{ model, state, questions }` + 可选 `keep_alive`）。**`questions` 的数组→对象转换与 64 KiB 体积检查都不在这里** —— 两者都在 `prepareRequest`（见 **ADR-6** 与 §4.6 的 V8/V10）。本函数不对 body 的形状做任何假设，它只负责传输。
+2. 超时：`AbortSignal.timeout(timeoutMs)` 与调用方 `signal` 用 `AbortSignal.any([...])` 合并。**这个合并是硬要求，不是优化**：调用方取消时必须在毫秒级**真正中止** `fetch`，**不得**退化成等 `timeoutMs` 到点。退化的代价是隐蔽的 —— 分类仍可能正确地报 `aborted`（因为另有 `signal?.aborted` 检查），但 socket 会白白挂到超时上限（默认 120s）。该性质由 `test/client.test.mjs` 的**耗时断言**钉住（< 2000ms，而该用例的 `timeoutMs` 是 30000），仅靠 `kind` 断言无法发现退化。
+3. 响应解析与错误映射（见 §4.7）。**body 读取本身也必须被守卫**：响应头已到达、body 尚未读完时 socket 断开（undici 抛 `TypeError: terminated`），或信号在读取途中触发 —— 两者都必须映射成带 `kind` 的 `SystemOneError`（见 §4.7 的 mid-body 行），不得逃成没有 `kind` 的裸错误，否则按 `kind` 分派的上层会把它当成未处理异常。
+4. 成功时返回 `{ answers, usage }` **原样**，不重写、不归一化。
 
 **可测试性**：`fetchImpl` 与 `signal` 均可注入 ⇒ 单测无需真实网络；`baseUrl` 可指向假服务端口。
 
@@ -325,8 +324,11 @@ const parameters = {
 | HTTP 500 且 body 含 `non-finite logit` | `model_broken` | 「{model} 在 Ollama 0.35.1 上有已知缺陷（Clef: non-finite logit），请改用 tev1 系模型」 |
 | HTTP 500 其他 | `server_error` | 原样带出服务端 `error` |
 | 2xx 但 body 非 JSON / 缺 `answers` | `bad_response` | 「Ollama 返回了无法解析的响应」 |
+| 响应头**已到达**、body 读完前 socket 断开（undici `TypeError: terminated`），或信号在读取途中触发 | `unreachable`（读取中断连）/ `aborted` / `timeout`（信号） | 复用各自对应行的文案；见下方注 |
 
 映射结果以抛 `SystemOneError` 表达；`tool.js` 把它转成工具错误结果（`isError`），**不吞异常、不降级为猜测**。
+
+**注 · mid-body 终止的映射是已知不精确的（有意保留，不细化）**：响应头已到达、body 尚未读完时连接断开，会落到 `toTransportError` 里 `name === 'TypeError'` 的兜底分支，报成 `unreachable` 并提示「确认 Ollama 已在运行（`ollama serve`）」。此时连接其实**建立过**，那条提示略有误导。选择保留而非细化，理由有三：①这是 undici 的通用兜底，收紧它会把「连接根本没建立」这个最常见且提示最准确的情形一起误伤；②为此新增一个 `kind` 等于给上层加一条几乎不会出现的分支；③真实收益只是文案更准，而代价是一个新的映射面。**该映射已被 `test/client.test.mjs` 的 mid-body 用例钉住** —— 将来若要细化，必须同步修改那条用例的 `kind` 断言。
 
 ### 4.8 渲染（`lib/render.js`）
 
