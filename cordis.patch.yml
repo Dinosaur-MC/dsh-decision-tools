@@ -4,15 +4,20 @@
 #   decision-tools-tool — 注册 `decision` 工具（模型可见名由配置项 toolName 决定），
 #     本插件不依赖平台，任何环境都注册。使用指引在工具 description 里，不注册 prompt 段（ADR-5）。
 #
-# 覆盖默认配置时，字段**直接写在行上**（patch 会替换整行 config，因此要重述全部字段）：
+# 本行**不需要任何配置**，故下面没有 `config:` 键 —— Config 的五个键全部走插件默认值。
+#
+# 可选 per-machine 覆盖 —— 配置**必须写在行的 `config:` 键下**；把字段平铺在行上会被
+# **静默忽略**（`EntryOptions` 只认 id/name/config/group/disabled/inject，且只有
+# `options.config` 会传给插件）。patch 会**替换整行 config**，故启用时需重述全部字段：
 #   - insert:
 #       - id: decision-tools-tool
 #         name: 'dsh-decision-tools'
-#         baseUrl: 'http://localhost:11434'
-#         defaultModel: 'tev1:latest'
-#         timeoutMs: 180000
-#         toolName: 'decision'
-#         keepAlive: '30m'
+#         config:
+#           baseUrl: 'http://localhost:11434'
+#           defaultModel: 'tev1:0.8b'
+#           timeoutMs: 180000
+#           toolName: 'decision'
+#           keepAlive: '30m'
 
 - insert:
     - id: decision-tools-tool
