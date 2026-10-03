@@ -7,10 +7,14 @@ import { LIMITS } from '../lib/validate.js';
 import { startFakeOllama } from './fake-ollama.mjs';
 
 /**
- * 计数口径（各文件用例数；改动本文件时必须同步更新，本仓没有任何自动核对）：
+ * 计数口径（各文件用例数；改动本文件时必须同步更新 —— 用例**总数**没有任何自动核对，
+ * 但「README 配置表键集/顺序 == Config 投影」这条不变量自 2026-10-04 起由
+ * `test/parameters.test.mjs` 的 `README 的配置表键集与顺序…` 一条自动守卫）：
  * `validate 15 + render 9 + client 14 + parameters 3 + tool 7 = 48`
  * → 2026-10-04 本文件新增 3 条（可配置的体积告警），此后为
- * `validate 15 + render 9 + client 14 + parameters 3 + tool 10 = 51`。
+ * `validate 15 + render 9 + client 14 + parameters 3 + tool 10 = 51`
+ * → 同日 `parameters.test.mjs` 新增 1 条（README 配置表守卫），此后为
+ * `validate 15 + render 9 + client 14 + parameters 4 + tool 10 = 52`。
  */
 
 /**
