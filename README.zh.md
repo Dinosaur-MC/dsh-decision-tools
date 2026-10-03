@@ -28,26 +28,35 @@
 
 ```json
 {
-  "state": "Our checkout has returned 500 errors since 9am.",
+  "state": "Our checkout has returned 500 errors since 9am. The payments page shows a generic error and no orders go through.",
   "questions": [
     { "name": "label", "type": "choice",
       "instructions": "Which label fits this ticket?",
-      "criteria": { "billing": "Payments and refunds", "bug": "Software errors" } },
+      "criteria": { "billing": "Payments and refunds", "bug": "Software errors",
+                    "account": "Login and account access" } },
     { "name": "refund", "type": "noul",
       "instructions": "Is the customer requesting a refund?" },
     { "name": "urgency", "type": "score",
-      "instructions": "How urgently does this need a response?",
-      "criteria": ["Routine", "Soon", "Immediate"] }
+      "instructions": "How urgently does this ticket need a response?",
+      "criteria": ["Routine: no time pressure",
+                   "Soon: a customer is inconvenienced",
+                   "Immediate: a critical service is unavailable"] }
   ]
 }
 ```
 
-每题返回一行，末尾附一行 usage（以下为 `tev1:0.8b` 实测）：
+**上面这次请求**的返回 —— 每题一行，末尾附 usage 与体积口径两行。本机 `tev1:0.8b`
+的一次真实运行：`node smoke/live.mjs` 发的就是同一个请求，会打印上面四行（体积行由
+工具层追加，冒烟脚本本身不打）。
 
     label    choice  bug  p={bug=0.9648, account=0.0293, billing=0.0059}  conf=0.847
     refund   noul    P(true)=0.5045
     urgency  score   1.1235 / 2  p={1=0.7369, 2=0.1933, 0=0.0698}  conf=0.337
     (usage: input_tokens=796 output_tokens=4)
+    体积: state=113B body=682B
+
+概率、分数与 token 数都是模型输出，换模型或换机器就会变；两个字节数刻画的是上面
+那次请求本身，因此固定不变。
 
 ## Question types
 
@@ -69,14 +78,30 @@
 | `toolName` | `decision` | 模型看到的工具名 |
 | `keepAlive` | 未设 | 透传为 `keep_alive`；未设则用服务端默认 |
 
-在 `cordis.patch.yml` 里把字段直接写在行上即可覆盖。
+在 `cordis.patch.yml` 里必须把字段写在行的 `config:` 键**下**。把字段**平铺在行上**
+会被静默忽略，也没有任何告警 —— 插件只会按默认值运行。
+
+    - insert:
+        - id: decision-tools-tool
+          name: 'dsh-decision-tools'
+          config:
+            baseUrl: 'http://localhost:11434'
+            defaultModel: 'tev1:0.8b'
+            timeoutMs: 180000
+            toolName: 'decision'
+            keepAlive: '30m'
+
+`config` 是**整块替换**、不做深合并，所以覆盖时必须重述该行用到的全部字段 —— 照抄上面
+这一整块即可；行自己的键只有 `id`、`name`、`config`、`disabled`、`inject`、`intercept`
+与 `isolate`。
 上表默认值取自 `lib/tool.js` 的 `Config`。
 
 ## Known limitations
 
 1. **`clef` / `clef-flash` 在 Ollama 0.35.1 上已损坏。** 任何请求 —— 纯文本、
-   带图、或单个最小 `noul` —— 都返回
-   `500 {"message":"Clef: non-finite logit"}`。因此本版不支持视觉。
+   带图、或单个最小 `noul` —— 都返回 500，响应体为
+   `{"error":"{\"error\":{\"code\":500,\"message\":\"Clef: non-finite logit\",\"type\":\"server_error\"}}"}`。
+   因此本版不支持视觉。
 2. **更大不必然更对。** 同一题上 `tev1:0.8b` 给 `bug`（p=0.9648），而
    `tev1:latest`（4.2B）给 `billing`（p=0.5710，`bug` 仅 0.3212）——
    按题面看 `billing` 是更弱的答案。请按题实测选型。

@@ -29,26 +29,37 @@ One call, three question types, one shared state:
 
 ```json
 {
-  "state": "Our checkout has returned 500 errors since 9am.",
+  "state": "Our checkout has returned 500 errors since 9am. The payments page shows a generic error and no orders go through.",
   "questions": [
     { "name": "label", "type": "choice",
       "instructions": "Which label fits this ticket?",
-      "criteria": { "billing": "Payments and refunds", "bug": "Software errors" } },
+      "criteria": { "billing": "Payments and refunds", "bug": "Software errors",
+                    "account": "Login and account access" } },
     { "name": "refund", "type": "noul",
       "instructions": "Is the customer requesting a refund?" },
     { "name": "urgency", "type": "score",
-      "instructions": "How urgently does this need a response?",
-      "criteria": ["Routine", "Soon", "Immediate"] }
+      "instructions": "How urgently does this ticket need a response?",
+      "criteria": ["Routine: no time pressure",
+                   "Soon: a customer is inconvenienced",
+                   "Immediate: a critical service is unavailable"] }
   ]
 }
 ```
 
-Returns one line per question plus a usage line (measured with `tev1:0.8b`):
+The answer to *that* request — one line per question, then the usage and byte-size
+lines. A real `tev1:0.8b` run on this machine: `node smoke/live.mjs` sends the same
+request and prints the four lines above (the byte-size line is added by the tool
+layer, not by the smoke script).
 
     label    choice  bug  p={bug=0.9648, account=0.0293, billing=0.0059}  conf=0.847
     refund   noul    P(true)=0.5045
     urgency  score   1.1235 / 2  p={1=0.7369, 2=0.1933, 0=0.0698}  conf=0.337
     (usage: input_tokens=796 output_tokens=4)
+    体积: state=113B body=682B
+
+The probabilities, the score and the token counts are model output and change with
+the model or the machine; the two byte counts describe the request above, so they
+stay put.
 
 ## Question types
 
@@ -70,14 +81,31 @@ Returns one line per question plus a usage line (measured with `tev1:0.8b`):
 | `toolName` | `decision` | the name the model sees |
 | `keepAlive` | unset | passed through as `keep_alive`; unset uses the server default |
 
-Override in `cordis.patch.yml` by writing the fields directly on the row.
+Override in `cordis.patch.yml` by nesting the fields under the row's `config:` key.
+Fields written **flat on the row** are silently ignored, and no warning is printed —
+the plugin just runs on its defaults.
+
+    - insert:
+        - id: decision-tools-tool
+          name: 'dsh-decision-tools'
+          config:
+            baseUrl: 'http://localhost:11434'
+            defaultModel: 'tev1:0.8b'
+            timeoutMs: 180000
+            toolName: 'decision'
+            keepAlive: '30m'
+
+`config` is replaced wholesale, never deep-merged, so an override must restate every
+field the row needs — the whole block above is the shape to copy, and the row's own
+keys are only `id`, `name`, `config`, `disabled`, `inject`, `intercept` and `isolate`.
 The defaults above are the ones declared in `lib/tool.js` (`Config`).
 
 ## Known limitations
 
 1. **`clef` / `clef-flash` are broken on Ollama 0.35.1.** Every request — plain text,
-   with an image, or a single minimal `noul` — returns
-   `500 {"message":"Clef: non-finite logit"}`. Vision is therefore not supported.
+   with an image, or a single minimal `noul` — returns a 500 whose body is
+   `{"error":"{\"error\":{\"code\":500,\"message\":\"Clef: non-finite logit\",\"type\":\"server_error\"}}"}`.
+   Vision is therefore not supported.
 2. **Bigger is not necessarily more correct.** On the same ticket, `tev1:0.8b`
    answered `bug` (p=0.9648) while `tev1:latest` (4.2B) answered `billing`
    (p=0.5710, `bug` only 0.3212) — and `billing` is the weaker answer given the

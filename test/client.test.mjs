@@ -68,7 +68,12 @@ test('400 → invalid_request，带出服务端原文与合法类型清单', asy
       assert.equal(error.kind, 'invalid_request');
       assert.match(error.message, /type must be choice, noul, or score/);
       assert.match(error.hint, /choice、noul、score/);
-      assert.match(error.hint, /对象映射/, 'hint 必须点明 questions 是对象映射 —— 真实的 400 常常来自形状而非类型');
+      assert.match(error.hint, /2[-–]26/, 'hint 必须保留可行动的选项数约束');
+      // ADR-6 之后 callSystemOne 只收 prepareRequest 产出的线格式（questions 恒为对象映射），
+      // 而工具对**模型**公布的参数契约是数组、validate.js 的 V1 还会拒绝模型直接给对象，
+      // 所以 400 不可能是 questions 的形状问题。hint 里再出现「对象映射」就是在教模型做
+      // 一次注定失败的重试 —— 这条断言钉住它不得回潮。
+      assert.doesNotMatch(error.hint, /对象映射|数组/);
     },
   );
 });
