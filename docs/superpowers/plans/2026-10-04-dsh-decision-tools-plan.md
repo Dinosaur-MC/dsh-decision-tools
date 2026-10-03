@@ -777,7 +777,7 @@ export function renderAnswers(_args, value) {
 node --test "test/*.test.mjs"
 ```
 
-Expected: PASS —— `# fail 0`，共 20 个 test（14 + 6）。
+Expected: PASS —— `# fail 0`，共 20 个 test（14 + 6：validate + render）。
 
 - [ ] **Step 5: 语法与 LF 校验**
 
@@ -1261,7 +1261,7 @@ export async function callSystemOne({
 node --test "test/*.test.mjs"
 ```
 
-Expected: PASS —— `# fail 0`，共 34 个 test（20 + 14）。
+Expected: PASS —— `# fail 0`，共 34 个 test（14 + 6 + 14：validate + render + client）。
 
 - [ ] **Step 6: 语法与 LF 校验**
 
@@ -1733,7 +1733,7 @@ test('model 参数逐次覆盖默认模型', async () => {
 node --test "test/*.test.mjs"
 ```
 
-Expected: PASS —— `# fail 0`，共 44 个 test（14 + 6 + 14 + 3 + 7）。
+Expected: PASS —— `# fail 0`，共 44 个 test（14 + 6 + 14 + 3 + 7：validate + render + client + parameters + tool）。
 
 - [ ] **Step 8: 语法与 LF 校验**
 
