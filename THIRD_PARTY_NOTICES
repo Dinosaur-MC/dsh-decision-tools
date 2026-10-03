@@ -1,0 +1,15 @@
+dsh-decision-tools — third-party notices
+========================================
+
+Runtime peer dependencies (provided by the DSH host, not bundled here):
+
+  @deepseek-ai/cordis        — MIT
+  @deepseek-ai/dsh-tools     — MIT
+  @deepseek-ai/schemastery   — MIT
+
+No third-party source code is vendored into this package. The plugin talks to a
+locally running Ollama server over its HTTP API (POST /v1/systemone); no Ollama
+code is included or required at build time.
+
+Model weights are NOT included. The decision models (tev1, nimble, clef, ...) are
+downloaded separately through Ollama and carry their own licences.
