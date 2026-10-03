@@ -81,3 +81,43 @@ test('未知答案类型不炸，退化为 JSON', () => {
   assert.match(text, /q\s+mystery/);
   assert.match(text, /"value":1/);
 });
+
+test('体积口径：value 带 state_bytes/body_bytes 时追加一行', () => {
+  const value = {
+    model: 'tev1:0.8b',
+    answers: { q: { type: 'noul', noul: 0.4751 } },
+    usage: { input_tokens: 799, output_tokens: 1 },
+    state_bytes: 101,
+    body_bytes: 634,
+  };
+  const [block] = renderAnswers({}, value);
+  assert.match(block.text, /^体积: state=101B body=634B$/m);
+});
+
+test('体积告警：body_warning 原样追加；缺失时不得凭空产生告警', () => {
+  const warned = renderAnswers({}, {
+    model: 'tev1:0.8b',
+    answers: { q: { type: 'noul', noul: 0.4751 } },
+    state_bytes: 20000,
+    body_bytes: 20480,
+    body_warning: '请求体 20480 字节，已超过建议的 16384 字节：可考虑拆成多次调用，或缩小 state。',
+  })[0];
+  assert.match(warned.text, /^体积: state=20000B body=20480B$/m);
+  assert.match(warned.text, /已超过建议的 16384 字节/);
+
+  const plain = renderAnswers({}, {
+    model: 'tev1:0.8b',
+    answers: { q: { type: 'noul', noul: 0.4751 } },
+    state_bytes: 1,
+    body_bytes: 2,
+  })[0];
+  assert.doesNotMatch(plain.text, /超过建议/);
+});
+
+test('体积口径：字段缺失时不打印该行（向后兼容）', () => {
+  const [block] = renderAnswers({}, {
+    model: 'tev1:0.8b',
+    answers: { q: { type: 'noul', noul: 0.4751 } },
+  });
+  assert.doesNotMatch(block.text, /体积:/);
+});
