@@ -134,7 +134,7 @@ test('V8 边界：正好 65536 字节通过，再多 1 字节被拒', () => {
   assert.ok(overhead(lo + 1) > LIMITS.maxBodyBytes);
 
   assert.doesNotThrow(() => prepareRequest(base({ state: 'x'.repeat(lo) })));
-  expectReject(base({ state: 'x'.repeat(lo + 1) }), /请求体 \d+ 字节，超过服务端上限 65536 字节；/);
+  expectReject(base({ state: 'x'.repeat(lo + 1) }), /请求体 \d+ 字节，超过服务端上限 65536 字节（64 KiB）；请缩减 state/);
 });
 
 test('LIMITS 与服务端文档一致', () => {
