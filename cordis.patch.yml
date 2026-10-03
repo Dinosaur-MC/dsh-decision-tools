@@ -1,0 +1,19 @@
+# dsh-decision-tools — 把本机 Ollama 的 System One 决策能力注册成模型工具。
+#
+# 行说明：
+#   decision-tools-tool — 注册 `decision` 工具（模型可见名由配置项 toolName 决定），
+#     本插件不依赖平台，任何环境都注册。使用指引在工具 description 里，不注册 prompt 段（ADR-5）。
+#
+# 覆盖默认配置时，字段**直接写在行上**（patch 会替换整行 config，因此要重述全部字段）：
+#   - insert:
+#       - id: decision-tools-tool
+#         name: 'dsh-decision-tools'
+#         baseUrl: 'http://localhost:11434'
+#         defaultModel: 'tev1:latest'
+#         timeoutMs: 180000
+#         toolName: 'decision'
+#         keepAlive: '30m'
+
+- insert:
+    - id: decision-tools-tool
+      name: 'dsh-decision-tools'
