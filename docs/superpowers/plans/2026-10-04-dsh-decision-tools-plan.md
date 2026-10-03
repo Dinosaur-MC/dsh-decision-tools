@@ -516,7 +516,7 @@ function validateQuestion(at, question, seenNames) {
 /**
  * 校验一次 decision 调用并组装发往 `/v1/systemone` 的请求体。
  * @param {{ state: unknown, questions: unknown, model?: string, defaultModel?: string, keepAlive?: string|number }} input
- * @returns {{ model: string, state: unknown, questions: unknown[], keep_alive?: string|number }}
+ * @returns {{ model: string, state: unknown, questions: Record<string, { type: string, instructions: string, criteria?: unknown }>, keep_alive?: string|number }}
  * @throws {DecisionValidationError} 任一条目不合规时
  */
 export function prepareRequest({ state, questions, model, defaultModel, keepAlive }) {
@@ -966,6 +966,27 @@ test('400 → invalid_request，带出服务端原文与合法类型清单', asy
       assert.equal(error.kind, 'invalid_request');
       assert.match(error.message, /type must be choice, noul, or score/);
       assert.match(error.hint, /choice、noul、score/);
+      assert.match(error.hint, /对象映射/, 'hint 必须点明 questions 是对象映射 —— 真实的 400 常常来自形状而非类型');
+    },
+  );
+});
+
+test('线格式守卫：假服务以与真服务同形的 400 拒绝数组形状的 questions（ADR-6）', async () => {
+  // 假服务现在照真服务的样子拒绝错形状（本机实测数组 → HTTP 400
+  // "Value looks like object, but can't find closing '}' symbol"）。
+  // 这条用例的意义是**让守卫本身被钉住** —— 没有它，守卫就是一个在套件里永不触发的
+  // 死分支，改坏了也没人知道；而它正是防止"线格式违规再次本地全绿地溜过"的那道闸。
+  await withServer(
+    () => ({ status: 200, body: { model: 'tev1:0.8b', answers: {} } }),
+    async (fake) => {
+      const error = await failure({
+        baseUrl: fake.baseUrl,
+        body: { model: 'tev1:0.8b', state: 'x', questions: [{ name: 'q', type: 'noul', instructions: 'Yes?' }] },
+        timeoutMs: 5000,
+      });
+      assert.equal(error.kind, 'invalid_request');
+      assert.equal(error.status, 400);
+      assert.match(error.message, /but can't find closing/);
     },
   );
 });
@@ -1240,7 +1261,7 @@ export async function callSystemOne({
 node --test "test/*.test.mjs"
 ```
 
-Expected: PASS —— `# fail 0`，共 33 个 test（20 + 13）。
+Expected: PASS —— `# fail 0`，共 34 个 test（20 + 14）。
 
 - [ ] **Step 6: 语法与 LF 校验**
 
@@ -1266,7 +1287,7 @@ client.js 不感知 DSH，便于将来复用到 CLI 或评测装置。
 
 新增 lib/client.js（callSystemOne / SystemOneError，含 11 种 kind）
 新增 test/fake-ollama.mjs（node:http 可编程假服务，记录请求体）
-新增 test/client.test.mjs（13 个用例，含超时/取消【含生效耗时】可区分、body 读取中断、注入 fetchImpl）
+新增 test/client.test.mjs（14 个用例，含超时/取消【含生效耗时】可区分、body 读取中断、线格式守卫、注入 fetchImpl）
 MSG
 ```
 
@@ -1712,7 +1733,7 @@ test('model 参数逐次覆盖默认模型', async () => {
 node --test "test/*.test.mjs"
 ```
 
-Expected: PASS —— `# fail 0`，共 43 个 test（14 + 6 + 13 + 3 + 7）。
+Expected: PASS —— `# fail 0`，共 44 个 test（14 + 6 + 14 + 3 + 7）。
 
 - [ ] **Step 8: 语法与 LF 校验**
 
