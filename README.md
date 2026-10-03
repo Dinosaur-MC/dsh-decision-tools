@@ -81,23 +81,24 @@ stay put.
 | `toolName` | `decision` | the name the model sees |
 | `keepAlive` | unset | passed through as `keep_alive`; unset uses the server default |
 
-Override in `cordis.patch.yml` by nesting the fields under the row's `config:` key.
-Fields written **flat on the row** are silently ignored, and no warning is printed —
-the plugin just runs on its defaults.
+Override in `cordis.patch.yml` by nesting the fields under the row's `config:` key. To
+**override the existing row**, use a bare `id` and **no `insert`**. Fields written
+**flat on the row** are silently ignored, and no warning is printed — the plugin just
+runs on its defaults.
 
-    - insert:
-        - id: decision-tools-tool
-          name: 'dsh-decision-tools'
-          config:
-            baseUrl: 'http://localhost:11434'
-            defaultModel: 'tev1:0.8b'
-            timeoutMs: 180000
-            toolName: 'decision'
-            keepAlive: '30m'
+    - id: decision-tools-tool
+      config:
+        baseUrl: 'http://localhost:11434'
+        defaultModel: 'tev1:0.8b'
+        timeoutMs: 180000
+        toolName: 'decision'
+        keepAlive: '30m'
 
 `config` is replaced wholesale, never deep-merged, so an override must restate every
 field the row needs — the whole block above is the shape to copy, and the row's own
 keys are only `id`, `name`, `config`, `disabled`, `inject`, `intercept` and `isolate`.
+`insert:` is for adding a new row (this bundle's own patch does that); overriding an
+existing row uses a bare `id` with no `insert`.
 The defaults above are the ones declared in `lib/tool.js` (`Config`).
 
 ## Known limitations

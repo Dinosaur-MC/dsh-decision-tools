@@ -6,18 +6,21 @@
 #
 # 本行**不需要任何配置**，故下面没有 `config:` 键 —— Config 的五个键全部走插件默认值。
 #
-# 可选 per-machine 覆盖 —— 配置**必须写在行的 `config:` 键下**；把字段平铺在行上会被
-# **静默忽略**（`EntryOptions` 只认 id/name/config/group/disabled/inject，且只有
-# `options.config` 会传给插件）。patch 会**替换整行 config**，故启用时需重述全部字段：
-#   - insert:
-#       - id: decision-tools-tool
-#         name: 'dsh-decision-tools'
-#         config:
-#           baseUrl: 'http://localhost:11434'
-#           defaultModel: 'tev1:0.8b'
-#           timeoutMs: 180000
-#           toolName: 'decision'
-#           keepAlive: '30m'
+# 可选 per-machine 覆盖（写在你自己的 patch 层里）—— **覆盖既有行**要用「裸 `id` + 无 `insert`」：
+#   - id: decision-tools-tool
+#     config:
+#       baseUrl: 'http://localhost:11434'
+#       defaultModel: 'tev1:0.8b'
+#       timeoutMs: 180000
+#       toolName: 'decision'
+#       keepAlive: '30m'
+#
+# 配置**必须写在行的 `config:` 键下**；把字段平铺在行上会被**静默忽略**（`EntryOptions` 只认
+# id/name/config/group/disabled/inject/intercept/isolate，且只有 `options.config` 会传给插件）。
+# patch 会**替换整行 config**（绝不深合并），故覆盖时必须重述该行用到的全部字段。
+#
+# 两种操作别混：`insert:` 是**新增行**（本 bundle 自己的 patch 就是这么注册的，见下）；
+# **覆盖既有行**用裸 `id`、**不带 `insert`**。
 
 - insert:
     - id: decision-tools-tool

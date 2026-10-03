@@ -78,22 +78,21 @@
 | `toolName` | `decision` | 模型看到的工具名 |
 | `keepAlive` | 未设 | 透传为 `keep_alive`；未设则用服务端默认 |
 
-在 `cordis.patch.yml` 里必须把字段写在行的 `config:` 键**下**。把字段**平铺在行上**
-会被静默忽略，也没有任何告警 —— 插件只会按默认值运行。
+在 `cordis.patch.yml` 里**覆盖既有行**要用**裸 `id`、不带 `insert`**，并把字段写在行的
+`config:` 键**下**。把字段**平铺在行上**会被静默忽略，也没有任何告警 —— 插件只会按默认值运行。
 
-    - insert:
-        - id: decision-tools-tool
-          name: 'dsh-decision-tools'
-          config:
-            baseUrl: 'http://localhost:11434'
-            defaultModel: 'tev1:0.8b'
-            timeoutMs: 180000
-            toolName: 'decision'
-            keepAlive: '30m'
+    - id: decision-tools-tool
+      config:
+        baseUrl: 'http://localhost:11434'
+        defaultModel: 'tev1:0.8b'
+        timeoutMs: 180000
+        toolName: 'decision'
+        keepAlive: '30m'
 
 `config` 是**整块替换**、不做深合并，所以覆盖时必须重述该行用到的全部字段 —— 照抄上面
 这一整块即可；行自己的键只有 `id`、`name`、`config`、`disabled`、`inject`、`intercept`
-与 `isolate`。
+与 `isolate`。`insert:` 用于**新增一行**（本 bundle 自己的 patch 就是这么做的）；**覆盖既有行**
+用裸 `id`、**不带 `insert`**。
 上表默认值取自 `lib/tool.js` 的 `Config`。
 
 ## Known limitations
