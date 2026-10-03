@@ -20,6 +20,18 @@ export async function startFakeOllama(handler) {
       const record = { method: req.method, url: req.url, raw, json };
       requests.push(record);
 
+      // 线格式契约守卫（ADR-6）：真实服务端要求 questions 是「题名 → 问题对象」的
+      // 映射，数组会在**解析阶段**被拒（本机实测 HTTP 400
+      // "Value looks like object, but can't find closing '}' symbol"）。
+      // 假服务照做 —— 否则整套本地测试在结构上无法发现这类线格式违规，
+      // 而"本地全绿 + 真机全挂"正是这个缺陷第一次溜过去的原因。
+      if (json !== undefined && json.questions !== undefined
+        && (json.questions === null || typeof json.questions !== 'object' || Array.isArray(json.questions))) {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: "Value looks like object, but can't find closing '}' symbol" }));
+        return;
+      }
+
       const reply = handler(record);
       if (reply === 'destroy') { req.socket.destroy(); return; }
       if (reply.hang) return; // 永不响应：用于测超时与取消

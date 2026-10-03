@@ -37,8 +37,25 @@ test('合法请求返回 body，且只带服务端认识的字段', () => {
   assert.deepEqual(prepareRequest(base()), {
     model: 'tev1:0.8b',
     state: TICKET,
-    questions: [CHOICE_Q],
+    questions: { label: CHOICE_Q },
   });
+});
+
+test('V10 线格式：questions 被转成「题名 → 问题对象」的映射，不是数组（ADR-6）', () => {
+  // 本机实测：数组形状被服务端在**解析阶段**拒绝（HTTP 400
+  // "Value looks like object, but can't find closing '}' symbol"，0.071s 返回），
+  // 对象形状才 200。这条用例是那个真机事实在本地套件里的落点。
+  const body = prepareRequest(base({
+    questions: [
+      { name: 'a', type: 'noul', instructions: 'First?' },
+      { name: 'b', type: 'noul', instructions: 'Second?' },
+    ],
+  }));
+  assert.equal(Array.isArray(body.questions), false, 'questions 不能是数组');
+  assert.equal(typeof body.questions, 'object');
+  assert.deepEqual(Object.keys(body.questions), ['a', 'b'], '键为题名，且保持模型给的顺序');
+  assert.equal(body.questions.a.instructions, 'First?');
+  assert.equal(body.questions.b.instructions, 'Second?');
 });
 
 test('model 参数覆盖 defaultModel；keepAlive 存在时下发 keep_alive', () => {
@@ -117,10 +134,12 @@ test('instructions 必填', () => {
 
 test('V8 边界：正好 65536 字节通过，再多 1 字节被拒', () => {
   // 与 prepareRequest 组装出的 body 逐字段一致，才能精确落在边界上。
+  // 注意 questions 必须是 V10 转换后的**对象映射**形状 —— 用数组会让这个 helper
+  // 与真实 body 长度不同，二分会落在错的边界上（该测试本就用于探测 body 形状漂移）。
   const overhead = (n) => Buffer.byteLength(JSON.stringify({
     model: 'tev1:0.8b',
     state: 'x'.repeat(n),
-    questions: [CHOICE_Q],
+    questions: { label: CHOICE_Q },
   }), 'utf8');
 
   let lo = 0;

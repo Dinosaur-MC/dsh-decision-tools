@@ -3,10 +3,12 @@ import assert from 'node:assert/strict';
 import { callSystemOne, SystemOneError } from '../lib/client.js';
 import { startFakeOllama } from './fake-ollama.mjs';
 
+// 这是**线格式**的 body：Task 3 的 client 层直接收 body、不经过 prepareRequest，
+// 所以 questions 必须是对象映射 —— 假服务现在会像真服务一样拒绝数组（ADR-6）。
 const BODY = {
   model: 'tev1:0.8b',
   state: 'Our checkout has returned 500 errors since 9am.',
-  questions: [{ name: 'q', type: 'noul', instructions: 'Is this English?' }],
+  questions: { q: { name: 'q', type: 'noul', instructions: 'Is this English?' } },
 };
 
 const OK = {
