@@ -1503,6 +1503,12 @@ node --test "test/parameters.test.mjs"
 
 Expected: FAIL —— `Cannot find module '.../lib/parameters.js'`。
 
+> **控制器勘误（第九处与第十处错误）。**
+>
+> **第九处（步骤顺序自相矛盾）**：初稿把 Step 1 写成"先建 `lib/parameters.js`"、Step 3 又期望 `Cannot find module '.../lib/parameters.js'` —— 模块在前一步已建，那个失败**不可能出现**。正确次序是**测试先行**：先写 `test/parameters.test.mjs`（Step 2），此时 `lib/parameters.js` 尚不存在 ⇒ Step 3 的 `Cannot find module` 才是真的；之后再落 Step 1 的契约数据。实现者据此执行并拿到了真实 RED。
+>
+> **第十处（断言对着源 DSL 而非投影后的形状）**：初稿的 `assert.deepEqual(Object.keys(definition.parameters), ['state','questions','model'])` **本机不可能成立**。`defineTool` 会先投影参数（宿主 `dsh-tools/lib/index.js:848`）⇒ 参数名在 `.properties`、`required` 在根上。**紧凑 DSL 是源格式，宿主会投影它；断言必须对着投影后的形状写。** 正确断言见 Step 6（并含 ADR-5 的 `description` 就地守卫与更新后的 `OUTPUT_SCHEMA` 六键集）。
+
 - [ ] **Step 4: 运行确认通过**
 
 ```bash
@@ -1600,8 +1606,14 @@ export function apply(ctx, config = {}) {
 
       // 注意：宿主要求返回的是 JSON 值（否则 snapshotToolValue 会拒绝），
       // 所以 warning 为 undefined 时**整个键都不能出现**，不能写成 body_warning: undefined。
+      // 宿主用 snapshotJsonValue 逐层检查返回值是否为**无损 JSON**：任何值为 `undefined`
+      // 的 own key 都会让整次调用被判非法并抛 ToolOutputError —— 即「成功调用变成工具失败」。
+      // 所以返回值必须**逐字段显式构造**，凡可能为 undefined 的键都要**整个不出现**。
+      // 同一函数里 body_warning 已按此处理；usage 同样必须 —— 它来自服务端回包，可能缺席。
       return {
-        ...result,
+        model: result.model,
+        answers: result.answers,
+        ...(result.usage === undefined ? {} : { usage: result.usage }),
         state_bytes: stateBytes,
         body_bytes: bodyBytes,
         ...(warning === undefined ? {} : { body_warning: warning }),
@@ -1672,12 +1684,20 @@ test('默认 toolName 配置下的工具名与 schema', () => {
   assert.equal(registered.length, 1);
   const definition = registered[0];
   assert.equal(definition.name, 'decision');
-  assert.deepEqual(Object.keys(definition.parameters), ['state', 'questions', 'model']);
+  // 注意：defineTool 会**先**跑 parameterSchemaSpecToJsonSchema(options.parameters)
+  // （宿主 dsh-tools/lib/index.js:848）再放回 ⇒ definition.parameters 是**投影后的 JSON Schema**：
+  // 键是 ['type','properties','required']，参数名在 .properties，required 是根上的数组。
+  // **不要**对 Object.keys(definition.parameters) 断言参数名 —— 那是源 DSL 的形状，本机必红。
+  assert.deepEqual(Object.keys(definition.parameters), ['type', 'properties', 'required']);
+  assert.deepEqual(Object.keys(definition.parameters.properties), ['state', 'questions', 'model']);
+  assert.deepEqual(definition.parameters.required, ['state', 'questions']);
+  // ADR-5 就地守卫：指引只放 description，故它必须原样就是 TOOL_DESCRIPTION
+  assert.equal(definition.description, TOOL_DESCRIPTION);
   assert.equal(definition.output.schema.type, 'object');
   assert.equal(definition.output.schema.additionalProperties, false);
   assert.deepEqual(
     Object.keys(definition.output.schema.properties),
-    ['model', 'answers', 'usage'],
+    ['model', 'answers', 'usage', 'state_bytes', 'body_bytes', 'body_warning'],
   );
   assert.equal(typeof definition.output.render, 'function');
   assert.equal(typeof definition.execute, 'function');
@@ -1774,6 +1794,8 @@ Expected: PASS —— `# fail 0`，共 48 个 test（15 + 9 + 14 + 3 + 7：valid
 - `test/tool.test.mjs` 里断言 `output.schema.properties` 键集的那一处，期望值追加 `'state_bytes', 'body_bytes', 'body_warning'`（顺序与 `OUTPUT_SCHEMA` 一致）；`additionalProperties === false` 的断言保持不变。
 - 在已有的 execute 往返用例里追加断言：返回值含数值型 `state_bytes` 与 `body_bytes`，且 **`body_bytes` 等于该次真实请求体的字节数**（可用 `Buffer.byteLength(fake.requests[0].raw, 'utf8')` 与返回值比对 —— 这条比"存在即可"强，它钉住的是**按转换后线格式度量**这个口径）。
 - 小 state 的场景下**不得**出现 `body_warning` 键（`'body_warning' in value === false`），因为宿主要求返回是 JSON 值。
+- **服务端回包不含 `usage` 时，返回值里也不得出现 `usage` 键**（`'usage' in value === false`）—— 用 `{status: 200, body: {model, answers}}` 驱动一次 execute 来断言。这条与上一条同源：值为 `undefined` 的 own key 会让宿主把整次调用判为非法。变异确认：把 `execute` 的返回改回 `...result` 展开 ⇒ 本条必须变红。
+- 测试侧还需把 `output.schema.properties` 的键集断言更新为六个键（含三个体积字段），否则它会在 `OUTPUT_SCHEMA` 扩容后变红。
 - 不新增用例文件；上述断言并入既有用例，故 Task 4 的用例数仍为 **7**。
 
 - [ ] **Step 8: 语法与 LF 校验**
