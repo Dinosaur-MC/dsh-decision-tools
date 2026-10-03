@@ -86,6 +86,7 @@ The defaults above are the ones declared in `lib/tool.js` (`Config`).
    11.1 s warm for `tev1:0.8b`; 15.7 s cold and 8.0 s warm for `tev1:latest`).
 4. No streaming, no tool calling, one request one response.
 5. Server limits: 64 KiB request without images, 64 questions, 2–26 options per question.
+6. **Bounded decisions only.** This plugin answers bounded questions whose candidate set is known up front. Open-ended generation, reasoning chains, and candidates that must be discovered while thinking still belong to a generative model.
 
 ## Development
 
