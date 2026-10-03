@@ -356,7 +356,7 @@ const parameters = {
 
 > **上下文上限与 token/字节比（2026-10-04 实测，本机 Ollama 0.35.1）**：`ollama show tev1:0.8b` 与 `tev1:latest` 在 Model 段声明 `context length 262144`，但 **Parameters 里 `num_ctx = 2050`**；`clef-flash:latest` 为 `num_ctx = 16384`。**跑的是 `num_ctx`，不是声明的 context length —— 差两个数量级。**
 >
-> 超上下文时服务端**不静默截断**：16226 B 的 body 在 **30 ms** 内回 400 `prompt 0 has 2359 tokens; expected 1–2050 (input is never truncated)`；70226 B 回 413（64 KiB 字节门）。⇒ **两条独立上限**：服务端 64 KiB **字节**（413）与每模型 `num_ctx` **token**（400），**token 门通常先触发**。
+> 超上下文时服务端**不静默截断**、且在 ~30 ms 内返回（明文 `(input is never truncated)` 并给出精确 token 数）；70226 B 的 body 回 413（64 KiB 字节门）。**具体 token 数见下表 —— 不要用单点做除法估比例**：早期一份用**重复填充句**的探针（16226 B / 2359 token）会得出约 6.9 B/token 的**错误**比值。⇒ **两条独立上限**：服务端 64 KiB **字节**（413）与每模型 `num_ctx` **token**（400），**token 门通常先触发**。
 >
 > **token/字节比实测**（`state` 填**真实变体散文**——本仓 README + 本规格；`questions` 固定）：
 >
