@@ -435,7 +435,7 @@ urgency  score   1.154 / 2  p={1=0.7075, 2=0.2234, 0=0.0691}  conf=0.304
 | `timeoutMs` | number | `120000` | 单次请求上限（含冷加载） |
 | `toolName` | string | `decision` | 注册名 |
 | `keepAlive` | string \| number | 未设 | 透传 `keep_alive`；未设则用服务端默认 5m |
-| `softBodyBytes` | number | 未设则用 `LIMITS.softBodyBytes`（`4096`） | 体积告警的**策略**阈值（字节）。**生效值会被夹到 `LIMITS.maxBodyBytes`** —— 高于硬上限的阈值在定义上不可达（服务端/本地 V8 先拒），正是刚修掉的那类"告警永不触发"缺陷，故不允许从配置里重新引入 |
+| `softBodyBytes` | number | 未设则用 `LIMITS.softBodyBytes`（`4096`） | 体积告警的**策略**阈值（字节）。**生效值夹到 `LIMITS.maxBodyBytes`**。**诚实说明：该夹取目前在行为上是恒等的** —— 被接受的 body 恒 ≤ `maxBodyBytes`，而告警条件是**严格大于**阈值，故阈值取 `maxBodyBytes` 与取 `1e9` 都永不告警、**行为完全相同**。⇒ 夹取**并不**"防止不可达告警被重新引入"（不可达的阈值无论如何都不可达）；它只把生效值界定在插件**已知**的边界内、表达意图，并在将来拒绝点移动时仍然成立。**真正防住那个缺陷的是默认值被按实测重新标定（4096）** |
 | `bodyWarning` | boolean | 未设 = 启用 | `false` ⇒ **从不产出 `body_warning` 键**（不是产出空串或 `false` —— 宿主无损 JSON 校验要求该键整个不出现） |
 
 **刻意不做的配置**：并发闸、重试次数、缓存。前两者会掩盖模型/服务缺陷，后者在有 `keep_alive` 的前提下收益不明。
