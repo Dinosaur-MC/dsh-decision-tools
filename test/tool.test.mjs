@@ -14,7 +14,11 @@ import { startFakeOllama } from './fake-ollama.mjs';
  * → 2026-10-04 本文件新增 3 条（可配置的体积告警），此后为
  * `validate 15 + render 9 + client 14 + parameters 3 + tool 10 = 51`
  * → 同日 `parameters.test.mjs` 新增 1 条（README 配置表守卫），此后为
- * `validate 15 + render 9 + client 14 + parameters 4 + tool 10 = 52`。
+ * `validate 15 + render 9 + client 14 + parameters 4 + tool 10 = 52`
+ * → 同日 `5df48a1` 给 `parameters.test.mjs` 补九条逐点锚点（+9），此后为
+ * `validate 15 + render 9 + client 14 + parameters 13 + tool 10 = 61`
+ * → 同日缺陷审查轮修复（F1/F2/F3），此后为
+ * `validate 15 + render 12 + client 19 + parameters 13 + tool 13 = 72`。
  */
 
 /**
@@ -298,4 +302,30 @@ test('model 参数逐次覆盖默认模型', async () => {
   } finally {
     await fake.close();
   }
+});
+
+// ---------------------------------------------------------------------------
+// F3（2026-10-04 缺陷审查轮）：无意义的取值必须在**加载期**就被拒，而不是留到
+// 调用期抛 RangeError（AbortSignal.timeout(-1)）或让告警恒真（阈值 <= 0）。
+// ---------------------------------------------------------------------------
+
+test('F3：Config 拒绝非正的 timeoutMs（加载期报错，不留到调用期抛 RangeError）', () => {
+  assert.throws(() => Config({ timeoutMs: 0 }), /expected number >= 1/);
+  assert.throws(() => Config({ timeoutMs: -1 }), /expected number >= 1/);
+  assert.equal(Config({ timeoutMs: 1 }).timeoutMs, 1);
+});
+
+test('F3：Config 拒绝负的 softBodyBytes（0 是合法策略值：每次都告警）', () => {
+  assert.throws(() => Config({ softBodyBytes: -1 }), /expected number >= 0/);
+  assert.equal(Config({ softBodyBytes: 0 }).softBodyBytes, 0);
+});
+
+test('F3：resolveSoftBodyBytes 对非有限/负值回落默认，绝不返回 NaN', () => {
+  // schemastery 会把 NaN 静默折成 null（实测），故 .min() 拦不住它 ——
+  // 这一层是 NaN 的唯一防线：否则 Math.min(null, 65536) = 0 ⇒ 每次调用都告警。
+  assert.equal(resolveSoftBodyBytes(NaN), LIMITS.softBodyBytes);
+  assert.equal(resolveSoftBodyBytes(null), LIMITS.softBodyBytes);
+  assert.equal(resolveSoftBodyBytes(-1), LIMITS.softBodyBytes);
+  assert.equal(resolveSoftBodyBytes(0), 0);
+  assert.equal(resolveSoftBodyBytes(undefined), LIMITS.softBodyBytes);
 });

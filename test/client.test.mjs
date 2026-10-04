@@ -232,3 +232,80 @@ test('fetchImpl 可注入（单测无需真实网络）', async () => {
   assert.equal(seen.url, 'http://example.invalid:1/v1/systemone');
   assert.equal(seen.init.method, 'POST');
 });
+
+// ---------------------------------------------------------------------------
+// 以下五条钉住 2026-10-04 缺陷审查轮的 F1/F2/F3：越界形状与非法配置都必须是
+// 带 kind 的 SystemOneError，而不是裸 TypeError / RangeError，也不是把一次
+// **成功**调用交给宿主去判 INVALID_TOOL_OUTPUT。
+// ---------------------------------------------------------------------------
+
+test('F2：baseUrl 非法 → bad_config（SystemOneError），不得逃出裸 TypeError', async () => {
+  // new URL('/v1/systemone', 'localhost:11434') 会抛 TypeError: Invalid URL，
+  // 而该构造原先在 try 之外 ⇒ 逃出本函数 @throws {SystemOneError} 的契约。
+  const error = await failure({ baseUrl: 'localhost:11434', body: BODY, timeoutMs: 5000 });
+  assert.ok(
+    error instanceof SystemOneError,
+    `期望 SystemOneError，实际 ${error?.constructor?.name}: ${error?.message}`,
+  );
+  assert.equal(error.kind, 'bad_config');
+  assert.match(error.message, /baseUrl/);
+  assert.match(error.hint, /http:\/\/localhost:11434/);
+});
+
+test('F2：baseUrl 带路径前缀时前缀被保留（不再被前导斜杠静默丢弃）', async () => {
+  await withServer(() => ({ status: 200, body: OK }), async (fake) => {
+    const result = await callSystemOne({ baseUrl: `${fake.baseUrl}/ollama`, body: BODY, timeoutMs: 5000 });
+    assert.deepEqual(result, OK);
+    assert.equal(fake.requests[0].url, '/ollama/v1/systemone');
+  });
+});
+
+test('F3：timeoutMs 为 0 / 负数 / NaN → bad_config，且不发请求', async () => {
+  let called = 0;
+  const fetchImpl = async () => { called += 1; return new Response('{}', { status: 200 }); };
+  for (const bad of [0, -5, NaN]) {
+    const error = await failure({ baseUrl: 'http://example.invalid:1', body: BODY, timeoutMs: bad, fetchImpl });
+    assert.ok(
+      error instanceof SystemOneError,
+      `timeoutMs=${bad} 期望 SystemOneError，实际 ${error?.constructor?.name}: ${error?.message}`,
+    );
+    assert.equal(error.kind, 'bad_config');
+    assert.match(error.message, /timeoutMs/);
+  }
+  assert.equal(called, 0, '配置非法时不得发出请求');
+});
+
+test('F1a：200 缺 model → bad_response（否则宿主判 value is not lossless JSON）', async () => {
+  await withServer(
+    () => ({ status: 200, body: { answers: { q: { type: 'noul', noul: 0.5 } } } }),
+    async (fake) => {
+      const error = await failure({ baseUrl: fake.baseUrl, body: BODY, timeoutMs: 5000 });
+      assert.ok(error instanceof SystemOneError);
+      assert.equal(error.kind, 'bad_response');
+      assert.equal(error.status, 200);
+      assert.match(error.message, /model/);
+    },
+  );
+});
+
+test('F1b：200 的 answers 是数组 / usage 不是对象 → bad_response', async () => {
+  // 原判定是 typeof parsed.answers !== 'object'，数组能穿过；宿主随后判
+  // "value.answers" must be an object（usage 同理），把成功调用变成工具失败。
+  await withServer(
+    () => ({ status: 200, body: { model: 'tev1:0.8b', answers: [] } }),
+    async (fake) => {
+      const error = await failure({ baseUrl: fake.baseUrl, body: BODY, timeoutMs: 5000 });
+      assert.equal(error.kind, 'bad_response');
+      assert.match(error.message, /answers/);
+    },
+  );
+
+  await withServer(
+    () => ({ status: 200, body: { model: 'tev1:0.8b', answers: { q: { type: 'noul', noul: 0.5 } }, usage: 7 } }),
+    async (fake) => {
+      const error = await failure({ baseUrl: fake.baseUrl, body: BODY, timeoutMs: 5000 });
+      assert.equal(error.kind, 'bad_response');
+      assert.match(error.message, /usage/);
+    },
+  );
+});

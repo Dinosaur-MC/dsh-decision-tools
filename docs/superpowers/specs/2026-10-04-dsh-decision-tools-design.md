@@ -160,7 +160,7 @@ dsh-decision-tools/
     - id: decision-tools-tool
       name: 'dsh-decision-tools'
       # 无 disabled 条件：本插件不依赖平台，任何环境都注册。
-      # 本行不需要任何配置，故没有 `config:` 键 —— Config 五个键全走插件默认值。
+      # 本行不需要任何配置，故没有 `config:` 键 —— Config 的键全走插件默认值。
 ```
 
 **两种操作必须分清（2026-10-04 第二次勘误）**：
@@ -249,6 +249,8 @@ export async function callSystemOne({
 2. 超时：`AbortSignal.timeout(timeoutMs)` 与调用方 `signal` 用 `AbortSignal.any([...])` 合并。**这个合并是硬要求，不是优化**：调用方取消时必须在毫秒级**真正中止** `fetch`，**不得**退化成等 `timeoutMs` 到点。退化的代价是隐蔽的 —— 分类仍可能正确地报 `aborted`（因为另有 `signal?.aborted` 检查），但 socket 会白白挂到超时上限（默认 120s）。该性质由 `test/client.test.mjs` 的**耗时断言**钉住（< 2000ms，而该用例的 `timeoutMs` 是 30000），仅靠 `kind` 断言无法发现退化。
 3. 响应解析与错误映射（见 §4.7）。**body 读取本身也必须被守卫**：响应头已到达、body 尚未读完时 socket 断开（undici 抛 `TypeError: terminated`），或信号在读取途中触发 —— 两者都必须映射成带 `kind` 的 `SystemOneError`（见 §4.7 的 mid-body 行），不得逃成没有 `kind` 的裸错误，否则按 `kind` 分派的上层会把它当成未处理异常。
 4. 成功时返回 `{ model, answers, usage? }` **原样**（`usage` 缺席时该键整个不出现），不重写、不归一化。
+5. **成功路径的形状在客户端收口**：缺 `model`（值为 `undefined` 的键会被宿主的无损 JSON 判定整体拒绝）、`answers` 不是对象映射（**数组**能穿过旧的 `typeof` 判定）、`usage` 不是对象 ⇒ 一律 `bad_response`。
+6. 端点 URL 由 `baseUrl` **相对解析**（`v1/systemone`，末尾补斜杠后再拼）⇒ `baseUrl` 的**路径前缀被保留**（`http://host/ollama` → `http://host/ollama/v1/systemone`）。非法 `baseUrl` 与非正/非有限 `timeoutMs` 抛 `bad_config`，**不得**逃出裸 `TypeError` / `RangeError`（那会破坏本模块 `@throws {SystemOneError}` 的契约）。
 
 **可测试性**：`fetchImpl` 与 `signal` 均可注入 ⇒ 单测无需真实网络；`baseUrl` 可指向假服务端口。
 
@@ -260,13 +262,18 @@ export const inject = ['tools'];              // 只注册工具，不碰 system
 export const Config = z.object({
   baseUrl: z.string().default('http://localhost:11434'),
   defaultModel: z.string().default('tev1:0.8b'),
-  timeoutMs: z.number().default(120000),
+  // 下界在加载期把关（0/负数会让 AbortSignal.timeout 抛 RangeError）。NaN 会被
+  // schemastery 折成 null，.min() 拦不住 —— 那一层由 client 的 bad_config 兜底。
+  timeoutMs: z.number().default(120000).min(1),
   toolName: z.string().default('decision'),  // 这才是模型看到的工具名
   // keepAlive 可为 "5m" 这类时长串或秒数；未设则不下发该字段，用服务端默认 5m。
   // 已实测确认（schemastery 3.18.4）：z.union 存在；可选性用 .required(false) ——
   // 该库**没有** .optional()，写它会在插件加载时直接抛错。
   // Config({}) 实测得到 {baseUrl, defaultModel, timeoutMs, toolName}（keepAlive 被省略）。
   keepAlive: z.union([z.string(), z.number()]).required(false),
+  // 体积告警阈值与开关（见 4.10）：未设即用 LIMITS.softBodyBytes / 启用。
+  softBodyBytes: z.number().min(0).required(false),
+  bodyWarning: z.boolean().required(false),
 });
 
 export function apply(ctx, config) {
@@ -351,6 +358,8 @@ const parameters = {
 | HTTP 500 且 body 含 `non-finite logit` | `model_broken` | 「{model} 在 Ollama 0.35.1 上有已知缺陷（Clef: non-finite logit），请改用 tev1 系模型」 |
 | HTTP 500 其他 | `server_error` | 原样带出服务端 `error` |
 | 2xx 但 body 非 JSON / 缺 `answers` | `bad_response` | 「Ollama 返回了无法解析的响应」 |
+| 2xx 但**形状越界**：缺 `model`、`answers` 不是对象映射（含数组）、`usage` 不是对象 | `bad_response` | 点名具体字段。**必须在客户端收口** —— 否则宿主的无损 JSON 快照 / `output.schema` / `render` 三段会把一次**成功**调用判成 `INVALID_TOOL_OUTPUT`（2026-10-04 缺陷审查轮 F1） |
+| `baseUrl` 不是合法绝对 URL（或空串）／`timeoutMs` 非正或非有限 | `bad_config` | 请求还没成形，与 Ollama 无关：点名配置键并给出合法示例。此前会逃成裸 `TypeError: Invalid URL` / `RangeError`（F2/F3） |
 
 | 响应头**已到达**、body 读完前 socket 断开（undici `TypeError: terminated`），或信号在读取途中触发 | `unreachable`（读取中断连）/ `aborted` / `timeout`（信号） | 复用各自对应行的文案；见下方注 |
 
@@ -380,7 +389,16 @@ const parameters = {
 
 ### 4.8 渲染（`lib/render.js`）
 
-`output.schema` 用 `oneOf` 覆盖三型 answer（`choice`/`noul`/`score`）+ `usage`，保证结构化无损。
+`output.schema` **不是**用 `oneOf` 覆盖三型 answer —— 实现为开放对象
+（`answers`: `{type:'object', additionalProperties:true}`，运行态实测无 `oneOf`），因为
+Ollama 会在答案里附带未声明字段（如 `score` 的 `legend`），收紧 schema 反而会把**正常**
+回包判成工具失败。**结构化无损由两侧共同保证**：`lib/client.js` 在成功路径收口
+（缺 `model` / `answers` 不是对象映射 / `usage` 不是对象 ⇒ `bad_response`），
+`lib/render.js` 对残缺答案**全函数化**（缺字段渲染成 `—`，零答案打印占位行，绝不抛错）。
+
+> **勘误（2026-10-04 缺陷审查轮）**：本节初稿声称"用 `oneOf` 保证结构化无损"，实现从未如此。
+> 后果是 `render` 成为唯一兜底点却会抛 `TypeError`，被宿主包成 `output.render failed: …`
+> —— 一次**成功**调用变成工具失败。已按上段修正：**收口放客户端、渲染保持全函数**。
 
 `render(args, value)` 输出紧凑文本，每题一行，末尾附体积口径：
 
@@ -460,7 +478,7 @@ urgency  score   1.154 / 2  p={1=0.7075, 2=0.2234, 0=0.0691}  conf=0.304
 | `test/validate.test.mjs` | V1–V9 全矩阵：64/65 题、重复名、非法 type、1/2/26/27 选项、score 传对象、noul 传非法键、65536/65537 字节、空 model |
 | `test/client.test.mjs` | 三型正常返回（含 `usage`）、404→`model_missing`、413→`too_large`、400 上下文溢出→`context_overflow`（抓出 token 数与上限）、400 其他→`invalid_request`、500+`non-finite logit`→`model_broken`、500 其他→`server_error`、连接拒绝→`unreachable`、超时→`timeout`、非 JSON→`bad_response`、`AbortSignal` 合并可中断 |
 | `test/render.test.mjs` | 三型渲染文本快照；概率降序；`score` 显示 `x / N-1` |
-| `test/schema.test.mjs` | `parameterSchemaSpecToJsonSchema(parameters)` 投影快照；断言 `questions.items.additionalProperties === false`、`state` 有 3 个 `oneOf` 分支 |
+| `test/parameters.test.mjs` | `parameterSchemaSpecToJsonSchema(PARAMETERS)` 投影快照；断言 `questions.items.additionalProperties === false`、`state` 有 3 个 `oneOf` 分支；§4.9 九点逐点锚点；README 配置表键集/顺序 == `Config.dict` |
 | `smoke/live.mjs` | 可选：真打本机 Ollama，三型各跑一次并打印结论与耗时（默认不跑） |
 
 **命令**

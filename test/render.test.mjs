@@ -156,3 +156,43 @@ test('体积口径：字段缺失时不打印该行（向后兼容）', () => {
   });
   assert.doesNotMatch(block.text, /体积:/);
 });
+
+// ---------------------------------------------------------------------------
+// F1c/F1d（2026-10-04 缺陷审查轮）：OUTPUT_SCHEMA 的 answers 是
+// additionalProperties:true，形状残缺的值能通过宿主的无损 JSON 与 schema 两段，
+// 最后由 render 兜底 —— 这里抛异常会被宿主包成
+// "output.render failed: …"，把一次**成功**调用变成工具失败。
+// ---------------------------------------------------------------------------
+
+test('F1c：已知 type 但字段缺失时退化渲染，不得抛异常', () => {
+  const text = textOf({
+    model: 'tev1:0.8b',
+    answers: {
+      a: { type: 'choice', choice: 'bug' },
+      b: { type: 'noul' },
+      c: { type: 'score' },
+    },
+  });
+  // 逐字全文：缺失的数值一律渲染成 —，而不是让 JSON.stringify(undefined) 漏成
+  // 字面 undefined，更不是抛 TypeError。
+  assert.equal(text, [
+    'a  choice  bug  p={—}  conf=—',
+    'b  noul    P(true)=—',
+    'c  score   — / —  p={—}  conf=—',
+  ].join('\n'));
+});
+
+test('F1c：概率值不是数值时逐个退化，且不得因排序比较器返回 NaN 而乱序', () => {
+  const text = textOf({
+    model: 'tev1:0.8b',
+    answers: {
+      q: { type: 'choice', choice: 'a', probabilities: { a: 0.9, b: 'oops', c: 0.1 }, confidence: 0.5 },
+    },
+  });
+  assert.equal(text, 'q  choice  a  p={a=0.9000, c=0.1000, b=—}  conf=0.500');
+});
+
+test('F1d：answers 为空对象时给出明确占位行，而不是空字符串', () => {
+  // 空串等于「模型读到一个没有任何内容的工具结果」，无法与「真的没有答案」区分。
+  assert.equal(textOf({ model: 'tev1:0.8b', answers: {} }), '(no answers returned)');
+});

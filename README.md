@@ -75,7 +75,7 @@ stay put.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `baseUrl` | `http://localhost:11434` | Ollama endpoint |
+| `baseUrl` | `http://localhost:11434` | Ollama endpoint; a path prefix is preserved (`http://host/ollama` → `http://host/ollama/v1/systemone`) |
 | `defaultModel` | `tev1:0.8b` | model when a call omits `model` |
 | `timeoutMs` | `120000` | per-request budget, including cold model load |
 | `toolName` | `decision` | the name the model sees |

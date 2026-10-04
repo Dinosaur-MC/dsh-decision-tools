@@ -72,7 +72,7 @@
 
 | Key | Default | Meaning |
 |---|---|---|
-| `baseUrl` | `http://localhost:11434` | Ollama 地址 |
+| `baseUrl` | `http://localhost:11434` | Ollama 地址；路径前缀会被保留（`http://host/ollama` → `http://host/ollama/v1/systemone`） |
 | `defaultModel` | `tev1:0.8b` | 调用未给 `model` 时使用的模型 |
 | `timeoutMs` | `120000` | 单次请求预算，含冷加载 |
 | `toolName` | `decision` | 模型看到的工具名 |
