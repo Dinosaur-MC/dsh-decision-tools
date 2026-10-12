@@ -169,7 +169,8 @@ test('LIMITS 冻结：4 项服务端硬限 + 7 项本地阈值（体积/置信�
     maxOptions: 26,
     maxBodyBytes: 65536,
     // v2 新增（ADR-7 / ADR-9）：引用式读取上限 + 扫描的三重预算与自适应轮数。
-    maxSourceBytes: 262144,
+    // maxSourceBytes 必须 < maxBodyBytes（65536），否则 state 会先被 body 守卫拒掉。
+    maxSourceBytes: 61440,
     scanMaxChunks: 32,
     scanMaxTotalBytes: 4194304,
     scanDeadlineMs: 180000,

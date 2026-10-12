@@ -231,6 +231,71 @@ test('strategy:scan 真的分块：返回 chunks、无顶层 answers，且**不�
   await fake.close();
 });
 
+test('glob：** 吃零层必须命中 a/b/file.md（r2 P0：旧实现只消耗一段）', async () => {
+  const fs = treeFs({ 'a/b/file.md': 'AB', 'a/b/b/file.md': 'ABB', 'a/x/b/file.md': 'AXB' });
+  const { registered, ctx } = fakeCtx({ fs });
+  apply(ctx, Config({}));
+  const value = await registered[0].execute(
+    { stateSource: { kind: 'glob', pattern: 'a/**/b/file.md' }, questions: [{ name: 'q', type: 'noul', instructions: 'x' }] },
+    { preview: false, signal: undefined, agent: { session: { header: { cwd: 'F:/ws' } } } },
+  );
+  assert.deepEqual([...value.source.files].sort(), ['a/b/b/file.md', 'a/b/file.md', 'a/x/b/file.md'],
+    '** 吃零层时 `**` 与下一段都要被消耗，否则会漏掉 a/b/file.md');
+});
+
+test('glob：尾段通配符命中目录不得抛 TypeError，且同一文件只收一次（r2 两个 P0）', async () => {
+  const fs = treeFs({ 'd1/leaf.txt': 'L', 'd2/sub/deep.txt': 'D', 'top.txt': 'T' });
+  const { registered, ctx } = fakeCtx({ fs });
+  apply(ctx, Config({}));
+  const value = await registered[0].execute(
+    { stateSource: { kind: 'glob', pattern: '**/*' }, questions: [{ name: 'q', type: 'noul', instructions: 'x' }] },
+    { preview: false, signal: undefined, agent: { session: { header: { cwd: 'F:/ws' } } } },
+  );
+  assert.deepEqual([...value.source.files].sort(), ['d1/leaf.txt', 'd2/sub/deep.txt', 'top.txt']);
+  assert.equal(new Set(value.source.files).size, value.source.files.length, '同一文件不得被重复收集');
+});
+
+test('glob：总量不足即截断（保留已收文件 + 报 remaining），不报错（r2 P0）', async () => {
+  const fs = treeFs({ 'a.txt': 'A'.repeat(30000), 'b.txt': 'B'.repeat(50000) });
+  const { registered, ctx } = fakeCtx({ fs });
+  apply(ctx, Config({}));
+  const value = await registered[0].execute(
+    { stateSource: { kind: 'glob', pattern: '*.txt' }, questions: [{ name: 'q', type: 'noul', instructions: 'x' }] },
+    { preview: false, signal: undefined, agent: { session: { header: { cwd: 'F:/ws' } } } },
+  );
+  assert.deepEqual(value.source.files, ['a.txt']);
+  assert.equal(value.source.truncated, true, 'glob 总量超上限是截断，不是失败');
+  assert.equal(value.source.remaining, 1);
+  assert.ok(value.source.bytes <= LIMITS.maxSourceBytes, 'source.bytes 必须含表头，故不得超过上限');
+});
+
+test('glob：一个文件都没读到 → source_empty（不是「state 不能是空字符串」）', async () => {
+  const fs = treeFs({ 'big.txt': 'A'.repeat(70000) });
+  const { registered, ctx } = fakeCtx({ fs });
+  apply(ctx, Config({}));
+  await assert.rejects(
+    registered[0].execute(
+      { stateSource: { kind: 'glob', pattern: '*.txt' }, questions: [{ name: 'q', type: 'noul', instructions: 'x' }] },
+      { preview: false, signal: undefined, agent: { session: { header: { cwd: 'F:/ws' } } } },
+    ),
+    (error) => error.kind === 'source_empty' && /没有读到任何材料/.test(error.message),
+  );
+});
+
+test('glob：起始目录不存在 → source_missing（不是 kind=undefined 的裸 Error）', async () => {
+  const fs = treeFs({ 'a.md': 'A' });
+  fs.listDir = async () => { throw new Error('cannot list "F:/ws/nope": not found'); };
+  const { registered, ctx } = fakeCtx({ fs });
+  apply(ctx, Config({}));
+  await assert.rejects(
+    registered[0].execute(
+      { stateSource: { kind: 'glob', pattern: 'nope/**/*.md' }, questions: [{ name: 'q', type: 'noul', instructions: 'x' }] },
+      { preview: false, signal: undefined, agent: { session: { header: { cwd: 'F:/ws' } } } },
+    ),
+    (error) => error.kind === 'source_missing',
+  );
+});
+
 test('toolName 配置改变工具名', () => {
   const { registered, ctx } = fakeCtx();
   apply(ctx, Config({ toolName: 'decide' }));
