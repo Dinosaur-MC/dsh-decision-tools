@@ -1,6 +1,6 @@
 {
   "name": "dsh-decision-tools",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "DSH agent tool for local Ollama System One decision models: classify, answer yes/no, and score against a rubric in one batched request.",
   "keywords": ["dsh-plugin", "ollama", "decision", "system-one", "classification", "reranking"],
   "license": "MIT",
@@ -9,10 +9,12 @@
   "main": "lib/index.js",
   "exports": {
     ".": "./lib/index.js",
+    "./skill": "./lib/skill.js",
     "./package.json": "./package.json"
   },
   "files": [
     "lib/**/*.js",
+    "assets/**",
     "cordis.patch.yml",
     "README.md",
     "README.zh.md",
@@ -32,11 +34,13 @@
     "link-peers": "node scripts/link-peers.mjs"
   },
   "peerDependencies": {
+    "@deepseek-ai/dsh-skill": ">=0.2.0-rc.2",
     "@deepseek-ai/cordis": ">=4.0.1",
     "@deepseek-ai/dsh-tools": ">=0.2.0-rc.2",
     "@deepseek-ai/schemastery": ">=3.18.0"
   },
   "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-skill": { "optional": true },
     "@deepseek-ai/cordis": { "optional": true },
     "@deepseek-ai/dsh-tools": { "optional": true },
     "@deepseek-ai/schemastery": { "optional": true }

@@ -24,5 +24,11 @@
 # **覆盖既有行**用裸 `id`、**不带 `insert`**。
 
 - insert:
+    # 主插件：注册 `decision` 工具。
     - id: decision-tools-tool
       name: 'dsh-decision-tools'
+    # 随包 Skill（ADR-10）：**独立入口**，缺技能注册表的组合里它不激活，而上面那行照常工作。
+    # v2 刻意**默认启用**（第一方 `dsh-skill-badge` 的惯例是默认 `disabled: true` 让部署显式选择，
+    # 这里不走那条过渡路：用法指引在 v2 里是功能件）。
+    - id: decision-tools-skill
+      name: 'dsh-decision-tools/skill'
