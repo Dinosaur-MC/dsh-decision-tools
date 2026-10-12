@@ -91,6 +91,8 @@ test('400 → invalid_request，带出服务端原文与合法类型清单；上
     const error = await failure({ baseUrl: fake.baseUrl, body: BODY, timeoutMs: 5000 });
     assert.equal(error.kind, 'context_overflow');
     assert.equal(error.status, 400);
+    assert.equal(error.actual, 2359, 'A 分支必须把实测 token 数挂到错误对象上');
+    assert.equal(error.limit, 2050, 'A 分支必须把服务端上限挂到错误对象上');
     assert.match(error.message, /请求超出模型上下文：2359 token，上限 2050。/,
       'message 必须同时给出服务端报的实际 token 数与上限');
     assert.match(error.message, /input is never truncated/, '服务端原文必须保持可用');
@@ -107,6 +109,25 @@ test('400 → invalid_request，带出服务端原文与合法类型清单；上
     const error = await failure({ baseUrl: fake.baseUrl, body: BODY, timeoutMs: 5000 });
     assert.equal(error.kind, 'context_overflow');
     assert.match(error.message, /请求超出模型上下文：12 token，上限 88。/);
+  });
+});
+
+// clef 系走**不打印数字**的溢出分支：本机实测原文（`.temp/numctx/probe.json` 三条记录）逐字节照抄。
+const CONTEXT_OVERFLOW_OPAQUE_BODY =
+  '{"error":"decision prompt exceeds the model context (input is never truncated)"}';
+
+test('400 → clef 系不打印数字的溢出同样是 context_overflow，且 actual/limit 缺席', async () => {
+  await withServer(() => ({ status: 400, body: CONTEXT_OVERFLOW_OPAQUE_BODY }), async (fake) => {
+    const error = await failure({ baseUrl: fake.baseUrl, body: BODY, timeoutMs: 5000 });
+    assert.equal(error.kind, 'context_overflow', 'B 分支不得退化成 invalid_request');
+    assert.equal(error.status, 400);
+    assert.equal(error.actual, undefined, 'B 分支没有实际 token 数');
+    assert.equal(error.limit, undefined, 'B 分支没有上限');
+    assert.match(error.message, /服务端未给出具体 token 数/);
+    assert.match(error.message, /input is never truncated/, '服务端原文必须保持可用');
+    assert.match(error.hint, /num_ctx/, 'hint 仍须给出调高 num_ctx 这条路');
+    assert.doesNotMatch(error.hint, /choice|noul|score|选项数|对象映射/,
+      '溢出与请求形状无关，hint 不得回落到形状类建议');
   });
 });
 
