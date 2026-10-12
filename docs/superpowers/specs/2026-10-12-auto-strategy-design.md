@@ -74,6 +74,10 @@ stateSource: { kind: 'file', path: string, startLine?: number, endLine?: number 
            | { kind: 'glob', pattern: string, limit?: number }
 ```
 
+**v2 实际接线范围（与实现一致，不许规格说谎）**：只接线 `kind: 'file'`（含行范围）。
+`kind: 'glob'` 在 v2 里**报可行动错误**而不是静默降级 —— 它需要 `ctx.fs.listDir` 的 `FsDirEntry`
+条目形状，而那只能在真机上确认；用猜出来的形状接线会让「假 ctx 的测试全绿、真机全错」。
+
 **读取路径（全部经 `ctx.fs`，不 import `node:fs`）**：
 
 1. `resolve(path, { cwd })` 得到稳定目标；
