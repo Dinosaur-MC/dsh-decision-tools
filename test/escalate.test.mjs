@@ -127,51 +127,49 @@ test('resolveSticky：escalatedTo 建立粘滞并回显 sticky=true（且压过�
   assert.deepEqual(r.escalated, { to: 'clef-flash:latest', sticky: true });
 });
 
-test('createSingleFlight：并发调用共享同一次执行', async () => {
-  const sf = createSingleFlight();
-  const gate = deferred();
-  let calls = 0;
-  const fn = () => { calls += 1; return gate.promise; };
-  const p1 = sf.run(fn);
-  const p2 = sf.run(fn);
-  assert.equal(calls, 1, '第二次调用必须搭同一趟，而不是各开一趟');
-  assert.equal(sf.pending, true);
-  gate.resolve('model-x');
-  assert.deepEqual(await Promise.all([p1, p2]), ['model-x', 'model-x']);
-  assert.equal(sf.pending, false, '结算后必须释放槽位');
+test('createSingleFlight：并发调用各自执行，但同一时刻只有一个在跑', async () => {
+  const gate = createSingleFlight();
+  let running = 0;
+  let peak = 0;
+  const seen = [];
+  const make = (id) => gate.run(async () => {
+    running += 1;
+    peak = Math.max(peak, running);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    seen.push(id);
+    running -= 1;
+    return id;
+  });
+  const [first, second] = await Promise.all([make('a'), make('b')]);
+  assert.deepEqual([first, second], ['a', 'b'],
+    '★ 每个调用者必须拿到**自己的**结果（旧实现会共享同一次执行的结果）');
+  assert.equal(peak, 1, '互斥：任何时刻只允许一个在跑');
+  assert.deepEqual(seen, ['a', 'b'], '顺序与提交顺序一致');
+  assert.equal(gate.pending, false, '全部结算后必须释放');
 });
 
 test('createSingleFlight：结算后释放，下一波重新执行', async () => {
-  const sf = createSingleFlight();
-  const gate1 = deferred();
+  const gate = createSingleFlight();
   let calls = 0;
-  const p1 = sf.run(() => { calls += 1; return gate1.promise; });
-  gate1.resolve('a');
-  assert.equal(await p1, 'a');
-  const gate2 = deferred();
-  const p2 = sf.run(() => { calls += 1; return gate2.promise; });
-  assert.equal(calls, 2, '上一趟结算后必须能重新执行');
-  gate2.resolve('b');
-  assert.equal(await p2, 'b');
+  const run = async () => gate.run(async () => { calls += 1; return calls; });
+  assert.equal(await run(), 1);
+  assert.equal(await run(), 2, '上一趟结算后必须能重新执行');
+  assert.equal(calls, 2);
 });
 
 test('createSingleFlight：同步抛错走同一失败路径并释放槽位', async () => {
-  const sf = createSingleFlight();
-  await assert.rejects(sf.run(() => { throw new Error('sync-boom'); }), /sync-boom/);
-  assert.equal(sf.pending, false);
+  const gate = createSingleFlight();
+  await assert.rejects(gate.run(() => { throw new Error('sync boom'); }), /sync boom/);
+  assert.equal(gate.pending, false, '同步抛错也必须释放槽位');
+  assert.equal(await gate.run(async () => 'ok'), 'ok', '释放后仍能执行');
 });
 
-test('createSingleFlight：拒绝向所有等待者传播，且第二个任务不执行', async () => {
-  const sf = createSingleFlight();
-  const gate = deferred();
-  let secondRan = false;
-  const p1 = sf.run(() => gate.promise);
-  const p2 = sf.run(() => { secondRan = true; return Promise.resolve('nope'); });
-  gate.reject(new Error('boom'));
-  await assert.rejects(p1, /boom/);
-  await assert.rejects(p2, /boom/);
-  assert.equal(secondRan, false, '槽位被占用时第二个任务不得执行');
-  assert.equal(sf.pending, false, '失败后同样必须释放');
+test('createSingleFlight：前一个失败只影响它自己，等待者照常执行', async () => {
+  const gate = createSingleFlight();
+  const boom = gate.run(async () => { throw new Error('boom'); });
+  const ok = gate.run(async () => 'second');
+  await assert.rejects(boom, /boom/);
+  assert.equal(await ok, 'second', '★ 不得把失败传播给等待者（旧实现里第二个任务根本不执行）');
 });
 
 test('describeExhausted：给出需求与来源、三条可行动项，且不得指向请求形状', () => {
