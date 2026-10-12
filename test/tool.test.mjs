@@ -48,13 +48,18 @@ const ANSWERS = {
 
 test('插件导出形状与默认配置', () => {
   assert.equal(name, 'decision-tools');
-  assert.deepEqual(inject, ['tools']);
+  assert.deepEqual(inject, ['tools', 'fs']);
   assert.equal(typeof apply, 'function');
   assert.deepEqual(Config({}), {
     baseUrl: 'http://localhost:11434',
     defaultModel: 'tev1:0.8b',
     timeoutMs: 120000,
     toolName: 'decision',
+    // v2：提升默认开启、尝试次数默认 3；其余 v2 键刻意不设默认值（数值只有 LIMITS 一处来源）。
+    escalationEnabled: true,
+    escalationMaxAttempts: 3,
+    // schemastery 把「未设的可选数组」物化成 []，故投影里出现空数组而不是缺席。
+    ladder: [],
   });
 });
 
@@ -70,8 +75,9 @@ test('默认 toolName 配置下的工具名与 schema', () => {
   // （宿主定义文件 index.js:848 `parameterSchemaSpecToJsonSchema(options.parameters)`），
   // 所以参数名在 `.properties` 上，`required` 是根上的数组而非逐属性注解。
   assert.deepEqual(Object.keys(definition.parameters), ['type', 'properties', 'required']);
-  assert.deepEqual(Object.keys(definition.parameters.properties), ['state', 'questions', 'model']);
-  assert.deepEqual(definition.parameters.required, ['state', 'questions']);
+  assert.deepEqual(Object.keys(definition.parameters.properties), ['state', 'questions', 'stateSource', 'model', 'strategy', 'aggregate']);
+  assert.deepEqual(definition.parameters.required, ['questions'],
+    'v2：state 与 stateSource 恰有其一，故 required 只剩 questions（交叉约束由本地校验把关）');
 
   // ADR-5 的就地守卫：使用指引必须真的挂在已注册的工具上（而不是只写在模块里）。
   assert.equal(definition.description, TOOL_DESCRIPTION);
@@ -80,7 +86,10 @@ test('默认 toolName 配置下的工具名与 schema', () => {
   assert.equal(definition.output.schema.additionalProperties, false);
   assert.deepEqual(
     Object.keys(definition.output.schema.properties),
-    ['model', 'answers', 'usage', 'state_bytes', 'body_bytes', 'body_warning', 'confidence_warning'],
+    [
+      'model', 'answers', 'usage', 'state_bytes', 'body_bytes', 'body_warning', 'confidence_warning',
+      'source', 'escalated', 'plan', 'chunks', 'scan',
+    ],
   );
   assert.equal(typeof definition.output.render, 'function');
   assert.equal(typeof definition.execute, 'function');

@@ -7,8 +7,9 @@ import { PARAMETERS, TOOL_DESCRIPTION } from '../lib/parameters.js';
 import { Config } from '../lib/tool.js';
 
 test('参数契约的结构不变量（DSL 的硬性要求）', () => {
-  assert.deepEqual(Object.keys(PARAMETERS), ['state', 'questions', 'model']);
-  assert.equal(PARAMETERS.state.required, true);
+  assert.deepEqual(Object.keys(PARAMETERS), ['state', 'questions', 'stateSource', 'model', 'strategy', 'aggregate']);
+  assert.equal(PARAMETERS.state.required, undefined, 'v2：state 与 stateSource 恰有其一，故都不标 required');
+  assert.equal(PARAMETERS.stateSource.required, undefined);
   assert.equal(PARAMETERS.questions.required, true);
   assert.equal(PARAMETERS.model.required, undefined);
 
@@ -136,13 +137,11 @@ test('README 的配置表键集与顺序必须与 Config 的投影一致（两�
   }
 });
 
-test('能投影成 JSON Schema，且 required 只含 state 与 questions', () => {
+test('能投影成 JSON Schema，且 v2 的 required 只剩 questions', () => {
   const json = parameterSchemaSpecToJsonSchema(PARAMETERS);
   assert.equal(json.type, 'object');
-  assert.ok(json.properties.state);
-  assert.ok(json.properties.questions);
-  assert.ok(json.properties.model);
-  assert.equal(json.required.includes('state'), true);
-  assert.equal(json.required.includes('questions'), true);
-  assert.equal(json.required.includes('model'), false);
+  for (const key of ['state', 'stateSource', 'questions', 'model', 'strategy', 'aggregate']) {
+    assert.ok(json.properties[key], `缺少参数 ${key}`);
+  }
+  assert.deepEqual(json.required, ['questions'], 'v2：state 与 stateSource 恰有其一，交叉约束由本地校验把关');
 });

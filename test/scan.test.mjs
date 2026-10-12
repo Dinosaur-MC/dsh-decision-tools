@@ -39,6 +39,7 @@ test('单块失败被隔离，其余块照跑（绝不因一块丢掉整次扫�
   assert.equal(r.failed.length, 1);
   assert.equal(r.failed[0].chunk, 'c2');
   assert.equal(r.failed[0].kind, 'context_overflow');
+  assert.ok(r.failed[0].bytes > 0, '失败项必须带上块的字节数（自适应重切要用）');
   assert.equal(r.chunks.length, calls.length - 1);
   assert.ok(r.chunks.some((c) => c.name === 'c3'), '失败块之后的块必须继续跑');
 });

@@ -156,7 +156,7 @@ test('V8 边界：正好 65536 字节通过，再多 1 字节被拒', () => {
   expectReject(base({ state: 'x'.repeat(lo + 1) }), /请求体 \d+ 字节，超过服务端上限 65536 字节（64 KiB）；请缩减 state/);
 });
 
-test('LIMITS 冻结：4 项服务端硬限 + 2 项本地策略阈值（体积告警 / 置信度告警）', () => {
+test('LIMITS 冻结：4 项服务端硬限 + 7 项本地阈值（体积/置信度/引用式读取/扫描预算）', () => {
   // softBodyBytes 不是服务端限制，是本地的**策略**阈值（非实测退化点）；
   // 它同样被逐字锁定，避免有人顺手调小/调大而不留痕。
   // 4096 B ≈ 1230 token ≈ 60% 的 tev1:0.8b num_ctx=2050（实测 3.33 B/token），
@@ -168,6 +168,12 @@ test('LIMITS 冻结：4 项服务端硬限 + 2 项本地策略阈值（体积告
     minOptions: 2,
     maxOptions: 26,
     maxBodyBytes: 65536,
+    // v2 新增（ADR-7 / ADR-9）：引用式读取上限 + 扫描的三重预算与自适应轮数。
+    maxSourceBytes: 262144,
+    scanMaxChunks: 32,
+    scanMaxTotalBytes: 4194304,
+    scanDeadlineMs: 180000,
+    scanMaxAdaptRounds: 2,
     softBodyBytes: 4096,
     minConfidence: 0.25,
   });
