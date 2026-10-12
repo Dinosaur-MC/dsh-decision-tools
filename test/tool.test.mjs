@@ -208,6 +208,29 @@ test('stateSource：解析后落在工作区根之外即拒绝（三道闸的第
   );
 });
 
+test('strategy:scan 真的分块：返回 chunks、无顶层 answers，且**不发单次请求**', async () => {
+  const tree = treeFs({ 'big.txt': 'A'.repeat(5000) });
+  const fake = await startFakeOllama(() => ({ status: 200, body: ANSWERS }));
+  const { registered, ctx } = fakeCtx({ fs: tree });
+  apply(ctx, Config({ baseUrl: fake.baseUrl }));
+  const value = await registered[0].execute(
+    { stateSource: { kind: 'file', path: 'big.txt' }, strategy: 'scan', questions: [{ name: 'q', type: 'noul', instructions: 'x' }] },
+    { preview: false, signal: undefined, agent: { session: { header: { cwd: 'F:/ws' } } } },
+  );
+  assert.equal(value.plan.action, 'scan');
+  assert.ok(Array.isArray(value.chunks) && value.chunks.length >= 2, `应切成 ≥2 块，实际 ${value.chunks?.length}`);
+  assert.equal(value.answers, undefined, '扫描模式顶层不得有 answers（answers 与 chunks 恰有其一）');
+  assert.equal(value.scan.truncated, false);
+  assert.deepEqual(value.scan.failed, []);
+  // ★ 回归断言：分派依据必须是「计划里的动作」。曾经按 `failure === undefined` 分派 ⇒
+  // `strategy:'scan'` 悄悄退化成「先发单次再返回 answers」，既多花一次请求又永远不产出 chunks。
+  assert.equal(fake.requests.length, value.chunks.length,
+    '每个块恰好一次请求；若先发单次再分块，这里会多出一次');
+  assert.equal(fake.requests[0].url, '/v1/systemone');
+  assert.equal(JSON.stringify(value).includes('AAAA'), false, '★ 分块材料同样不得回显');
+  await fake.close();
+});
+
 test('toolName 配置改变工具名', () => {
   const { registered, ctx } = fakeCtx();
   apply(ctx, Config({ toolName: 'decide' }));
