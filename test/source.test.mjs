@@ -172,3 +172,16 @@ test('isRecursiveGlob：只有 ** 需要递归下降', () => {
   assert.equal(isRecursiveGlob(['*', '**']), true);
   assert.equal(isRecursiveGlob([]), false);
 });
+test('chunk：hardSplit 分支也必须遵守 maxChunks（r3 审查 P0#2）', () => {
+  // 单行 200 KB：整块超过 budget ⇒ 走 hardSplit 分支，旧实现一次把它全部推入，maxChunks 形同虚设。
+  const out = chunk('A'.repeat(200000), { budgetBytes: 4096, maxChunks: 32, maxTotalBytes: 4 * 1024 * 1024 });
+  assert.equal(out.chunks.length, 32, `块数必须被 maxChunks 夹住（实际 ${out.chunks.length}）`);
+  assert.equal(out.truncated, true, '触顶必须标截断，否则调用方以为材料完整');
+  assert.equal(out.truncatedBy, 'chunks');
+  assert.ok(out.remaining > 0, 'remaining 必须为正（后续行还没切）');
+  assert.ok(out.chunks.every((c) => c.bytes <= 4096), '每块仍不得超 budget');
+  // 极端：budget=1 时同一支会被调用上千次，也必须停在 maxChunks。
+  const tight = chunk('A'.repeat(1000), { budgetBytes: 1, maxChunks: 5 });
+  assert.equal(tight.chunks.length, 5);
+  assert.equal(tight.truncatedBy, 'chunks');
+});
