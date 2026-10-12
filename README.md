@@ -180,3 +180,15 @@ fixture and is deliberately excluded from the published package.
 ## Licence
 
 MIT. See LICENSE and THIRD_PARTY_NOTICES.
+
+## v2 (0.2.0)
+
+The contract is final — there are no compatibility switches.
+
+- `state` and `stateSource` are **mutually exclusive**: give exactly one. With `stateSource` the plugin reads the material itself and it **never enters your context**.
+- `stateSource: { kind: 'file', path, startLine?, endLine? }` or `{ kind: 'glob', pattern, limit? }`. Glob: `*` does not cross `/`, `**` is any depth. A **single file** over the byte cap fails loudly; a **glob over the total cap** is truncated (`source.truncated` / `source.remaining`).
+- `strategy`: `auto` (default) sends, then **escalates** to a bigger-context decision model on overflow, then falls back to **scanning**; `inline` never scans; `scan` always scans.
+- Escalation is sticky per process and only fires when you did **not** pass `model`; when it fires the result carries `escalated: { from, to, sticky }`.
+- Scanning returns `chunks` (per-chunk answers with line ranges) and **no top-level `answers`**. `scan.failed` / `truncated` / `aborted` / `remaining` tell you how complete the scan is; `aggregate` is provisional and must not be treated as a decision.
+- `plan` echoes what the plugin decided (`strategy` / `action` / `model` / `reason`).
+- The package also ships a **skill**: enabling the `dsh-decision-tools/skill` row puts `decision-usage` in the session skill catalog (the shipped `cordis.patch.yml` enables both rows).

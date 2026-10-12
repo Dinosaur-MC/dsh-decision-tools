@@ -165,3 +165,15 @@
 ## Licence
 
 MIT。见 LICENSE 与 THIRD_PARTY_NOTICES。
+
+## v2（0.2.0）
+
+契约已定稿，**没有兼容开关**。
+
+- `state` 与 `stateSource` **恰有其一**。用 `stateSource` 时由插件自己读盘，材料**不进你的上下文**。
+- `stateSource: { kind: 'file', path, startLine?, endLine? }` 或 `{ kind: 'glob', pattern, limit? }`。glob：`*` 不跨 `/`，`**` 表示任意深度。**单文件**超字节上限即报错；**glob 总量**超上限则**截断**（`source.truncated` / `source.remaining`）。
+- `strategy`：`auto`（缺省）＝先直发，溢出时**自动提升**到更大上下文的判定模型，再退化为**分块扫描**；`inline` 从不扫描；`scan` 总是扫描。
+- 提升是**进程级粘滞**的，且只在**未显式传 `model`** 时发生；发生时结果里带 `escalated: { from, to, sticky }`。
+- 扫描返回 `chunks`（逐块答案 + 行范围），**顶层没有 `answers`**。`scan.failed` / `truncated` / `aborted` / `remaining` 说明这次扫描有多完整；`aggregate` 是**暂定**值，不得当作判定依据。
+- `plan` 回显插件实际决定的策略（`strategy` / `action` / `model` / `reason`）。
+- 本包还随带一个 **skill**：启用 `dsh-decision-tools/skill` 行即把 `decision-usage` 放进会话技能目录（随包 `cordis.patch.yml` 默认两行都启用）。
