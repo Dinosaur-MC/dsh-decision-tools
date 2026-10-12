@@ -44,8 +44,11 @@ function treeFs(files) {
   const ROOT = '.';
   const target = (key) => ({ key });
   const join = (base, name) => (base === ROOT ? `./${name}` : `${base}/${name}`);
+  const resolveCalls = [];
   return {
-    async resolve(path) {
+    resolveCalls,
+    async resolve(path, opts = {}) {
+      resolveCalls.push({ path: String(path), cwd: opts.cwd });
       const clean = norm(String(path));
       return target(clean === '.' || clean === '' ? ROOT : `./${clean}`);
     },
@@ -141,18 +144,20 @@ test('默认 toolName 配置下的工具名与 schema', () => {
 });
 
 test('stateSource{kind:file}：经 ctx.fs 读入，回显 source 且不进上下文', async () => {
-  const fakes = [{ name: 'a.md', key: 'docs/a.md' }];
   const fs = treeFs({ 'docs/a.md': 'line1\nline2\nline3' });
   const { registered, ctx } = fakeCtx({ fs });
   apply(ctx, Config({}));
   const value = await registered[0].execute(
     { stateSource: { kind: 'file', path: 'docs/a.md', startLine: 2, endLine: 3 }, questions: [{ name: 'q', type: 'noul', instructions: 'x' }] },
-    { preview: false, signal: undefined },
+    { preview: false, signal: undefined, agent: { session: { header: { cwd: 'F:/ws' } } } },
   );
+  // ★ 机制断言：每个相对路径都必须带**本会话 cwd** —— 不给 cwd 时后端会回落到进程启动目录，
+  // 于是相对路径解析到工作区之外（2026-10-13 运行态实测：`README.md` 报「文件不存在」）。
+  assert.deepEqual(fs.resolveCalls.map((c) => c.cwd), ['F:/ws', 'F:/ws']);
+  assert.deepEqual(fs.resolveCalls.map((c) => c.path), ['.', 'docs/a.md']);
   assert.deepEqual(value.source, { kind: 'file', path: 'docs/a.md', bytes: 11, startLine: 2, endLine: 3, lines: 3 });
   assert.equal(value.state_bytes, 11, 'state 是切片后的材料');
   assert.equal(JSON.stringify(value).includes('line1'), false, '★ 材料不得回显在结果里（A7 的全部意义）');
-  assert.equal(fakes.length, 1);
 });
 
 test('stateSource{kind:glob}：按模式收集并加路径表头', async () => {
