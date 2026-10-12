@@ -236,3 +236,36 @@ test('§4.11：告警行排在体积口径与体积告警之后（模型读到�
     confidence_warning: '置信度告警行',
   }), 'q  noul    P(true)=0.4000\n体积: state=20000B body=20480B\n体积告警行\n置信度告警行');
 });
+
+test('v2：扫描模式逐块呈现，并回显 plan / escalated / source / scan 元信息', () => {
+  const out = renderAnswers({}, {
+    model: 'clef-flash:latest',
+    plan: { strategy: 'scan', action: 'scan', model: 'clef-flash:latest', reason: 'scan-explicit' },
+    escalated: { from: 'tev1:0.8b', to: 'nimble:latest', sticky: true },
+    source: { kind: 'glob', pattern: 'assets/xx', bytes: 5123, files: ['assets/a.md'], truncated: true, remaining: 2 },
+    chunks: [
+      { name: 'c1', startLine: 1, endLine: 20, answers: { q1: { type: 'noul', noul: 0.8 } } },
+      { name: 'c2', startLine: 21, endLine: 40, answers: { q1: { type: 'noul', noul: 0.2 } } },
+    ],
+    scan: {
+      failed: [{ chunk: 'c3', kind: 'context_overflow', message: 'too big' }],
+      truncated: true, truncatedBy: 'chunks', aborted: false, remaining: 3, bytesPerChunk: 4096,
+      aggregate: { provisional: true, perQuestion: { q1: { max: 0.8, chunks: ['c1'] } } },
+    },
+  });
+  const text = out[0].text;
+  assert.match(text, /\[c1 L1-20\]/, '逐块呈现块名与行区间');
+  assert.match(text, /\[c2 L21-40\]/);
+  assert.match(text, /\[c3\] FAILED context_overflow: too big/, '失败块必须单独一行并带 kind');
+  assert.match(text, /计划: strategy=scan action=scan model=clef-flash:latest reason=scan-explicit/);
+  assert.match(text, /已提升: tev1:0\.8b → nimble:latest/, '提升必须回显，且提示换模型即换基座');
+  assert.match(text, /材料: glob assets\/xx（1 个文件，已截断）/, '★ glob 来源不得按 file 形状渲染（无 path/startLine）');
+  assert.match(text, /扫描: 块=2 失败=1 截断=true\(chunks\)/);
+  assert.match(text, /聚合（暂定，不得作为判定依据）/, '聚合必须标明不得作为判定依据');
+  assert.equal(text.includes('(no answers returned)'), false, '有 chunks 时不得出现空答案占位');
+});
+
+test('v2：file 来源仍按 path + 行区间渲染（形状分派不得把两支弄反）', () => {
+  const out = renderAnswers({}, { model: 'tev1:0.8b', source: { kind: 'file', path: 'README.md', startLine: 1, endLine: 20, bytes: 300 } });
+  assert.match(out[0].text, /材料: file README\.md L1-20（300B，不进上下文）/);
+});
