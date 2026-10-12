@@ -1,0 +1,194 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  ESCALATION_MARGIN,
+  DEFAULT_LADDER,
+  demandOf,
+  selectEscalation,
+  resolveSticky,
+  createSingleFlight,
+  describeExhausted,
+} from '../lib/escalate.js';
+
+/** 本机实测的阶梯（容量口径见 `.temp/numctx/notes.md`）。 */
+const LADDER = [
+  { model: 'tev1:0.8b', numCtx: 2050 },
+  { model: 'tev1:latest', numCtx: 2050 },
+  { model: 'nimble:latest', numCtx: 8194 },
+  { model: 'clef-flash:latest', numCtx: 16384 },
+];
+
+/** 手动可控的 promise，用来把『执行中』这一刻钉住。 */
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+
+test('ESCALATION_MARGIN 冻结为 0.6（策略值，与 softBodyBytes/2050 ≈ 60% 同源）', () => {
+  assert.equal(ESCALATION_MARGIN, 0.6);
+});
+
+test('DEFAULT_LADDER 只含本机实测容量，且刻意不含 clef:latest', () => {
+  assert.deepEqual(DEFAULT_LADDER.map((entry) => entry.model),
+    ['tev1:0.8b', 'tev1:latest', 'nimble:latest', 'clef-flash:latest']);
+  assert.equal(DEFAULT_LADDER.find((e) => e.model === 'nimble:latest').numCtx, 8194);
+  assert.equal(DEFAULT_LADDER.find((e) => e.model === 'clef-flash:latest').numCtx, 16384);
+  assert.equal(DEFAULT_LADDER.some((e) => e.model === 'clef:latest'), false,
+    '27B 在 8 GB 显存上 prefill 21500 B 300 s 未返回，不得进默认阶梯');
+});
+
+test('demandOf：带数字用实测 actual；缺席或不可用一律回落到当前模型声明容量', () => {
+  assert.deepEqual(demandOf({ actual: 47168, limit: 2050 }, 2050), { demand: 47168, source: 'observed' });
+  assert.deepEqual(demandOf({ actual: undefined, limit: undefined }, 16384),
+    { demand: 16384, source: 'conservative' }, 'B 分支（clef 系）两者都缺席');
+  assert.deepEqual(demandOf({ actual: Number.NaN }, 2050), { demand: 2050, source: 'conservative' });
+  assert.deepEqual(demandOf({ actual: 0 }, 2050), { demand: 2050, source: 'conservative' });
+  assert.deepEqual(demandOf(undefined, 2050), { demand: 2050, source: 'conservative' });
+});
+
+test('selectEscalation：跳过不比当前更大的一档（同容量换模型无意义）', () => {
+  const picked = selectEscalation({ ladder: LADDER, from: 'tev1:0.8b',
+    failure: { actual: 3000, limit: 2050 }, currentNumCtx: 2050 });
+  assert.equal(picked.ok, true);
+  assert.equal(picked.entry.model, 'nimble:latest', 'tev1:latest 同为 2050，必须被跳过');
+  assert.equal(picked.demand, 3000);
+  assert.equal(picked.demandSource, 'observed');
+});
+
+test('selectEscalation：余量边界取 >=（恰好等于需求时仍选中）', () => {
+  const atBoundary = 8194 * ESCALATION_MARGIN;
+  const hit = selectEscalation({ ladder: LADDER, from: 'tev1:0.8b',
+    failure: { actual: atBoundary }, currentNumCtx: 2050 });
+  assert.equal(hit.entry.model, 'nimble:latest');
+  const over = selectEscalation({ ladder: LADDER, from: 'tev1:0.8b',
+    failure: { actual: atBoundary + 0.1 }, currentNumCtx: 2050 });
+  assert.equal(over.entry.model, 'clef-flash:latest', '越过 nimble 的余量后必须换下一档');
+});
+
+test('selectEscalation：超过最大档 → exceeds-largest，并列出考虑过的档', () => {
+  const r = selectEscalation({ ladder: LADDER, from: 'tev1:0.8b',
+    failure: { actual: 50000, limit: 2050 }, currentNumCtx: 2050 });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'exceeds-largest');
+  assert.equal(r.demand, 50000);
+  assert.deepEqual(r.considered.map((e) => e.model), ['nimble:latest', 'clef-flash:latest']);
+});
+
+test('selectEscalation：已在最大档 → no-larger-entry', () => {
+  const r = selectEscalation({ ladder: LADDER, from: 'clef-flash:latest',
+    failure: { actual: 20000 }, currentNumCtx: 16384 });
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'no-larger-entry');
+});
+
+test('selectEscalation：阶梯里更小的档即便余量够也不得被选中', () => {
+  const shuffled = [
+    { model: 'nimble:latest', numCtx: 8194 },
+    { model: 'tev1:0.8b', numCtx: 2050 },
+    { model: 'clef-flash:latest', numCtx: 16384 },
+  ];
+  // demand 1000：tev1（2050×0.6=1230）本身『够用』，但它比当前 8194 小，必须被排除。
+  const r = selectEscalation({ ladder: shuffled, from: 'nimble:latest',
+    failure: { actual: 1000 }, currentNumCtx: 8194 });
+  assert.equal(r.entry.model, 'clef-flash:latest');
+  const none = selectEscalation({ ladder: shuffled, from: 'nimble:latest',
+    failure: { actual: 12000 }, currentNumCtx: 8194 });
+  assert.equal(none.ok, false, '16384×0.6=9830 < 12000，应当失败');
+  assert.deepEqual(none.considered.map((e) => e.model), ['clef-flash:latest']);
+});
+
+test('resolveSticky：显式 model 一律赢（含向下降级），且不产出 escalated 回显', () => {
+  const r = resolveSticky({ model: 'nimble:latest', reason: 'escalated' },
+    { explicitModel: 'tev1:0.8b', defaultModel: 'tev1:latest' });
+  assert.equal(r.switchTo, 'tev1:0.8b');
+  assert.deepEqual(r.next, { model: 'tev1:0.8b', reason: 'explicit' });
+  assert.equal(r.escalated, undefined);
+});
+
+test('resolveSticky：粘滞状态不因 defaultModel 变化而回退', () => {
+  const r = resolveSticky({ model: 'clef-flash:latest', reason: 'escalated' }, { defaultModel: 'tev1:0.8b' });
+  assert.equal(r.switchTo, 'clef-flash:latest');
+  assert.equal(r.escalated, undefined, '沿用既有粘滞不算一次新的提升');
+});
+
+test('resolveSticky：无显式、无粘滞 → 回落 defaultModel', () => {
+  const r = resolveSticky(null, { defaultModel: 'tev1:0.8b' });
+  assert.equal(r.switchTo, 'tev1:0.8b');
+  assert.deepEqual(r.next, { model: 'tev1:0.8b', reason: 'default' });
+});
+
+test('resolveSticky：escalatedTo 建立粘滞并回显 sticky=true（且压过已有粘滞）', () => {
+  const r = resolveSticky({ model: 'nimble:latest', reason: 'escalated' },
+    { escalatedTo: 'clef-flash:latest', defaultModel: 'tev1:0.8b' });
+  assert.equal(r.switchTo, 'clef-flash:latest');
+  assert.equal(r.next.reason, 'escalated');
+  assert.deepEqual(r.escalated, { to: 'clef-flash:latest', sticky: true });
+});
+
+test('createSingleFlight：并发调用共享同一次执行', async () => {
+  const sf = createSingleFlight();
+  const gate = deferred();
+  let calls = 0;
+  const fn = () => { calls += 1; return gate.promise; };
+  const p1 = sf.run(fn);
+  const p2 = sf.run(fn);
+  assert.equal(calls, 1, '第二次调用必须搭同一趟，而不是各开一趟');
+  assert.equal(sf.pending, true);
+  gate.resolve('model-x');
+  assert.deepEqual(await Promise.all([p1, p2]), ['model-x', 'model-x']);
+  assert.equal(sf.pending, false, '结算后必须释放槽位');
+});
+
+test('createSingleFlight：结算后释放，下一波重新执行', async () => {
+  const sf = createSingleFlight();
+  const gate1 = deferred();
+  let calls = 0;
+  const p1 = sf.run(() => { calls += 1; return gate1.promise; });
+  gate1.resolve('a');
+  assert.equal(await p1, 'a');
+  const gate2 = deferred();
+  const p2 = sf.run(() => { calls += 1; return gate2.promise; });
+  assert.equal(calls, 2, '上一趟结算后必须能重新执行');
+  gate2.resolve('b');
+  assert.equal(await p2, 'b');
+});
+
+test('createSingleFlight：同步抛错走同一失败路径并释放槽位', async () => {
+  const sf = createSingleFlight();
+  await assert.rejects(sf.run(() => { throw new Error('sync-boom'); }), /sync-boom/);
+  assert.equal(sf.pending, false);
+});
+
+test('createSingleFlight：拒绝向所有等待者传播，且第二个任务不执行', async () => {
+  const sf = createSingleFlight();
+  const gate = deferred();
+  let secondRan = false;
+  const p1 = sf.run(() => gate.promise);
+  const p2 = sf.run(() => { secondRan = true; return Promise.resolve('nope'); });
+  gate.reject(new Error('boom'));
+  await assert.rejects(p1, /boom/);
+  await assert.rejects(p2, /boom/);
+  assert.equal(secondRan, false, '槽位被占用时第二个任务不得执行');
+  assert.equal(sf.pending, false, '失败后同样必须释放');
+});
+
+test('describeExhausted：给出需求与来源、三条可行动项，且不得指向请求形状', () => {
+  const msg = describeExhausted({ from: 'tev1:0.8b', demand: 50000, demandSource: 'observed',
+    ladder: LADDER, reason: 'exceeds-largest' });
+  assert.match(msg, /50000/);
+  assert.match(msg, /服务端报错实测/);
+  assert.match(msg, /clef-flash:latest/, '必须点名阶梯上限那一档');
+  assert.match(msg, /缩减 state/);
+  assert.match(msg, /Modelfile PARAMETER num_ctx/, '抬高容量只有部署侧一条路');
+  assert.match(msg, /分块扫描/);
+  assert.doesNotMatch(msg, /choice|noul|score|选项数|对象映射/,
+    '溢出与请求形状无关，文案不得回落到形状类建议');
+  const noLarger = describeExhausted({ from: 'clef-flash:latest', demand: 20000,
+    demandSource: 'observed', ladder: LADDER, reason: 'no-larger-entry' });
+  assert.match(noLarger, /已经是阶梯里容量最大的一档/);
+  const conservative = describeExhausted({ from: 'clef-flash:latest', demand: 16384,
+    demandSource: 'conservative', ladder: LADDER, reason: 'no-larger-entry' });
+  assert.match(conservative, /服务端未给出数字/);
+});
