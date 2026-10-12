@@ -6,6 +6,9 @@ import {
   validateSourceDescriptor,
   sliceByLines,
   chunk,
+  splitGlobPattern,
+  matchGlobSegment,
+  isRecursiveGlob,
 } from '../lib/source.js';
 
 const DOC = ['# Title', '', 'para one', 'para two', '', '## Sec', 'x', '', 'tail'].join('\n');
@@ -135,4 +138,37 @@ test('chunk：单行超预算 → 硬切，且每片仍不超预算', () => {
 test('chunk：budgetBytes 非法即报错（不猜默认值）', () => {
   expectReject(() => chunk('abc', { budgetBytes: 0 }), /budgetBytes 必须是 ≥ 1 的整数/);
   expectReject(() => chunk('abc', {}), /budgetBytes 必须是 ≥ 1 的整数/);
+});
+
+test('splitGlobPattern：起始目录 + 逐段模式（纯字面路径的 segments 为空）', () => {
+  assert.deepEqual(splitGlobPattern('docs/*.md'), { base: 'docs', segments: ['*.md'] });
+  assert.deepEqual(splitGlobPattern('*/*.md'), { base: '', segments: ['*', '*.md'] });
+  assert.deepEqual(splitGlobPattern('a/b/*.txt'), { base: 'a/b', segments: ['*.txt'] });
+  assert.deepEqual(splitGlobPattern('docs/**/*.md'), { base: 'docs', segments: ['**', '*.md'] });
+  assert.deepEqual(splitGlobPattern('**/*.md'), { base: '', segments: ['**', '*.md'] });
+  // 整条都没有通配符 ⇒ 纯字面路径，调用方按 file 读，不必遍历目录。
+  assert.deepEqual(splitGlobPattern('a/b/c.txt'), { base: 'a/b/c.txt', segments: [] });
+});
+
+test('matchGlobSegment：* 不跨段、? 单字符、元字符按字面处理', () => {
+  assert.equal(matchGlobSegment('*.md', 'a.md'), true);
+  assert.equal(matchGlobSegment('*.md', 'a.txt'), false);
+  assert.equal(matchGlobSegment('*.md', 'x/a.md'), false, '* 不得跨越 /');
+  assert.equal(matchGlobSegment('README.md', 'README.md'), true);
+  assert.equal(matchGlobSegment('a?.md', 'ab.md'), true);
+  assert.equal(matchGlobSegment('a?.md', 'a.md'), false);
+  assert.equal(matchGlobSegment('report-*.txt', 'report-1.txt'), true);
+  // 文件名里的正则元字符必须当字面量（否则 `a.md` 会匹配 `axmd`）。
+  assert.equal(matchGlobSegment('a.md', 'axmd'), false);
+  assert.equal(matchGlobSegment('v1.0', 'v1x0'), false);
+  assert.equal(matchGlobSegment('v1.0', 'v1.0'), true);
+  assert.equal(matchGlobSegment('a+b', 'aab'), false);
+  assert.equal(matchGlobSegment('a+b', 'a+b'), true);
+});
+
+test('isRecursiveGlob：只有 ** 需要递归下降', () => {
+  assert.equal(isRecursiveGlob(['*.md']), false);
+  assert.equal(isRecursiveGlob(['**', '*.md']), true);
+  assert.equal(isRecursiveGlob(['*', '**']), true);
+  assert.equal(isRecursiveGlob([]), false);
 });

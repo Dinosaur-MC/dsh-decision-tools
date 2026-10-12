@@ -30,12 +30,57 @@ import { startFakeOllama } from './fake-ollama.mjs';
  * 本插件不注册 prompt 段（ADR-5），所以缺少 systemPrompt 时 apply 必须照常工作 ——
  * 这个假 ctx 本身就是那条不变量的守卫：一旦有人再加回 systemPrompt 调用，测试会直接崩。
  */
-function fakeCtx() {
+/**
+ * 形状**照 `@deepseek-ai/dsh-fs` 的 types 抄**（不是猜的）：
+ *   `resolve(path)`          → 不透明 target（这里用 `{ key }` 代替）
+ *   `contains(root, child)`  → canonical containment
+ *   `listDir(target)`        → `{ name, type: 'file'|'directory'|'other', target }[]`（只给一层）
+ *   `readBytes(target, s, maxBytes)` → 超限抛错（真机是 FS_TOO_LARGE），**不截断**
+ * `files` 是「工作区相对路径 → 内容」的扁平表；目录由路径前缀推导。
+ */
+function treeFs(files) {
+  const norm = (path) => path.replace(/\\/g, '/').replace(/^\.\/?$/, '').replace(/^\.\//, '').replace(/\/+$/, '');
+  /** 工作区根的 target 用 `.` 表示（真机是后端的真实根目标，**不是空串**）。 */
+  const ROOT = '.';
+  const target = (key) => ({ key });
+  const join = (base, name) => (base === ROOT ? `./${name}` : `${base}/${name}`);
+  return {
+    async resolve(path) {
+      const clean = norm(String(path));
+      return target(clean === '.' || clean === '' ? ROOT : `./${clean}`);
+    },
+    contains(root, child) {
+      return child.key === root.key || child.key.startsWith(root.key === ROOT ? './' : `${root.key}/`);
+    },
+    async listDir(t) {
+      const base = norm(t.key);
+      const prefix = base === '' ? '' : `${base}/`;
+      const seen = new Map();
+      for (const path of Object.keys(files)) {
+        if (!path.startsWith(prefix)) continue;
+        const rest = path.slice(prefix.length);
+        const slash = rest.indexOf('/');
+        const name = slash < 0 ? rest : rest.slice(0, slash);
+        const type = slash < 0 ? 'file' : 'directory';
+        if (!seen.has(name)) seen.set(name, { name, type, target: target(join(t.key, name)) });
+      }
+      return [...seen.values()];
+    },
+    async readBytes(t, _signal, maxBytes) {
+      const raw = Buffer.from(files[norm(t.key)] ?? '', 'utf8');
+      if (raw.byteLength > maxBytes) throw new Error('FS_TOO_LARGE');
+      return raw;
+    },
+  };
+}
+
+function fakeCtx(options = {}) {
   const registered = [];
   return {
     registered,
     ctx: {
       tools: { register: (definition) => { registered.push(definition); return () => {}; } },
+    ...(options.fs === undefined ? {} : { fs: options.fs }),
     },
   };
 }
@@ -93,6 +138,69 @@ test('默认 toolName 配置下的工具名与 schema', () => {
   );
   assert.equal(typeof definition.output.render, 'function');
   assert.equal(typeof definition.execute, 'function');
+});
+
+test('stateSource{kind:file}：经 ctx.fs 读入，回显 source 且不进上下文', async () => {
+  const fakes = [{ name: 'a.md', key: 'docs/a.md' }];
+  const fs = treeFs({ 'docs/a.md': 'line1\nline2\nline3' });
+  const { registered, ctx } = fakeCtx({ fs });
+  apply(ctx, Config({}));
+  const value = await registered[0].execute(
+    { stateSource: { kind: 'file', path: 'docs/a.md', startLine: 2, endLine: 3 }, questions: [{ name: 'q', type: 'noul', instructions: 'x' }] },
+    { preview: false, signal: undefined },
+  );
+  assert.deepEqual(value.source, { kind: 'file', path: 'docs/a.md', bytes: 11, startLine: 2, endLine: 3, lines: 3 });
+  assert.equal(value.state_bytes, 11, 'state 是切片后的材料');
+  assert.equal(JSON.stringify(value).includes('line1'), false, '★ 材料不得回显在结果里（A7 的全部意义）');
+  assert.equal(fakes.length, 1);
+});
+
+test('stateSource{kind:glob}：按模式收集并加路径表头', async () => {
+  const fs = treeFs({ 'a.md': 'A', 'b.md': 'B', 'c.txt': 'C', 'docs/d.md': 'D' });
+  const { registered, ctx } = fakeCtx({ fs });
+  apply(ctx, Config({}));
+  const value = await registered[0].execute(
+    { stateSource: { kind: 'glob', pattern: '*.md' }, questions: [{ name: 'q', type: 'noul', instructions: 'x' }] },
+    { preview: false, signal: undefined },
+  );
+  assert.deepEqual(value.source.files, ['a.md', 'b.md'], '只取一层里的 .md');
+  assert.equal(value.source.truncated, false);
+  assert.equal(value.source.remaining, 0);
+  assert.ok(value.source.bytes > 2);
+});
+
+test('stateSource{kind:glob}：** 递归下降；limit 触顶即标截断', async () => {
+  const fs = treeFs({ 'docs/a.md': 'A', 'docs/x/b.md': 'B', 'docs/x/y/c.md': 'C' });
+  const { registered, ctx } = fakeCtx({ fs });
+  apply(ctx, Config({}));
+  const all = await registered[0].execute(
+    { stateSource: { kind: 'glob', pattern: 'docs/**/*.md' }, questions: [{ name: 'q', type: 'noul', instructions: 'x' }] },
+    { preview: false, signal: undefined },
+  );
+  assert.deepEqual(all.source.files, ['docs/a.md', 'docs/x/b.md', 'docs/x/y/c.md'], '** 覆盖任意深度');
+  const one = await registered[0].execute(
+    { stateSource: { kind: 'glob', pattern: 'docs/**/*.md', limit: 1 }, questions: [{ name: 'q', type: 'noul', instructions: 'x' }] },
+    { preview: false, signal: undefined },
+  );
+  assert.equal(one.source.files.length, 1);
+  assert.equal(one.source.truncated, true, 'limit 触顶必须标截断，不能静默漏文件');
+  assert.ok(one.source.remaining >= 1);
+});
+
+test('stateSource：解析后落在工作区根之外即拒绝（三道闸的第二道）', async () => {
+  const fs = treeFs({ 'a.md': 'A' });
+  const realResolve = fs.resolve;
+  // 只有「目标文件」被解析到根外；根自己被解析到根外会让 containment 自比通过。
+  fs.resolve = async (path) => (String(path) === '.' ? realResolve('.') : { key: '/outside' });
+  const { registered, ctx } = fakeCtx({ fs });
+  apply(ctx, Config({}));
+  await assert.rejects(
+    registered[0].execute(
+      { stateSource: { kind: 'file', path: 'a.md' }, questions: [{ name: 'q', type: 'noul', instructions: 'x' }] },
+      { preview: false, signal: undefined },
+    ),
+    (error) => error.kind === 'source_outside_root',
+  );
 });
 
 test('toolName 配置改变工具名', () => {

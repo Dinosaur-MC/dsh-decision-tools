@@ -18,7 +18,8 @@ Ask 1–64 questions about **one shared `state`** in a single call. The three qu
 `state` (inline) and `stateSource` (reference) are **mutually exclusive**: give exactly one. With `stateSource` the plugin reads the file itself and the material **never enters your context** — use it for anything large.
 
 - `{ kind: 'file', path: 'docs/spec.md', startLine?: 10, endLine?: 40 }` — `path` must be a **workspace-root-relative** path; absolute paths, `..` and symlinks that escape the root are refused. Line ranges are 1-based and inclusive, and an out-of-range range **fails loudly** rather than silently truncating.
-- Two different overflow semantics: a **single file** over the byte cap **fails loudly** (shrink the range), while a **glob** is truncated with `source.truncated = true`. Note: `kind: 'glob'` is **not wired up in v2** — it fails with an actionable error; use `file` with a line range instead.
+- `{ kind: 'glob', pattern: 'docs/**/*.md', limit?: 5 }` reads every matching file under the workspace root (`*` does not cross `/`, `**` means any depth) and joins them with `===== <path> =====` headers, so you can still attribute each part.
+- Two different overflow semantics: a **single file** over the byte cap **fails loudly** (shrink the range or the glob), while a **glob over the total cap** is truncated with `source.truncated = true` and `source.remaining` — read those before concluding the glob was complete.
 
 ## 3. Read `confidence_warning` correctly
 

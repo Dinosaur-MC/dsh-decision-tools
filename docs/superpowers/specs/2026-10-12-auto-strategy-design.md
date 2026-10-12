@@ -74,9 +74,15 @@ stateSource: { kind: 'file', path: string, startLine?: number, endLine?: number 
            | { kind: 'glob', pattern: string, limit?: number }
 ```
 
-**v2 实际接线范围（与实现一致，不许规格说谎）**：只接线 `kind: 'file'`（含行范围）。
-`kind: 'glob'` 在 v2 里**报可行动错误**而不是静默降级 —— 它需要 `ctx.fs.listDir` 的 `FsDirEntry`
-条目形状，而那只能在真机上确认；用猜出来的形状接线会让「假 ctx 的测试全绿、真机全错」。
+**v2 接线范围**：`kind: 'file'`（含行范围）与 `kind: 'glob'` **都已接线**。
+
+glob 按真实的 `FsDirEntry`（`{ name, type, target }`，`@deepseek-ai/dsh-fs` 的 types）实现：
+`listDir` 只给一层，`**` 由工具层递归下降；`*` **不跨 `/`**，`?` 单字符，文件名里的正则元字符一律
+按字面处理；大小写敏感（宁可少匹配也不错匹配）。两道上限防符号链接环与巨树：深度 8、条目 2000。
+
+**glob 的越限语义与 file 刻意不同**：命中的每个文件超上限 → 报错；**总量**超上限 → 截断并报
+`source.truncated` 与 `source.remaining`（未读的命中数），因为扫描场景要的是「拿到多少算多少」。
+每个命中的目标仍逐个过 `contains` 检查，根外的匹配项**静默跳过**。
 
 **读取路径（全部经 `ctx.fs`，不 import `node:fs`）**：
 
