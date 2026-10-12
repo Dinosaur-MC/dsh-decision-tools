@@ -296,6 +296,37 @@ test('glob：起始目录不存在 → source_missing（不是 kind=undefined �
   );
 });
 
+test('提升失败不得粘滞：坏档一次失败后，下一次调用必须回到默认模型（r1 审查 P0）', async () => {
+  const big = 'A'.repeat(9000);
+  const small = 'B'.repeat(300);
+  const seen = [];
+  const fake = await startFakeOllama((req) => {
+    const model = req.json?.model;
+    seen.push(model);
+    if (model === 'big:latest') return { status: 404, body: { error: 'model not found' } };
+    const len = req.json?.state?.length ?? 0;
+    if (len > 5000) {
+      // 上报的 token 数要 **>2050（确实是溢出）且 ≤ 8194×0.6=4916（big 档才可选）**；
+      // 报成 len+2000=11000 会让 selectEscalation 判「超过最大档」，big 一次都不会被尝试。
+      return { status: 400, body: { error: 'prompt 0 has 2100 tokens; expected 1\u20132050 (input is never truncated)' } };
+    }
+    return { status: 200, body: ANSWERS };
+  });
+  const { registered, ctx } = fakeCtx({ fs: treeFs({ 'big.txt': big, 'small.txt': small }) });
+  apply(ctx, Config({ baseUrl: fake.baseUrl, ladder: [{ model: 'big:latest', numCtx: 8194 }] }));
+  const exec = { preview: false, signal: undefined, agent: { session: { header: { cwd: 'F:/ws' } } } };
+  const questions = [{ name: 'q1', type: 'noul', instructions: 'x' }];
+  // 首次：溢出 → 提升到坏档（404）失败。**已知偏差**：提升用尽时目前直接抛最初的溢出错误，
+  // 而规格 §4 要求 auto 在「提升用尽」时转为扫描（登记为待办，r1 P1 / r3 P2）。
+  // 本用例只钉「坏档不得粘滞」，故先接住这次抛出。
+  const first = await registered[0].execute({ state: big, questions }, exec).catch((error) => error);
+  assert.equal(typeof first?.message, 'string', '提升目标不可用时首次调用应当失败');
+  const second = await registered[0].execute({ state: small, questions }, exec);
+  assert.equal(second.model, 'tev1:0.8b', '粘滞被毒化时这里会是 big:latest');
+  assert.equal(seen.filter((m) => m === 'big:latest').length, 1, '坏档只该被尝试一次');
+  await fake.close();
+});
+
 test('toolName 配置改变工具名', () => {
   const { registered, ctx } = fakeCtx();
   apply(ctx, Config({ toolName: 'decide' }));

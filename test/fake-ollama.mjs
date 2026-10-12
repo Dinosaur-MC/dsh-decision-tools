@@ -50,6 +50,9 @@ export async function startFakeOllama(handler) {
   });
 
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  // 泄漏的假服务不得拖住 `node --test` 退出：否则**任何**断言失败（close 前的 throw）都会把
+  // 整轮测试变成超时挂死，看起来像死锁而不像失败（本轮实测：duration_ms=89368 才被 timeout 杀掉）。
+  server.unref();
   const { port } = server.address();
 
   return {
