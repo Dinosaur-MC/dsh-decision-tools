@@ -58,6 +58,7 @@ const POINT_ANCHORS = [
   [7, '不得决定路由、不得做 fail-open / fail-closed 判据', /must NOT decide routing[\s\S]*fail-open or fail-closed[\s\S]*deterministic rules/],
   [8, 'tev1 不产文本 ⇒ 需要可读判据时换生成类模型', /tev1 family returns only probabilities and never text[\s\S]*generative model/],
   [9, 'score 报在 0..N-1 尺度，不归一化', /0\.\.N-1 level scale, not normalised/],
+  [10, '置信度告警是「旗」不是过滤器：被点名的才升级，未被点名不等于可信', /A `confidence_warning` line names the questions[\s\S]*FLAG, not a\s+filter[\s\S]*NOT thereby endorsed/],
 ];
 
 for (const [point, label, anchor] of POINT_ANCHORS) {

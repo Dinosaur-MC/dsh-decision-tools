@@ -82,11 +82,26 @@ stay put.
 | `keepAlive` | unset | passed through as `keep_alive`; unset uses the server default |
 | `softBodyBytes` | unset (falls back to `LIMITS.softBodyBytes`, 4096) | body size in bytes above which the result carries a `body_warning` |
 | `bodyWarning` | unset (on) | `false` never emits `body_warning`; unset or `true` keeps it on |
+| `minConfidence` | unset (falls back to `LIMITS.minConfidence`, 0.25) | `choice`/`score` answers whose `confidence` is below this — or missing — are named in a `confidence_warning`; `0` disables the gate |
 
 `softBodyBytes` is silently clamped to `LIMITS.maxBodyBytes` (65536) — a threshold above
 that byte cap could never fire — and a threshold set above the model's **real** capacity
 (its `num_ctx`) silently makes the warning useless; nothing inside the plugin can detect
 that, so the server's token check stays the authoritative guard.
+
+`minConfidence` only ever **adds a flag**: every answer is returned unchanged, and the
+plugin never drops, rewrites or rejects one for being uncertain. `0` disables the gate
+(note the opposite reading of `softBodyBytes: 0`, which warns on every call), and values
+above `1` clamp to `1`. The 0.25 default was calibrated on one small local sample
+(`tev1:0.8b`, 4 questions × 6 candidate orderings); confidence scales differ by roughly an
+order of magnitude between models (measured 0.04–0.62 for `tev1:0.8b` against 0.77–0.99 for
+every 4B-and-above model on the same questions), so **re-calibrate per model** — and note
+that on those larger models the gate is **inert**: their confidence never falls below 0.25.
+It is not a safety guarantee: the single order-induced flip seen in cross-session research
+landed at `confidence = 0.357`, above this threshold, and `confidence` is a concentration
+measure, not calibrated accuracy. Related: the order effect itself turned out to be an
+**0.8B-only phenomenon** — across 6 candidate orderings, `tev1:latest` (4B), `clef-flash`
+(9.1B), `nimble` (9B) and `clef` (27B) returned identical labels on all 4 questions.
 
 Override in `cordis.patch.yml` by nesting the fields under the row's `config:` key. To
 **override the existing row**, use a bare `id` and **no `insert`**. Fields written
@@ -110,10 +125,13 @@ The defaults above are the ones declared in `lib/tool.js` (`Config`).
 
 ## Known limitations
 
-1. **`clef` / `clef-flash` are broken on Ollama 0.35.1.** Every request — plain text,
-   with an image, or a single minimal `noul` — returns a 500 whose body is
-   `{"error":"{\"error\":{\"code\":500,\"message\":\"Clef: non-finite logit\",\"type\":\"server_error\"}}"}`.
-   Vision is therefore not supported.
+1. **The `clef` defect is gone as of 2026-10-12.** It used to fail on every request with
+   `Clef: non-finite logit` under Ollama 0.35.1; re-tested on **0.40.3** (and with the model
+   files re-pulled), `clef-flash:latest`, `clef:latest` and `nimble:latest` all return 200 for
+   all three question types, and the two `clef` models now advertise `vision`. The fix cannot be
+   attributed to a single cause (Ollama version *and* model files both changed). **Vision is
+   still not supported**: there is no `images` parameter and no path-based image loading — see
+   ADR-3. The `model_broken` mapping is kept as a guard against an upstream regression.
 2. **Bigger is not necessarily more correct.** On the same ticket, `tev1:0.8b`
    answered `bug` (p=0.9648) while `tev1:latest` (4.2B) answered `billing`
    (p=0.5710, `bug` only 0.3212) — and `billing` is the weaker answer given the
@@ -137,6 +155,7 @@ The defaults above are the ones declared in `lib/tool.js` (`Config`).
    Byte count is a crude proxy, though: dense scripts (CJK) and ID-heavy text tokenize
    worse than 3.33 B/token and this threshold under-protects on such input.
 6. **Bounded decisions only.** This plugin answers bounded questions whose candidate set is known up front. Open-ended generation, reasoning chains, and candidates that must be discovered while thinking still belong to a generative model.
+7. **The confidence gate is a flag, not a guarantee.** Answers below the configured `minConfidence` — or with a missing `confidence` — are named in a `confidence_warning`; nothing is dropped, rewritten or rejected. The 0.25 default was calibrated on one small local sample (`tev1:0.8b`, 4 questions × 6 candidate orderings) and confidence scales differ by roughly an order of magnitude between models, so **re-calibrate per model**. A cross-session probe recorded an order-induced label flip at `confidence = 0.357`, above this threshold, and `confidence` measures concentration rather than accuracy — a question absent from the warning is **not** thereby endorsed.
 
 ## Development
 

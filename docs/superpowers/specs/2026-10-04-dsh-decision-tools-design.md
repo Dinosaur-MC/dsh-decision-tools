@@ -22,15 +22,17 @@ Ollama v0.35.0 起提供 System One 决策能力（`POST /v1/systemone`），由
 
 | 事实 | 实测值 |
 |---|---|
-| Ollama 版本 | `0.35.1`（`/api/version`） |
+| Ollama 版本 | 设计时 `0.35.1`；**2026-10-12 复测已升到 `0.40.3`**（`ollama --version`） |
 | 端点 | `POST http://localhost:11434/v1/systemone`，本地请求无需 API key |
-| decision 模型 | `tev1:0.8b`（752M/Q8_0）· `tev1:latest`（4.2B/Q8_0）· `clef-flash:latest`（9.1B/Q8_0，声明带视觉）；三者 `capabilities` 均为 `["decision"]` |
+| decision 模型 | 2026-10-12 复测本机共 **5 个**：`tev1:0.8b`(752M) · `tev1:latest`(4.2B) · `nimble:latest`(9.0B) · `clef-flash:latest`(9.1B) · `clef:latest`(27.0B/Q4_K_M)。**`clef-flash` 与 `clef` 的 `capabilities` 已从 `["decision"]` 变为 `["decision","vision"]`**；`nimble` 为 `["decision"]`。`num_ctx`：tev1 系 **2050**、clef 系 **16384**、nimble **8194** |
+| **真实基座 ≠ `family`（2026-10-12 由 GGUF 头部实测纠正）** | ⚠️ 本节此前写「五个模型 `family` 全为 `qwen35` ⇒ 做不了异家族对照」，**该推论是错的**：`/api/tags` 的 `details.family` 是 **GGUF 架构串**（决定 runner 兼容性），**不是基座来源**。读 GGUF 头部的 `general.base_model.*` 才是基座：<br>· `clef:latest` → **Qwen3.8 27B**（`Qwen/Qwen3.8-27B`，Cloudflare 后训练，tags 含 `systemone`）<br>· `clef-flash:latest` → **Qwen3.5 9B**<br>· `tev1:latest` → **Qwen3.5 4B**（Together AI）· `tev1:0.8b` → **Qwen3.5 0.8B**<br>· `nimble:latest` → 自述 `general.basename = "Bespoke-Nimble"`、`general.finetune = "merged-current"`，**GGUF 未声明 `base_model` 键**；其基座为 Qwen3.5-9B 一说来自 Bespoke Labs 的说明（非 GGUF 自述）<br>⇒ **跨世代对照可行**：`clef:latest`(Qwen3.8) 与 tev1 系(Qwen3.5) 构成世代差异，`clef:latest`/`nimble`(Cloudflare / Bespoke) 与 tev1 系(Together) 构成**后训练来源**差异。`general.architecture` 五个全是 `qwen35` 只说明**同一 runner 即可加载** |
+
 | 三型混用 | 同一请求内 `choice`+`noul`+`score` 可并存，返回结构符合 OpenAPI |
 | `tev1:0.8b` 实测 | 冷启 ~12.0s 返回；`label=bug`(0.959)、`refund=0.475`、`urgency=1.154` |
 | `tev1:latest` 实测 | 冷启 ~18.5s；`label=billing`、`refund=0.040`、`urgency=1.914` —— **与 0.8B 结论不同** |
 
 > **冷/热耗时勘误（2026-10-04 由 Task 6 实测补正）**：上表两个数字是**未区分冷热的单次采样**。区分后实测（`ollama` 已加载 vs `ollama stop` 后首跑）：`tev1:0.8b` **冷 14.26s / 热 11.14s**；`tev1:latest` **冷 15.66s / 热 8.01s**。⇒ 冷启约 **14–16s**、热跑约 **8–11s**，故默认 `timeoutMs: 120000` 留有充裕余量；`keep_alive` 的意义是避免反复回到冷态。README 写的是这次**区分冷热**的实测值，与上表单值并存不矛盾（上表为早期单次采样）。
-| `clef-flash:latest` 实测 | **任何请求都 500**：`{"error":{"code":500,"message":"Clef: non-finite logit"}}`。已复现三种：纯文本多题、带 base64 图片、最小单题 `noul` |
+| `clef-flash:latest` 实测 | **2026-10-04：任何请求都 500** `Clef: non-finite logit`（纯文本多题、带 base64 图、最小单题 `noul` 三形态均复现）。**2026-10-12 复测：三型全部 200** —— `noul` 冷载 20.7 s → `noul=0.0125`；`choice` 热 556 ms → `outage` conf 0.922；`score` 热 569 ms → 1.960/2。`clef:latest`(27B) 同样 3/3（冷载 28.0 s、热 1.6 s），`nimble:latest` 3/3。**修复来源无法单一归因**：Ollama 已从 0.35.1 升到 **0.40.3**，且模型文件亦被重拉（`nimble`/`clef` 2026-10-06、`clef-flash` 2026-10-10） |
 | `noul` 命名 | 唯一合法字符串是 `noul`；写 `boolean` 会 400（本次实测踩到） |
 | 服务端硬限 | 无图 ≤64 KiB、带图 ≤32 MiB；`questions` 1–64 个；`choice`/`score` 选项 2–26；不支持流式与 tools |
 | `confidence` 语义 | `1 − H(p)/ln(N)`，分布集中度，**不是**校准正确率 |
@@ -72,9 +74,11 @@ Ollama v0.35.0 起提供 System One 决策能力（`POST /v1/systemone`），由
 
 **决定**：不提供 `images` 参数。
 
-**理由**：本机仅有的视觉 decision 模型 `clef-flash` 在 0.35.1 上完全不可用（连最小单题都 500）。而在 agent 场景里透传 base64 本身也是错设计 —— 图片 base64 会先塞满模型上下文（1 MB 图 ≈ 1.3 M 字符），远比收益大。真正可用的视觉支持应当接受**文件路径**并由插件侧读盘编码，那是一件独立工作。
+**理由**：v1 定稿时本机仅有的视觉 decision 模型 `clef-flash` 在 0.35.1 上完全不可用（连最小单题都 500）。而在 agent 场景里透传 base64 本身也是错设计 —— 图片 base64 会先塞满模型上下文（1 MB 图 ≈ 1.3 M 字符），远比收益大。真正可用的视觉支持应当接受**文件路径**并由插件侧读盘编码，那是一件独立工作。
 
 **触发条件（v3）**：上游修复 `clef` 的 `non-finite logit` 后，实现「路径式」`images`。
+
+> **触发条件已满足（2026-10-12 复测）**：`clef-flash` / `clef` 三型全部 200，且 `capabilities` 已声明 `vision`。**但 ADR-3 的结论不变** —— 它的主论据是「透传 base64 是错设计」，与模型是否可用无关；且**路径式 `images` 尚未实现**（工具参数里没有 `images`，`lib/validate.js` 也没有路径读取与编码）。故 v1/v2 仍不含视觉，本 ADR 仅从「被上游阻塞」变为「纯待排期」。实现时仍须遵守：只接受工作区内的**文件路径**（拒绝绝对路径与 `..`），由插件侧读盘并编码，且读盘后仍要过 64 KiB / token 上限检查。
 
 ### ADR-4：`model` 必须可逐次覆盖
 
@@ -274,6 +278,8 @@ export const Config = z.object({
   // 体积告警阈值与开关（见 4.10）：未设即用 LIMITS.softBodyBytes / 启用。
   softBodyBytes: z.number().min(0).required(false),
   bodyWarning: z.boolean().required(false),
+  // 置信度告警阈值（见 4.11）：未设即用 LIMITS.minConfidence；**0 表示关闭**。
+  minConfidence: z.number().min(0).required(false),
 });
 
 export function apply(ctx, config) {
@@ -355,7 +361,7 @@ const parameters = {
 | HTTP 413 | `too_large` | 「请求体超过服务端上限（无图 64 KiB）」 |
 | HTTP 400 **且** body 匹配 `prompt 0 has <N> tokens; expected 1[–-]<M>` | `context_overflow` | 「请求超出模型上下文：<N> token，上限 <M>（**输入未被截断**）」+ 三条可行动项：缩减 `state`／调高该模型 `num_ctx` 后重启／换有效 `num_ctx` 更大的模型 |
 | HTTP 400 其他 | `invalid_request` | 原样带出服务端 `error` 字段 + 我们的定位提示（**注意：经 `prepareRequest` 发出的请求不可能再有形状问题**，故这一支实际上很少触发） |
-| HTTP 500 且 body 含 `non-finite logit` | `model_broken` | 「{model} 在 Ollama 0.35.1 上有已知缺陷（Clef: non-finite logit），请改用 tev1 系模型」 |
+| HTTP 500 且 body 含 `non-finite logit` | `model_broken` | 「{model} 在本机 Ollama 上有已知缺陷（Clef: non-finite logit）」+ hint 建议换模型。**该缺陷 2026-10-12 复测已不再复现**（clef 系三型全 200）⇒ 这一支保留为**上游回归的兜底**，不再是常态路径；hint 措辞已随之改为「换一个 decision 模型重试」 |
 | HTTP 500 其他 | `server_error` | 原样带出服务端 `error` |
 | 2xx 但 body 非 JSON / 缺 `answers` | `bad_response` | 「Ollama 返回了无法解析的响应」 |
 | 2xx 但**形状越界**：缺 `model`、`answers` 不是对象映射（含数组）、`usage` 不是对象 | `bad_response` | 点名具体字段。**必须在客户端收口** —— 否则宿主的无损 JSON 快照 / `output.schema` / `render` 三段会把一次**成功**调用判成 `INVALID_TOOL_OUTPUT`（2026-10-04 缺陷审查轮 F1） |
@@ -418,6 +424,7 @@ urgency  score   1.154 / 2  p={1=0.7075, 2=0.2234, 0=0.0691}  conf=0.304
 
 - 一行 `体积: state=<n>B body=<n>B` —— 让「这次为什么慢 / 为什么退化」可归因，也让模型看得见自己离 64 KiB 硬上限还有多远。
 - 若 `body_warning` 存在，紧随其后原样打印一行 —— **策略由工具层决定，render 只负责呈现**（保持 `render.js` 无策略、无 import）。
+- 若 `confidence_warning` 存在（见 §4.11），**再**紧随其后原样打印一行 —— 同一条约束：门限与文案都在工具层，`render` 只呈现。排在最后是有意的：让「哪些标签不可用」成为模型读到的**最后一行**。
 
   > 两条判定是**彼此独立**的（各看自己的字段），所以理论上 `body_warning` 可以不带 `体积:` 行出现。已评审并**有意保留**：那条路径在当前契约下不可达（工具只在两个字节字段都有限时才产出告警），而「因为兄弟字段缺失就把告警吞掉」比多打一行更糟。此处记明为有意选择，不是遗漏。
 
@@ -441,6 +448,9 @@ urgency  score   1.154 / 2  p={1=0.7075, 2=0.2234, 0=0.0691}  conf=0.304
 7. **结论不能作为正确性证据**：`decision` 返回的是概率分布，**不是**「判定通过」的凭据。任何「放过 / 放行」的决定必须另有**产物级证据**；本工具的答案只能用于**初筛**，不得作为终局。
 8. **路由不由 decision 决定**：该走哪条路由是**确定性规则**的职责（否则 decision 一挂就无法路由 —— 自举困境）。本工具**不得**成为任何 fail-open / fail-closed 策略的判据来源。
 9. **不产文本就不许当证据源**：`tev1` 系只产概率、不产文本 ⇒ 任何「需要留下可读判据给人看」的场合，必须换生成类模型，不能拿本工具的输出去充数。
+10. **置信度告警是「旗」不是过滤器**（2026-10-06 delta 追加，见 §4.11）：返回值里可能多一行 `confidence_warning`，点名 confidence 低于门限（或缺失）的题目；那些题才是要升级的。**所有答案照常返回**，而**未被点名的题不等于可信**（门限只降风险，`confidence` 不是正确率）。
+
+> 第 10 点是第 5、6 两点从「建议」变成「可执行信号」的落点：前两点只说了「低置信度要读 probabilities 并升级」，但模型无法可靠地自己算 `1 − H(p)/ln N`；`confidence_warning` 把这句建议变成工具直接给出的一行。它同样**只能住在 description**（ADR-5），故 `test/parameters.test.mjs` 的锚点表里与第 1–9 点同规格地钉住它 —— 删掉这句描述会让该点永久丢失。
 
 **并且**：description 里**不得**出现任何未经测量的「经验上限」（例如「一批最多 N 题最稳」）。已有的是**服务端硬限**（1–64 题、2–26 选项、64 KiB），照写；超出硬限的批量建议必须**先测再写死**，测之前不写。
 
@@ -455,8 +465,53 @@ urgency  score   1.154 / 2  p={1=0.7075, 2=0.2234, 0=0.0691}  conf=0.304
 | `keepAlive` | string \| number | 未设 | 透传 `keep_alive`；未设则用服务端默认 5m |
 | `softBodyBytes` | number | 未设则用 `LIMITS.softBodyBytes`（`4096`） | 体积告警的**策略**阈值（字节）。**生效值夹到 `LIMITS.maxBodyBytes`**。**诚实说明：该夹取目前在行为上是恒等的** —— 被接受的 body 恒 ≤ `maxBodyBytes`，而告警条件是**严格大于**阈值，故阈值取 `maxBodyBytes` 与取 `1e9` 都永不告警、**行为完全相同**。⇒ 夹取**并不**"防止不可达告警被重新引入"（不可达的阈值无论如何都不可达）；它只把生效值界定在插件**已知**的边界内、表达意图，并在将来拒绝点移动时仍然成立。**真正防住那个缺陷的是默认值被按实测重新标定（4096）** |
 | `bodyWarning` | boolean | 未设 = 启用 | `false` ⇒ **从不产出 `body_warning` 键**（不是产出空串或 `false` —— 宿主无损 JSON 校验要求该键整个不出现） |
+| `minConfidence` | number | 未设则用 `LIMITS.minConfidence`（`0.25`） | 置信度告警的**策略**阈值（见 §4.11）。`choice`/`score` 的 `confidence` **低于**它或**缺失**时，该题被列进 `confidence_warning`。**`0` 表示关闭**（注意与上一行的 `softBodyBytes: 0` 语义**相反**：那里是「每次都告警」）；`> 1` 被夹到 `1` |
+
+> **两个「0」不要类推**：`softBodyBytes: 0` = 每次都告警（阈值下界，任何 body 都越界），`minConfidence: 0` = 从不告警（`confidence < 0` 恒不成立，且该分支被显式短路，连「缺失 confidence」那条保守路径也不触发）。二者语义相反是**各自定义域的自然结果**，不是笔误；若把它们对齐成同一方向，反而会引入一个「0 等于全部告警」的意外 —— 那正是这个门限最不该有的默认行为。
 
 **刻意不做的配置**：并发闸、重试次数、缓存。前两者会掩盖模型/服务缺陷，后者在有 `keep_alive` 的前提下收益不明。
+
+### 4.11 置信度门限（2026-10-06 需求 delta）
+
+**动机（可判否的现场事实，不是直觉）**：本机全排列实验（`.temp/order-probe/`，模型 `tev1:0.8b`，4 题 × 6 个候选排列）测出 `choice` 的答案会随 `criteria` 的排列改变，且**系统对相同字节是确定性的**（同条件 A/B 交替 6 轮，每格仅 1 种结果，概率与 `confidence` 逐位相同）。把「因排列而改变的标签」全部收集起来后，一个性质非常干净：
+
+> **全部 8 种独立偏离模式（展开 27 次）的「改变后标签」`confidence` 落在 `0.064–0.245`。**
+
+也就是说：**顺序效应打中的恰恰是模型自己也不确定的那批题**。于是「低置信度就升级」这条原本只写在 description 里的**建议**，可以变成工具直接给出的**信号** —— 这就是本节的 delta。它同时覆盖另一类更常见的错误：同一批实验里有一道题真值是「12 分钟 100% 请求失败」，模型在长/短两种 state 下都**稳定答错**且 `confidence` 只有 `0.08–0.32`。
+
+**设计（三条不可动摇的性质）**
+1. **只加旗，不清障**：`answers` **逐字原样返回**。插件从不因 `confidence` 低而删除、改写或拒绝任何答案；产出物只是返回值里多一个 `confidence_warning` 字符串。理由见 §4.9 第 7、10 点与 Tessera/ai-tiku 两篇调研共同指向的非对称门（「只收紧不放宽」）。
+2. **门限与文案是策略，住在工具层**：`resolveMinConfidence` / `collectLowConfidence` 都在 `lib/tool.js`，`render.js` 只原样打印一行 —— 与 §4.8 的体积告警同一条边界。
+3. **缺失 `confidence` 按低处理**：`choice`/`score` 本应带它，但该字段来自服务端回包、`client.js` 不做逐题形状校验 ⇒「读不到」是可达状态。此时计入告警是**保守方向**（与 `render.js` 的全函数化同一取向）：宁可多打一行，不可静默把一个未知置信度的标签当成可信结论。**`noul` 不判** —— 它没有 `confidence`（输出本身就是概率），把它计入是另一种语义。
+
+**输出形状**（`OUTPUT_SCHEMA` 里显式声明为 string；无命中时**整个键缺席**，与 `body_warning` 同一处置）：
+
+```
+confidence 告警：以下 2 题的 confidence 低于 0.25（或缺失），不得当作判定结果 —— 请读 probabilities，并交回你自己的推理：shaky(0.050), missing(—)。
+```
+
+**常量与标定**：`LIMITS.minConfidence = 0.25`（`validate.js`，limits 的唯一出处；工具层不复制这个数字）。标定表、`τ` 的灵敏度（`τ=0.25` 覆盖 100%，`τ=0.2` 漏 5 次）与三条**已知局限**（小样本单模型 / 不是安全保证 / `confidence` 不是正确率）全部逐条写在该常量的注释里 —— 那是这个数字的唯一依据来源。
+
+> **标定基础的重大扩充（2026-10-12，五模型对照）**：此前标定只有 `tev1:0.8b` 单模型。2026-10-12 对**全部 5 个** decision 模型跑了同一套 4 题 × 6 排列（`.temp/order-probe/cross-model-summary.mjs`，产物 `cross-model-summary.json`），结论是**顺序效应是 0.8B 独有现象**：
+>
+> | 模型 | 基座 | 跨 6 排列变化的题 | conf 范围 |
+> |---|---|---|---|
+> | `tev1:0.8b` | Qwen3.5 0.8B | **2/4**（i3 出现 `outage`×1；i4 三种答案） | 0.04–0.62 |
+> | `tev1:latest` | Qwen3.5 4B | **0/4** | 0.91–0.99 |
+> | `clef-flash:latest` | Qwen3.5 9B | **0/4** | 0.77–0.95 |
+> | `nimble:latest` | Qwen3.5 9B | **0/4** | 0.88–0.99 |
+> | `clef:latest` | Qwen3.8 27B | **0/4** | 0.90–0.96 |
+>
+> **对门限的三点影响**：① **`τ=0.25` 只对 0.8B 有意义** —— 4B 以上模型的 conf 恒 ≥ 0.77，门限**永不触发**（即对它们而言门限是惰性的，既不误伤也不保护）；② 这**加强**了 §8 第 7 条的警告「换模型必须重新标定」——不是理论提醒，而是实测：0.8B 的 conf 尺度（0.04–0.62）与 4B+ 的（0.77–0.99）**几乎不重叠**；③ 顺序效应**不随「同基座」而一致**：`tev1:latest`(Qwen3.5 4B) 与 `nimble`/`clef-flash`(Qwen3.5 9B) 都是 Qwen3.5，却全部免疫 ⇒ 效应由**模型规模/后训练质量**而非基座世代决定。
+
+
+**δ 的验收（全部已落成用例）**
+- `test/tool.test.mjs`：门限**两侧**（同一批答案、同一假服务端：`0.01` ⇒ 只剩缺失那题；`0.95` ⇒ 连 `solid(0.900)` 也被拦下）；`0` 关闭且**不得产出该键**（含"不得退化成空串"）；`answers` 逐字不变；`resolveMinConfidence` 的回落与钳制；`collectLowConfidence` 的 `noul` 跳过、缺失计入、`<= 0` 关闭、**不修改入参**、阈值恰等时放行。
+- `test/render.test.mjs`：`confidence_warning` 原样追加为**最后一行**；**无该键时绝不自行判断置信度**（给一个 `confidence=0.01` 的答案仍须逐字输出原文本 —— 这条是 §4.8 边界的承重断言）；空串与缺键同义。
+- `test/parameters.test.mjs`：§4.9 第 10 点的判别性锚点。
+- `test/validate.test.mjs`：`LIMITS` 冻结表加入 `minConfidence`（把「顺手改阈值不留痕」变成红灯）。
+
+**变异自检（2026-10-06 实测，防止新用例是假绿）**：改了 5 处、每处都被杀 —— ①`>=` 改 `>`（边界）杀 1 条；②`threshold <= 0` 改 `< 0`（0 应关闭）杀 2 条；③删掉「缺失按低计」的保守分支杀 2 条；④不再跳过 `noul` 杀 2 条；⑤让 `render` 自己内联阈值（违反 §4.8）杀 1 条。还原后逐字节相同、`81/81` 绿。
 
 ## 5. 数据流
 
@@ -477,8 +532,8 @@ urgency  score   1.154 / 2  p={1=0.7075, 2=0.2234, 0=0.0691}  conf=0.304
 | `test/fake-ollama.mjs` | `node:http` 起一个可编程假服务：按路由返回预设状态码/body，记录收到的请求体 |
 | `test/validate.test.mjs` | V1–V9 全矩阵：64/65 题、重复名、非法 type、1/2/26/27 选项、score 传对象、noul 传非法键、65536/65537 字节、空 model |
 | `test/client.test.mjs` | 三型正常返回（含 `usage`）、404→`model_missing`、413→`too_large`、400 上下文溢出→`context_overflow`（抓出 token 数与上限）、400 其他→`invalid_request`、500+`non-finite logit`→`model_broken`、500 其他→`server_error`、连接拒绝→`unreachable`、超时→`timeout`、非 JSON→`bad_response`、`AbortSignal` 合并可中断 |
-| `test/render.test.mjs` | 三型渲染文本快照；概率降序；`score` 显示 `x / N-1` |
-| `test/parameters.test.mjs` | `parameterSchemaSpecToJsonSchema(PARAMETERS)` 投影快照；断言 `questions.items.additionalProperties === false`、`state` 有 3 个 `oneOf` 分支；§4.9 九点逐点锚点；README 配置表键集/顺序 == `Config.dict` |
+| `test/render.test.mjs` | 三型渲染文本快照；概率降序；`score` 显示 `x / N-1`；体积与置信度告警各自原样成行、且 render 绝不自己判断阈值（§4.8/§4.11） |
+| `test/parameters.test.mjs` | `parameterSchemaSpecToJsonSchema(PARAMETERS)` 投影快照；断言 `questions.items.additionalProperties === false`、`state` 有 3 个 `oneOf` 分支；§4.9 **十点**逐点锚点（第 10 点 = 置信度告警是旗不是过滤器）；README 配置表键集/顺序 == `Config.dict` |
 | `smoke/live.mjs` | 可选：真打本机 Ollama，三型各跑一次并打印结论与耗时（默认不跑） |
 
 **命令**
@@ -504,12 +559,13 @@ node --test "test/*.test.mjs"
 
 ## 8. 已知限制（同步进 README）
 
-1. `clef-flash:latest`（及 `clef`）在 Ollama 0.35.1 上任何请求都返回 500 `Clef: non-finite logit`；已验证三种请求形态均复现 ⇒ v1 不含视觉。
+1. **`clef` 系缺陷已于 2026-10-12 复测消失**（原记录：在 Ollama 0.35.1 上任何请求都 500 `Clef: non-finite logit`）。复测环境为 Ollama **0.40.3**，且模型文件被重拉过 ⇒ **无法单一归因**。`clef-flash`/`clef`/`nimble` 三型均 200；两个 clef 的 `capabilities` 现声明 `vision`。**但 v1/v2 仍不含视觉** —— 路径式 `images` 未实现（见 ADR-3），且 `model_broken` 分支保留为上游回归兜底。
 2. `tev1:0.8b` 与 `tev1:latest` 对同一题可给出不同答案，且更大者不必然更合理 ⇒ 请按题实测选型。
 3. 首次调用含模型加载（实测 0.8B ~12s、4.2B ~18.5s）⇒ 默认超时 120s；`keep_alive` 可减少反复冷启。
 4. 无流式、无 tools、一请求一响应；服务端硬限 64 KiB / 64 题 / 2–26 选项。
 5. `confidence = 1 − H(p)/ln(N)` 是分布集中度，**不是**校准正确率；`noul` 是概率不是布尔。
 6. 插件只解决「有界判定」；开放式推理仍须交给生成式模型。
+7. **置信度门限只加旗，不是保证**：低于 `minConfidence`（或 `confidence` 缺失）的答案会被列进 `confidence_warning`，**没有任何答案**被删除、改写或拒绝。默认 `0.25` 只在 `tev1:0.8b` 上标定（4 题 × 6 个候选排列），而不同模型的 `confidence` 尺度差约一个量级（**2026-10-12 五模型实测：`0.8b` 为 `0.04–0.62`，`tev1:latest`/`clef-flash`/`nimble`/`clef` 为 `0.77–0.99`**，几乎不重叠）⇒ **换模型必须重新标定**，且**对 4B 以上的模型该门限实际恒不触发**（惰性，既不误伤也不保护）。它也不是安全保证：跨会话调研里唯一那次顺序翻转发生在 `confidence = 0.357`，高于本阈值；且 `confidence` 是分布集中度而非正确率 —— **没被列进告警 ≠ 该答案可信**。另注：**选项顺序效应是 0.8B 独有现象**（4B/9B/9.1B/27B 在 6 个排列下答案完全不变），故该效应与门限都主要服务于小模型场景。
 
 ## 9. 打包边界
 
@@ -532,11 +588,11 @@ THIRD_PARTY_NOTICES
 |---|---|
 | **M1 · 引用式 `state`**（`stateSource: inline \| file{path,startLine,endLine} \| glob{pattern,limit}`）—— 让材料**根本不进模型上下文**。**这是跨会话调研里被标为「最高杠杆」的一项**，但代价明确：需文件系统访问 ⇒ 打破 ADR-1 边界，须新增纯函数模块（如 `lib/source.js`，由工具层注入 `rootDir`），并同时定四条约束（基准目录固定为工作区根、拒绝绝对路径与 `..`、读盘后做 64 KiB 检查并报可行动错误、单次读盘总量上限）—— **否则就是一个越权读盘口子**。调研本身建议：**先用一份 30 KB 规格做「内联 vs 引用」的廉价对照实验，测出真实 token 与质量差再定，而不是先写代码** |
 | **M5 · 可复算的审计落盘**：追加型 JSONL（题面哈希 / 模型 / 选项顺序 / 答案 / 概率 / conf / 耗时 / usage / 代码版本），默认落工作区 `.temp/` 之下，只追加、不写仓库其他文件 | 出现「需要在使用现场复算判定比率」的需求时 |
-| **M3 的 `orderPolicy: 'as-given' \| 'rotate'` 能力**：调研实测选项反序会翻转 **5/6** 的答案。v1 已把「选项顺序会改变答案」写进 description 并登记为已知限制；**做成能力**需要 N 倍上游调用，且需先测出轮换对准确率的真实增益 | 有准确率数据支持轮换收益时 |
+| **M3 的 `orderPolicy: 'as-given' \| 'rotate'` 能力**：候选排列**确实**会改变答案，但 **2026-10-12 五模型对照把范围收窄到「0.8B 独有」**：`tev1:0.8b` 跨 6 排列 2/4 题变化（i4 出现 3 种答案），而 `tev1:latest`(4B) / `clef-flash`(9.1B) / `nimble`(9B) / `clef`(27B) **全部 0/4 变化**。**v1 不做该能力** —— 缓解手段改为 §4.11 的**置信度门限**：0.8B 上「因排列而改变的标签」`conf` 全部 ≤ `0.245`，`τ=0.25` 全覆盖，而**轮换能提高准确率的证据仍不存在**（4B+ 本就无效应，轮换无收益；0.8B 上也无证据）。**残留（诚实登记）**：v1 **没有**把「选项顺序会改变答案」写进 description —— 该事实目前只落在规格 §4.11 与 §8 第 7 条。本行 2026-10-06 之前的措辞声称"已写进 description 并登记为已知限制"，与实现不符（属「宣称有、消费者无」），已按本行更正 | 有准确率数据支持轮换收益时 |
 | **M2 的软阈值**：v1 已采纳「体积回显」（`state_bytes`/`body_bytes`）。**软阈值告警**的阈值若要写成实测值而非策略值，需要先测「state 体积 → 判定质量」的曲线 | 测出该曲线时 |
 | **`softBodyBytes` 与那条负例 fixture 的耦合**：`test/render.test.mjs` 里「超阈值却不带 `body_warning` ⇒ 不得告警」的用例，靠的就是它的 `body_bytes` **高于** `LIMITS.softBodyBytes`。**若 `softBodyBytes` 被调高到超过该 fixture 的值，这条用例会退化成恒真**（不再能发现 render 侧内联阈值）。同理会波及 `maxBodyBytes`。⇒ **任何一次调整这两个常量都必须复核该 fixture 仍然高于软阈值**。残留缺口已知且窄：一个把阈值内联成 `65536` 之类的实现一度能静默通过。**控制器原先写的理由（"那落在真实的拒绝区，不在渲染层可观测范围内"）是错的** —— `test/render.test.mjs` 单测的是**纯渲染函数**、从不调用 `prepareRequest`，所以 `body_bytes: 1e15` 这样的 fixture 在那里**完全合法**且能观测到它。修复轮 2 已加入该 fixture ⇒ **任何 < 1e15 的阈值（即本仓代码里出现的全部取值）都能被观测到**，该缺口就此收敛；理论残留仅剩「内联一个 ≥ 1e15 的阈值」，无实践意义 | 调整 `LIMITS` 中任一上限时 |
 | **M6 的两条工程口径**：① 超时按「热态短（实测 0.09–0.2s，5s 足够）、冷态有界放宽（另加 `min(基线×2, 60s)`，且只在探测说未驻留时加）」—— 把冷加载算进短超时会 **100% 打挂第一个请求**；② 熔断要区分错误类型（请求/配置类 400/413/白名单外**不计**，不可用类超时/5xx/连接失败**计**），命中时**不发请求、不等超时** | v1 单次调用形态没有熔断需求；出现常驻调用方时 |
-| 视觉支持（路径式 `images`） | 上游修复 clef 的 `non-finite logit` |
+| 视觉支持（路径式 `images`） | **上游阻塞已解除**（2026-10-12：clef 系可用且声明 `vision`）⇒ 现在纯粹是待排期项，实现要点见 ADR-3 的补注 |
 | 独立客户端包 / CLI | 出现 DSH 之外的消费方（例如评测装置 C 方案） |
 | 模型对照实测报告（原 C 方案） | 用户决定推进选型评测时 |
 | TS + tsup 迁移 | 模块数 >5，或需要 Client/UI 半边 |

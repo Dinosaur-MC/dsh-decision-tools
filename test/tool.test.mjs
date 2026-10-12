@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { name, inject, Config, apply } from '../lib/index.js';
-import { resolveSoftBodyBytes } from '../lib/tool.js';
+import { resolveSoftBodyBytes, resolveMinConfidence, collectLowConfidence } from '../lib/tool.js';
 import { TOOL_DESCRIPTION } from '../lib/parameters.js';
 import { LIMITS } from '../lib/validate.js';
 import { startFakeOllama } from './fake-ollama.mjs';
@@ -19,6 +19,10 @@ import { startFakeOllama } from './fake-ollama.mjs';
  * `validate 15 + render 9 + client 14 + parameters 13 + tool 10 = 61`
  * → 同日缺陷审查轮修复（F1/F2/F3），此后为
  * `validate 15 + render 12 + client 19 + parameters 13 + tool 13 = 72`。
+ * → 2026-10-06 置信度门限 delta：本文件 +5（门限两侧、0 关闭、纯函数语义、Config/resolve），
+ * `render.test.mjs` +3（告警行原样打印、缺键不自行判断、与体积行的先后），
+ * `parameters.test.mjs` +1（§4.9 第 10 点锚点：告警是旗不是过滤器），此后为
+ * `validate 15 + render 15 + client 19 + parameters 14 + tool 18 = 81`。
  */
 
 /**
@@ -76,7 +80,7 @@ test('默认 toolName 配置下的工具名与 schema', () => {
   assert.equal(definition.output.schema.additionalProperties, false);
   assert.deepEqual(
     Object.keys(definition.output.schema.properties),
-    ['model', 'answers', 'usage', 'state_bytes', 'body_bytes', 'body_warning'],
+    ['model', 'answers', 'usage', 'state_bytes', 'body_bytes', 'body_warning', 'confidence_warning'],
   );
   assert.equal(typeof definition.output.render, 'function');
   assert.equal(typeof definition.execute, 'function');
@@ -328,4 +332,140 @@ test('F3：resolveSoftBodyBytes 对非有限/负值回落默认，绝不返回 N
   assert.equal(resolveSoftBodyBytes(-1), LIMITS.softBodyBytes);
   assert.equal(resolveSoftBodyBytes(0), 0);
   assert.equal(resolveSoftBodyBytes(undefined), LIMITS.softBodyBytes);
+});
+
+// ---------------------------------------------------------------------------
+// §4.11（2026-10-06 delta · 置信度门限）：把「低置信度就升级」从 description 里的一句
+// 建议变成**可执行、可断言的一行输出**。三条不可动摇的性质：
+//   ① **只加旗，不清障** —— answers 逐字原样返回，绝不因置信度低而删题/改标签/拒绝；
+//   ② 门限与文案是**策略**，住在工具层（render 只呈现，见 render.test.mjs）；
+//   ③ 缺失 confidence 按**保守方向**计入（它不是"高置信"，是"未知"）。
+// ---------------------------------------------------------------------------
+
+/**
+ * 混合置信度的回包，四条各司其职：高于 / 低于 / **缺失** confidence，以及一型没有
+ * confidence 语义的 `noul`。任何一条被漏判都会让下面的断言打红。
+ */
+const MIXED_ANSWERS = {
+  model: 'tev1:0.8b',
+  answers: {
+    solid: { type: 'choice', choice: 'a', probabilities: { a: 0.9, b: 0.1 }, confidence: 0.9 },
+    shaky: { type: 'choice', choice: 'a', probabilities: { a: 0.4, b: 0.35, c: 0.25 }, confidence: 0.05 },
+    missing: { type: 'score', score: 1.2, probabilities: { 0: 0.3, 1: 0.4, 2: 0.3 } },
+    prob: { type: 'noul', noul: 0.49 },
+  },
+};
+
+/** 与 MIXED_ANSWERS 对应的合法请求参数（题名与回包键一一对齐）。 */
+const MIXED_ARGS = {
+  state: 'x',
+  questions: [
+    { name: 'solid', type: 'choice', instructions: '?', criteria: { a: 'A', b: 'B' } },
+    { name: 'shaky', type: 'choice', instructions: '?', criteria: { a: 'A', b: 'B' } },
+    { name: 'missing', type: 'score', instructions: '?', criteria: ['low', 'mid', 'high'] },
+    { name: 'prob', type: 'noul', instructions: '?' },
+  ],
+};
+
+test('§4.11 execute：只把低于门限（或缺失）的题写进 confidence_warning，answers 逐字原样返回', async () => {
+  const fake = await startFakeOllama(() => ({ status: 200, body: MIXED_ANSWERS }));
+  try {
+    const byDefault = await executeWith(fake.baseUrl, {}, MIXED_ARGS);
+
+    // ① 只加旗、不清障：answers 必须与回包**逐字相同** —— 既不删掉低置信的题，
+    // 也不把它改写成别的标签或补一个 confidence。
+    assert.deepEqual(byDefault.answers, MIXED_ANSWERS.answers);
+
+    assert.equal('confidence_warning' in byDefault, true);
+    // 未设 ⇒ 回落到 LIMITS.minConfidence（该默认值只有 validate.js 一处来源）。
+    assert.match(byDefault.confidence_warning, new RegExp(`低于 ${LIMITS.minConfidence}`));
+    assert.match(byDefault.confidence_warning, /以下 2 题/);
+    assert.match(byDefault.confidence_warning, /shaky\(0\.050\)/);
+    // ③ 缺失 confidence 按保守方向计入，并显式渲染成 — 而不是漏掉或写 NaN。
+    assert.match(byDefault.confidence_warning, /missing\(—\)/);
+    // 高于门限的 solid 不得在列；noul 没有 confidence 语义，同样不得在列。
+    assert.doesNotMatch(byDefault.confidence_warning, /solid/);
+    assert.doesNotMatch(byDefault.confidence_warning, /prob\(/);
+
+    // 阈值两侧对照（同一批答案、同一假服务端）：把门限压到 0.01 ⇒ 只剩缺失那题；
+    // 抬到 0.95 ⇒ 连信心最高的 solid(0.900) 也被拦下。两侧都动，才排除"阈值没被读"。
+    const low = await executeWith(fake.baseUrl, { minConfidence: 0.01 }, MIXED_ARGS);
+    assert.match(low.confidence_warning, /以下 1 题/);
+    assert.match(low.confidence_warning, /missing\(—\)/);
+    assert.doesNotMatch(low.confidence_warning, /shaky/);
+
+    const high = await executeWith(fake.baseUrl, { minConfidence: 0.95 }, MIXED_ARGS);
+    assert.match(high.confidence_warning, /以下 3 题/);
+    assert.match(high.confidence_warning, /solid\(0\.900\)/);
+    // 任何阈值下 answers 都不变（门限只影响那一行字）。
+    assert.deepEqual(high.answers, MIXED_ANSWERS.answers);
+  } finally {
+    await fake.close();
+  }
+});
+
+test('§4.11 execute：minConfidence: 0 关闭门限（同一批低置信答案也不产出该键）', async () => {
+  const fake = await startFakeOllama(() => ({ status: 200, body: MIXED_ANSWERS }));
+  try {
+    const off = await executeWith(fake.baseUrl, { minConfidence: 0 }, MIXED_ARGS);
+    assert.equal('confidence_warning' in off, false);
+    // 也不得退化成 `false` 或空串：宿主按无损 JSON 校验，schema 里它是 string。
+    assert.equal(off.confidence_warning, undefined);
+
+    // 承重前提：同一批答案在默认门限下**确实**会告警，否则上面两条只证明"从没到过阈值"。
+    assert.equal('confidence_warning' in await executeWith(fake.baseUrl, {}, MIXED_ARGS), true);
+  } finally {
+    await fake.close();
+  }
+});
+
+test('§4.11：Config 拒绝负的 minConfidence（0 合法且语义是关闭）', () => {
+  assert.throws(() => Config({ minConfidence: -1 }), /expected number >= 0/);
+  assert.equal(Config({ minConfidence: 0 }).minConfidence, 0);
+  assert.equal(Config({ minConfidence: 0.4 }).minConfidence, 0.4);
+});
+
+test('§4.11：resolveMinConfidence 对非有限/负值回落默认，且钳到 [0,1]', () => {
+  assert.equal(resolveMinConfidence(undefined), LIMITS.minConfidence);
+  assert.equal(resolveMinConfidence(NaN), LIMITS.minConfidence);
+  assert.equal(resolveMinConfidence(null), LIMITS.minConfidence);
+  assert.equal(resolveMinConfidence(-1), LIMITS.minConfidence);
+  // 0 是**合法策略值且语义为关闭** —— 不得被当成"未设"而回落默认（与 softBodyBytes: 0
+  // 方向相反：那里 0 是"每次都告警"）。这一条是两种语义不互相传染的唯一承重点。
+  assert.equal(resolveMinConfidence(0), 0);
+  assert.equal(resolveMinConfidence(0.4), 0.4);
+  // confidence 的定义域是 [0,1]，更高的阈值只表达"全部告警" ⇒ 折到上界。
+  assert.equal(resolveMinConfidence(2), 1);
+});
+
+test('§4.11：collectLowConfidence 跳过 noul、缺失按低计、<=0 关闭、且绝不修改入参', () => {
+  const answers = {
+    ok: { type: 'choice', confidence: 0.5 },
+    low: { type: 'choice', confidence: 0.1 },
+    missing: { type: 'choice' },
+    nan: { type: 'score', confidence: Number.NaN },
+    prob: { type: 'noul', noul: 0.01 },
+  };
+  const snapshot = JSON.stringify(answers);
+
+  assert.deepEqual(collectLowConfidence(answers, 0.25), [
+    { name: 'low', confidence: 0.1 },
+    { name: 'missing', confidence: null },
+    { name: 'nan', confidence: null },
+  ]);
+  // 纯函数：只读入参、不改写（"只加旗，不清障"在函数级也成立）。
+  assert.equal(JSON.stringify(answers), snapshot);
+
+  // 门限恰好等于 confidence 时**放行**（严格小于才告警）—— 边界写死，防止 <= 实现蒙过。
+  assert.deepEqual(collectLowConfidence({ a: { type: 'choice', confidence: 0.25 } }, 0.25), []);
+
+  // <= 0 一律关闭，含"缺失 confidence"那条保守分支（否则 0 会退化成"全部告警"）。
+  assert.deepEqual(collectLowConfidence(answers, 0), []);
+  assert.deepEqual(collectLowConfidence(answers, -1), []);
+
+  // 形状异常不得抛错（answers 由服务端回包来，client 只保证它是非数组对象）。
+  assert.deepEqual(collectLowConfidence(null, 0.25), []);
+  assert.deepEqual(collectLowConfidence(undefined, 0.25), []);
+  assert.deepEqual(collectLowConfidence([], 0.25), []);
+  assert.deepEqual(collectLowConfidence({}, 0.25), []);
 });

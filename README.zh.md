@@ -79,10 +79,22 @@
 | `keepAlive` | 未设 | 透传为 `keep_alive`；未设则用服务端默认 |
 | `softBodyBytes` | 未设（回落到 `LIMITS.softBodyBytes`，4096） | 超过该字节数的 body 会在返回值里带一行 `body_warning` |
 | `bodyWarning` | 未设（开启） | `false` 时永不产出 `body_warning`；未设或 `true` 则保持开启 |
+| `minConfidence` | 未设（回落到 `LIMITS.minConfidence`，0.25） | `confidence` 低于该值（或缺失）的 `choice`/`score` 答案会被列进 `confidence_warning`；`0` 关闭该门限 |
 
 `softBodyBytes` 会被**静默钳到** `LIMITS.maxBodyBytes`（65536）—— 高于该字节硬上限的阈值
 永远不可能触发；而把阈值设到模型**真实**容量（其 `num_ctx`）之上会让告警**静默失效**，
 插件内部无从检测这一点 —— 权威守卫始终是服务端的 token 检查。
+
+`minConfidence` **只加旗、不清障**：所有答案原样返回，插件绝不因置信度低而删除、改写或
+拒绝任何一个。`0` 表示**关闭**该门限（注意与 `softBodyBytes: 0` 的语义**相反** —— 那里是
+「每次都告警」），大于 `1` 的取值会被钳到 `1`。默认值 0.25 只在一份小样本上标定过
+（`tev1:0.8b`，4 题 × 6 个候选排列）；不同模型的 confidence 尺度差约一个量级（同批题上
+`tev1:0.8b` 实测 0.04–0.62，而**所有 4B 及以上的模型**恒在 0.77–0.99）⇒ **换模型必须重新
+标定**；并且请注意：**在这些更大的模型上门限是惰性的** —— 它们的 confidence 从不会低于
+0.25。它也不是安全保证：跨会话调研里唯一那次顺序翻转发生在 `confidence = 0.357`，高于本
+阈值；且 `confidence` 是分布集中度，不是校准正确率。另：**选项顺序效应本身已查明是
+0.8B 独有现象** —— 跨 6 个候选排列，`tev1:latest`(4B)、`clef-flash`(9.1B)、`nimble`(9B)、
+`clef`(27B) 在全部 4 题上都给出完全相同的标签。
 
 在 `cordis.patch.yml` 里**覆盖既有行**要用**裸 `id`、不带 `insert`**，并把字段写在行的
 `config:` 键**下**。把字段**平铺在行上**会被静默忽略，也没有任何告警 —— 插件只会按默认值运行。
@@ -103,10 +115,11 @@
 
 ## Known limitations
 
-1. **`clef` / `clef-flash` 在 Ollama 0.35.1 上已损坏。** 任何请求 —— 纯文本、
-   带图、或单个最小 `noul` —— 都返回 500，响应体为
-   `{"error":"{\"error\":{\"code\":500,\"message\":\"Clef: non-finite logit\",\"type\":\"server_error\"}}"}`。
-   因此本版不支持视觉。
+1. **`clef` 系缺陷已于 2026-10-12 复测消失。** 原先在 Ollama 0.35.1 上任何请求都报
+   `Clef: non-finite logit`；在 **0.40.3** 上复测（且模型文件被重拉过），`clef-flash:latest`、
+   `clef:latest`、`nimble:latest` 三型全部返回 200，两个 `clef` 现已声明 `vision`。
+   **修复来源无法单一归因**（Ollama 版本与模型文件两者都变了）。**但本版仍不支持视觉**：
+   没有 `images` 参数、也没有路径式读图 —— 见 ADR-3。`model_broken` 映射保留，作为上游回归的兜底。
 2. **更大不必然更对。** 同一题上 `tev1:0.8b` 给 `bug`（p=0.9648），而
    `tev1:latest`（4.2B）给 `billing`（p=0.5710，`bug` 仅 0.3212）——
    按题面看 `billing` 是更弱的答案。请按题实测选型。
@@ -127,6 +140,7 @@
    注意字节数只是**粗糙代理**：中日韩等密集文字与 ID 密集文本的 token/字节比
    远差于 3.33，此时该阈值**保护不足**。
 6. **只解决「有界判定」。** 候选集合已知且有界的问题才归本插件；开放式生成、需要推理链、候选要边想边发现的情形，仍须交给生成式模型。
+7. **置信度门限只加旗，不是保证。** 低于所配 `minConfidence`（或 `confidence` 缺失）的答案会被列进 `confidence_warning`；**没有任何答案**被删除、改写或拒绝。默认 0.25 只在一份小样本上标定过（`tev1:0.8b`，4 题 × 6 个候选排列），而不同模型的 confidence 尺度差约一个量级 ⇒ **换模型必须重新标定**。跨会话调研里唯一那次顺序翻转发生在 `confidence = 0.357`，高于本阈值；且 `confidence` 是分布集中度而非正确率 —— **没被列进告警 ≠ 该答案可信**。
 
 ## Development
 

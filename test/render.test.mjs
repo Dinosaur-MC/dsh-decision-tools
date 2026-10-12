@@ -196,3 +196,43 @@ test('F1d：answers 为空对象时给出明确占位行，而不是空字符串
   // 空串等于「模型读到一个没有任何内容的工具结果」，无法与「真的没有答案」区分。
   assert.equal(textOf({ model: 'tev1:0.8b', answers: {} }), '(no answers returned)');
 });
+
+// ---------------------------------------------------------------------------
+// §4.11（2026-10-06 delta · 置信度门限）：告警与体积告警受**同一条 §4.8 约束** ——
+// 门限是策略、住在工具层，render 只原样呈现一行。故这里刻意给一个 confidence 极低的
+// 答案：任何「在 render 里比较阈值」的实现都会为此多打一行，逐字相等会打红。
+// ---------------------------------------------------------------------------
+
+/** 同一份「置信度极低」的答案，用于对比「带告警键」与「不带」两种输入。 */
+const LOW_CONF_VALUE = {
+  model: 'tev1:0.8b',
+  answers: {
+    q: { type: 'choice', choice: 'bug', probabilities: { bug: 0.5, x: 0.5 }, confidence: 0.01 },
+  },
+};
+
+test('§4.11：无 confidence_warning 键时绝不自行判断置信度（逐字全文）', () => {
+  const plain = textOf(LOW_CONF_VALUE);
+  assert.doesNotMatch(plain, /confidence 告警/);
+  assert.equal(plain, 'q  choice  bug  p={bug=0.5000, x=0.5000}  conf=0.010');
+});
+
+test('§4.11：confidence_warning 原样追加为最后一行；空串与缺键同义', () => {
+  const plain = textOf(LOW_CONF_VALUE);
+  const warned = textOf({ ...LOW_CONF_VALUE, confidence_warning: 'confidence 告警：以下 1 题……' });
+  // 逐字：既证明它原样打印（render 不改写措辞），也证明它与体积行无关地独立出现。
+  assert.equal(warned, `${plain}\nconfidence 告警：以下 1 题……`);
+  // 空串必须与缺键逐字相同 —— 否则模型会读到一行空白。
+  assert.equal(textOf({ ...LOW_CONF_VALUE, confidence_warning: '' }), plain);
+});
+
+test('§4.11：告警行排在体积口径与体积告警之后（模型读到的是最后一行）', () => {
+  assert.equal(textOf({
+    model: 'tev1:0.8b',
+    answers: { q: { type: 'noul', noul: 0.4 } },
+    state_bytes: 20000,
+    body_bytes: 20480,
+    body_warning: '体积告警行',
+    confidence_warning: '置信度告警行',
+  }), 'q  noul    P(true)=0.4000\n体积: state=20000B body=20480B\n体积告警行\n置信度告警行');
+});

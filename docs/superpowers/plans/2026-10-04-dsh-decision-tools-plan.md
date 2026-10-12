@@ -2674,3 +2674,77 @@ MSG
 2. 内联 `body_bytes > 65536`（同一措辞不改）⇒ **(b) 的 `1e15` fixture 必须变红**。
 
 - [ ] **Step S4: LF 与提交** —— 文件 CR=0；提交信息写明"把 §4.8 该保证从依赖措辞升级为逐字全文，并覆盖任意有限阈值"，注明计数仍 38。
+
+---
+
+## Task 8: 需求 delta —— 置信度门限（`minConfidence` / `confidence_warning`）
+
+> **执行顺序**：本任务**在 Task 1–7 全部交付之后**执行（即本次运行末尾的增量）。它修改**已交付件**（`lib/validate.js` 的 `LIMITS`、`lib/tool.js` 的 `Config`/`OUTPUT_SCHEMA`/`execute`、`lib/render.js`、`lib/parameters.js` 的 description）以及两份 README 的配置表与已知限制。编号为 8 沿用 Task 7 的约定：**运行途中追加的 delta 取新号，不重排既有 1–7**（`task-brief` 按标题文字匹配任务号，与位置无关）。
+>
+> **来源与权威性**：**不来自匿名调研输入**，而是本项目自己的实测结论 —— 与 Task 7 的匿名来源不同，本任务的依据全部可复算、且产物落在被 ignore 的 `.temp/order-probe/`（不入库）。需求项定义见规格 **§4.11**（该节是本任务的唯一权威描述，此处不重复其标定表）。与规格 §10 v2 台账里 `orderPolicy` 的关系：**本任务刻意不做 `orderPolicy`** —— 实测显示「因排列而改变的标签」全部落在 `confidence ≤ 0.245`，故**门限的性价比远高于轮换**（零额外上游调用），而轮换能提高准确率的证据仍然不存在。
+>
+> **计数口径变化（本任务改变用例数，显式声明以免漂移）**：本任务之后为
+> `validate 15 + render 15 + client 19 + parameters 14 + tool 18 = 81`。
+> 计划里 Task 1–7 的 `Expected` 行（14 / 20 / 34 / 38 / 48 / 51 / 52 / 61 / 72）记录的是**各自执行当时**的值，属历史记录，**此后一律以 81 为准**。
+
+**Files:**
+- Modify: `lib/validate.js`（`LIMITS.minConfidence` + 标定注释）
+- Modify: `lib/tool.js`（`Config.minConfidence`、`resolveMinConfidence`、`collectLowConfidence`、`OUTPUT_SCHEMA`、`execute`）
+- Modify: `lib/render.js`（打印 `confidence_warning`）
+- Modify: `lib/parameters.js`（description 第 10 点）
+- Modify: `test/tool.test.mjs` / `test/render.test.mjs` / `test/parameters.test.mjs` / `test/validate.test.mjs`
+- Modify: `README.md` / `README.zh.md`（配置表末行 + 说明段 + 已知限制第 7 条）
+
+- [x] **Step 1: 门限的语义先定死（三条）** —— ①只加旗、`answers` 逐字原样返回；②门限与文案住工具层，`render` 只呈现；③缺失 `confidence` 按**保守方向**计入，`noul` 不判。三条都写进 `lib/tool.js` 的 `collectLowConfidence` 文档注释。
+
+- [x] **Step 2: `LIMITS.minConfidence = 0.25` + 标定表** —— 标签依据是 `.temp/order-probe/` 的 4 题 × 6 排列实测（逐题 6 个 conf 值 + `τ=0.25` 的结果），并逐条写下三条已知局限（小样本单模型 / 不是安全保证（Tessera 那次翻转在 `conf 0.357`）/ `confidence` 不是正确率）。**工具层不得复制这个数字**。
+
+- [x] **Step 3: 工具层两函数** —— `resolveMinConfidence`（未设回落 `LIMITS.minConfidence`；非有限/负值回落；`> 1` 夹到 `1`；**`0` 原样保留 = 关闭**）与 `collectLowConfidence`（纯函数、`<= 0` 短路、跳过 `noul`、缺失计 `null`、`>= threshold` 放行）。
+
+- [x] **Step 4: 接线** —— `Config` 加 `minConfidence: z.number().min(0).required(false)`；`OUTPUT_SCHEMA` 加 `confidence_warning: { type: 'string' }`；`execute` 在体积字段之后计算告警并按「`undefined` ⇒ 整个键缺席」处置（宿主无损 JSON 校验）；`render` 在 `body_warning` **之后**原样追加一行。
+
+- [x] **Step 5: 用例（+9）** —— 见规格 §4.11「δ 的验收」逐条；本文件 +5、`render.test.mjs` +3、`parameters.test.mjs` +1（§4.9 第 10 点锚点）、`validate.test.mjs` 的 `LIMITS` 冻结表随键集更新（用例数不变）。
+
+- [x] **Step 6: 变异自检（5 枪，全部被杀）** —— ①`confidence >= threshold` 改 `>`（边界）⇒ 1 红；②`threshold <= 0` 改 `< 0`（0 应关闭）⇒ 2 红；③删掉「缺失按低计」的保守分支 ⇒ 2 红；④`noul` 不再跳过 ⇒ 2 红；⑤让 `render` 内联阈值（违反 §4.8）⇒ 1 红。还原后两个源文件与备份**逐字节相同**，基线回到 `81/81`。
+
+- [x] **Step 7: 文档同步** —— 规格 §4.4（Config 块）/§4.8（渲染两条）/§4.9（第 10 点 + 「并且」段）/§4.10（配置表 + 两个「0」不要类推）/§4.11（新节）/§6（测试计划两行）/§8（第 7 条）；两份 README 的 Configuration 表**末行**（顺序受 `parameters.test.mjs` 的守卫把守）+ 说明段 + Known limitations 第 7 条。
+
+- [ ] **Step 8: 收尾门禁** —— `node --test "test/*.test.mjs"` = **81/81**；6 个 `lib/*.js` 逐个 `node --check`；改动过的文本文件按**真实字节**数 CR = 0；`npm pack --dry-run --json` 仍为 12 个白名单文件（本任务未新增入包文件）。
+
+## Task 9（delta，2026-10-12）：clef 系缺陷消失，同步全部过期断言
+
+**触发**：用户报告「clef-flash 已恢复，并新增 clef」。这正是 **Task 6 Step 2 预设的分支**（见上文 `node smoke/live.mjs clef-flash:latest` 的 Expected 括注：「若这条**通过**了，说明上游已修复：更新 README 的限制条目，并考虑把视觉支持提回 v2 计划」）。
+
+**本机实测（2026-10-12）**：decision 模型 **3 → 5 个**（新增 `clef:latest` 27B/Q4_K_M、`nimble:latest` 9.0B）；`clef-flash`/`clef` 的 `capabilities` 由 `["decision"]` 变为 `["decision","vision"]`。三型探针（`.temp/clef-recheck/clef-recheck.mjs`）**全部 200**：`clef-flash` → `noul=0.0125` / `choice=outage` conf 0.922 / `score=1.960`（冷载 20.7 s、热 0.56 s）；`clef:latest` 3/3（冷 28.0 s、热 1.6 s）；`nimble` 3/3（冷 19.4 s）。
+**修复来源无法单一归因**：Ollama 已 `0.35.1 → 0.40.3`，且模型文件亦被重拉（`nimble`/`clef` 2026-10-06、`clef-flash` 2026-10-10）。
+
+- [x] **Step 1: 改代码 hint** —— `lib/client.js` 的 `model_broken` hint：`'改用 tev1 系模型（如 tev1:0.8b）；clef 系当前不可用。'` → `'换一个 decision 模型重试（如 tev1:0.8b / nimble:latest / clef 系）。'`。**`BROKEN_MODEL_MARKER` 与 `model_broken` 分类本身保留** —— 上游回归的兜底，不是常态路径。
+- [x] **Step 2: 改规格** —— §2 三条事实行（Ollama 版本 → `0.40.3`；decision 模型表改为 5 个并标注**全为 `qwen35`**、`num_ctx` 三者不同；`clef-flash` 实测行改为「2026-10-04 全挂 / 2026-10-12 三型全 200」）；ADR-3 加**触发条件已满足**的补注（**结论不变**：主论据是「透传 base64 是错设计」，且路径式 `images` 仍未实现）；§4.7 错误表该行标注「该缺陷已不再复现，保留为回归兜底」；§8 第 1 条改写；§10 视觉行改为「上游阻塞已解除，纯待排期」。
+- [x] **Step 3: 改两份 README** —— Known limitations 第 1 条改为「缺陷已于 2026-10-12 消失 / 复测环境 0.40.3 / 无法单一归因 / **但本版仍不支持视觉**」。
+- [x] **Step 4: 门禁** —— `node --test "test/*.test.mjs"` = **81/81**；改动文件按真实字节数 CR = 0；`npm pack` 边界未变（未新增入包文件）。
+
+**刻意未改（并已核实）**：`test/client.test.mjs` 的 `model_broken` 用例**不动** —— 它断言的是 `kind` 与 `/non-finite logit/`，**不断言 hint 文案**（已 grep 确认），故与 hint 改写无冲突；`.superpowers/sdd/**` 与计划正文里的**历史任务模板**保留原 `Expected` 值（本仓惯例：计划保留历史值、变更以 delta 追加），不追改。
+
+**顺带维持不变的结论**：5 个 decision 模型 **`family` 全为 `qwen35`** ⇒ 本机**仍无法**做「异家族 × 同端点」对照，此前「仅剩『按不确定性缩放且能翻转符号的服务端先验』未被排除」的判断**继续成立**。
+
+> ⚠️ **上一段的结论已在 Task 10 被推翻**（`family` 不是基座）。保留原文以留痕。
+
+## Task 10（delta，2026-10-12）：基座事实纠正 + 五模型顺序效应对照
+
+**触发**：用户指出「`clef` 是基于 **Qwen3.8-27B** 的」与「**Nimble** 是 Bespoke Labs 从 **Qwen3.5-9B** 微调的 9B 决策模型」。据此读 GGUF 头部核实，**推翻**了 Task 9 结尾「五个 `family` 全为 `qwen35` ⇒ 做不了异家族对照」的推论。
+
+**核心纠正**：`/api/tags` 与 `ollama show` 的 `details.family`（= GGUF `general.architecture`）是 **runner 兼容串**，只决定「哪个 runner 能加载」，**不是基座来源**。基座在 `general.base_model.0.*`。
+
+**读法（可复用）**：`$OLLAMA_MODELS/manifests/registry.ollama.ai/library/<name>/<tag>` → `layers[]` 中 `mediaType` 为 `application/vnd.ollama.image.model` 的那层的 digest → `blobs/sha256-<digest>` 的 GGUF 头。脚本：`.temp/clef-recheck/gguf-meta.mjs`、`.temp/clef-recheck/base-models.mjs`。
+
+- [x] **Step 1: 读全部 5 个模型的 GGUF 基座** —— `clef:latest` = **Qwen3.8 27B**（`Qwen/Qwen3.8-27B`，Cloudflare）· `clef-flash` = Qwen3.5 9B · `tev1:latest` = Qwen3.5 4B · `tev1:0.8b` = Qwen3.5 0.8B（Together AI）· `nimble` = 自述 `general.basename="Bespoke-Nimble"` / `general.finetune="merged-current"`，**GGUF 未声明 `base_model` 键**（「基座为 Qwen3.5-9B」来自 Bespoke Labs 说明，非 GGUF 自述 —— 这一区别已如实登记）。
+- [x] **Step 2: 五模型顺序效应对照** —— 同一套 4 题 × 6 排列（复用 `order-probe.mjs`，逐模型跑并另存 `result.<model>.json`，避免互相覆盖）。**结果：`tev1:0.8b` 跨排列 2/4 题变化，其余四个（4B/9B/9.1B/27B）全部 0/4。** ⇒ 顺序效应是**模型规模/后训练质量**现象，**与基座世代无关**（`tev1:latest`/`nimble`/`clef-flash` 同为 Qwen3.5 却全免疫）。五个模型 `noul` 键序均不敏感、复跑均逐位一致。汇总脚本 `cross-model-summary.mjs` → `cross-model-summary.json`。
+- [x] **Step 3: 文档同步** —— 规格 §2（新增「真实基座 ≠ `family`」行 + 修正 decision 模型表）、§4.11（标定节新增五模型对照表与三点影响）、§8 第 7 条、§10 M3 行；两份 README 的 confidence 段 + Known limitations 第 7 条；本计划 Task 10。
+- [x] **Step 4: 跨项目规则入档** —— 「判断本地模型是否同源不能用 `family`，权威来源是 GGUF `general.base_model.*`」写入**用户级记忆**（`~/.dsh/memory/MEMORY.md`）。
+
+**门禁**：`node --test "test/*.test.mjs"` = **81/81**（本轮只改文档与 `lib/client.js` 的 hint，未增删用例）；改动文件按真实字节数 CR = 0；`npm pack` 边界未变。
+
+**未做（有意）**：未按「4B 以上无顺序效应」去调整 `minConfidence` 默认值 —— 门限对 4B+ 惰性**不是缺陷**（它只是不触发），而把默认值改高反而会在 0.8B 上误伤；结论已写进 §4.11 与 §8 第 7 条供用户裁定。
+
+
+
