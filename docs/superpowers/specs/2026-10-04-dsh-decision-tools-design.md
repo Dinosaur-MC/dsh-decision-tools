@@ -369,7 +369,16 @@ const parameters = {
 
 | 响应头**已到达**、body 读完前 socket 断开（undici `TypeError: terminated`），或信号在读取途中触发 | `unreachable`（读取中断连）/ `aborted` / `timeout`（信号） | 复用各自对应行的文案；见下方注 |
 
-> **上下文上限与 token/字节比（2026-10-04 实测，本机 Ollama 0.35.1）**：`ollama show tev1:0.8b` 与 `tev1:latest` 在 Model 段声明 `context length 262144`，但 **Parameters 里 `num_ctx = 2050`**；`clef-flash:latest` 为 `num_ctx = 16384`。**跑的是 `num_ctx`，不是声明的 context length —— 差两个数量级。**
+> **上下文上限与 token/字节比（实测；数值为 2026-10-12 Ollama `0.40.3` 复测）**：`ollama show tev1:0.8b` 与 `tev1:latest` 在 Model 段声明 `context length 262144`，但 **Parameters 里 `num_ctx = 2050`**；`clef-flash:latest` 为 `num_ctx = 16384`。**跑的是 `num_ctx`，不是声明的 context length —— 差两个数量级。**
+>
+> **为什么会有两个「上下文」（2026-10-12 查清，两层不同来源）**：
+> - `context length 262144` 来自 **GGUF 元数据**（`qwen35.context_length`，同族键还有 `rope.freq_base = 10000000` / `rope.dimension_count = 64`）—— 它是**架构声明的能力天花板**，即位置编码被设计到多远，属模型文件自身的属性，不会随运行改变。
+> - `num_ctx 2050` 来自 **Modelfile 的 `PARAMETER`**，在 manifest 里是**独立的一层**（`application/vnd.ollama.image.params`），内容就是 `{"num_ctx":2050}`（本机实测：`tev1` = 2050、`clef` = **16384**、`nimble` = **8194**）—— 它是**运行时的 KV cache 分配量**，`ollama ps` 的 `CONTEXT` 列显示的就是它。
+> - **为什么发布者设得这么小**：KV cache 显存随 `num_ctx` 线性增长。实测把 `tev1:0.8b` 以 `num_ctx=8192` 加载，占用从 **893 MB → 1.0 GB**；若真按 262144 分配，显存将不可承受。而 decision 模型本就面向短的有界输入。
+>
+> **哪个在生效，以及能否改大（2026-10-12 实测）**：生效的是 **`num_ctx`**。边界实测（真散文、整条 prompt 含 `questions`）：**1921 token → 200，2109 token → 400**（`prompt 0 has 2109 tokens; expected 1–2050`），且 **`noul` 与 `choice` 两类题的检查器计数与 `usage.input_tokens` 一致**（6000 B → 1921/1938，6600 B → 2109/2126）⇒ **不存在「按题型区别计数」**。
+> **`/v1/systemone` 会忽略请求里的 `options.num_ctx`**：显式传 `8192` 与 `262144` 均仍按 2050 拒绝；先以 `/api/generate` + `options.num_ctx=8192` 把模型加载到 8192（`ollama ps` 确实显示 8192）后，**下一条 systemone 请求仍被拉回 2050 并在 400 里报 2050**。⇒ **本端点无法按请求抬高上限**；要真正抬高需改模型定义（派生一个 `PARAMETER num_ctx` 更大的模型）或改服务端默认，**属部署侧动作，不在插件范围内**。
+> **一处未解的历史矛盾（诚实登记）**：2026-10-05 的对照实验里有 `usage.input_tokens = 2256` 却返回 200 的记录（`.temp/order-probe/result2.json`），与今日「上限 2050」的边界实测冲突，且**今日不可复现**。已排除「计数口径按题型不同」这一解释（见上）。原因未查明 —— 不排除当时的运行态被其它调用方以更大的 `num_ctx` 加载过，但**无证据，故不作为结论**。
 >
 > 超上下文时服务端**不静默截断**、且在 ~30 ms 内返回（明文 `(input is never truncated)` 并给出精确 token 数）；70226 B 的 body 回 413（64 KiB 字节门）。**具体 token 数见下表 —— 不要用单点做除法估比例**：早期一份用**重复填充句**的探针（16226 B / 2359 token）会得出约 6.9 B/token 的**错误**比值。⇒ **两条独立上限**：服务端 64 KiB **字节**（413）与每模型 `num_ctx` **token**（400），**token 门通常先触发**。
 >
