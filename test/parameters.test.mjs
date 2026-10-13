@@ -6,6 +6,9 @@ import { parameterSchemaSpecToJsonSchema } from '@deepseek-ai/dsh-tools';
 import { PARAMETERS, TOOL_DESCRIPTION } from '../lib/parameters.js';
 import { Config } from '../lib/tool.js';
 
+/** 随包 skill 的正文：§4.9 的使用指引允许住在它里面（按需加载），但必须在 description 或它之中一处。 */
+const SKILL_BODY = readFileSync(fileURLToPath(new URL('../assets/decision-usage/SKILL.md', import.meta.url)), 'utf8');
+
 test('参数契约的结构不变量（DSL 的硬性要求）', () => {
   assert.deepEqual(Object.keys(PARAMETERS), ['state', 'questions', 'stateSource', 'model', 'strategy', 'aggregate']);
   assert.equal(PARAMETERS.state.required, undefined, 'v2：state 与 stateSource 恰有其一，故都不标 required');
@@ -35,7 +38,7 @@ test('参数契约的结构不变量（DSL 的硬性要求）', () => {
 });
 
 test('描述里必须点明 noul 不是布尔、confidence 不是正确率', () => {
-  const text = `${TOOL_DESCRIPTION} ${PARAMETERS.questions.items.properties.type.description}`;
+  const text = `${TOOL_DESCRIPTION} ${SKILL_BODY} ${PARAMETERS.questions.items.properties.type.description}`;
   assert.match(text, /not a boolean|not `boolean`/);
   assert.match(text, /NOT accuracy/);
 });
@@ -64,8 +67,10 @@ const POINT_ANCHORS = [
 
 for (const [point, label, anchor] of POINT_ANCHORS) {
   test(`§4.9 点 ${point}：${label}`, () => {
+    // 该点可以住在常驻 description，也可以住在按需加载的 skill 正文；但**必须住在其中一处**
+    // ——否则模型要么每轮都为它付费，要么永远看不到它。
     assert.match(
-      TOOL_DESCRIPTION,
+      anchor.test(TOOL_DESCRIPTION) ? TOOL_DESCRIPTION : SKILL_BODY,
       anchor,
       `§4.9 第 ${point} 点（${label}）在 shipped TOOL_DESCRIPTION 里找不到锚点 ${anchor}`
         + ' —— 该点只能住在 description（ADR-5），删掉就等于永久丢失。',
@@ -135,6 +140,13 @@ test('README 的配置表键集与顺序必须与 Config 的投影一致（两�
       : `键集相同但顺序不同：文档 [${documented.join(', ')}]`;
     assert.deepEqual(documented, AUTHORITATIVE_KEYS, inconsistency(file, detail));
   }
+});
+
+test('注入预算守卫：常驻 description 与 skill 正文各自有上限，防止再长回去', () => {
+  const descBytes = Buffer.byteLength(TOOL_DESCRIPTION, 'utf8');
+  const skillBytes = Buffer.byteLength(SKILL_BODY, 'utf8');
+  assert.ok(descBytes <= 1900, `常驻 description ${descBytes}B 超过 1900B：每轮注入的内容必须精打细算`);
+  assert.ok(skillBytes <= 3800, `skill 正文 ${skillBytes}B 超过 3800B：按需加载的内容也要简练`);
 });
 
 test('能投影成 JSON Schema，且 v2 的 required 只剩 questions', () => {

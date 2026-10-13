@@ -5,52 +5,39 @@ description: Use when a bounded judgment on local material is needed — routing
 
 # Using the local decision model (`decision`)
 
-What the `decision` tool is for: a **local** System One model returns probabilities for a bounded question — intent routing, classification, filtering, relevance judgement, rubric scoring. It never writes prose, and it is not a reasoning chain.
+A **local** System One model returns probabilities for a bounded question — routing, classification, filtering, relevance, rubric scoring. It never writes prose and never reasons step by step.
 
-## 1. Ask everything in one call
+## 1. Everything in one call
 
-Ask 1–64 questions about **one shared `state`** in a single call. The three question types are `choice` (pick one option), `noul` (probability that something is true), and `score` (rate against ordered levels).
+Ask 1–64 questions about one shared `state` in a single call; the types are `choice`, `noul` and `score`. **NEVER loop one call per item** — every call re-sends the whole `state`. Put a candidate list in `state` and ask one question per candidate instead.
 
-**Never loop one call per item.** Every call re-sends the whole `state`, so N calls cost N copies. Put a candidate list in `state` and ask one question per candidate instead.
+- `noul` returns a NUMBER, not a boolean: 0.475 means a 47.5% chance of yes.
+- `score` is reported on the 0..N-1 level scale, not normalised to 0-1.
 
 ## 2. Reference material instead of inlining it
 
-`state` (inline) and `stateSource` (reference) are **mutually exclusive**: give exactly one. With `stateSource` the plugin reads the file itself and the material **never enters your context** — use it for anything large.
+`state` and `stateSource` are mutually exclusive. With `stateSource` the plugin reads the file itself, and the material never enters your context.
 
-- `{ kind: 'file', path: 'docs/spec.md', startLine?: 10, endLine?: 40 }` — `path` must be a **workspace-root-relative** path; absolute paths, `..` and symlinks that escape the root are refused. Line ranges are 1-based and inclusive, and an out-of-range range **fails loudly** rather than silently truncating.
-- `{ kind: 'glob', pattern: 'docs/**/*.md', limit?: 5 }` reads every matching file under the workspace root (`*` does not cross `/`, `**` means any depth) and joins them with `===== <path> =====` headers, so you can still attribute each part.
-- Two different overflow semantics: a **single file** over the byte cap **fails loudly** (shrink the range or the glob), while a **glob over the total cap** is truncated with `source.truncated = true` and `source.remaining` — read those before concluding the glob was complete.
+- `{ kind: 'file', path: 'docs/spec.md', startLine?: 10, endLine?: 40 }` — `path` must be workspace-root-relative; absolute paths, `..` and escaping symlinks are refused; the range is 1-based inclusive and an out-of-range range fails loudly instead of truncating.
+- `{ kind: 'glob', pattern: 'docs/one-level/*.md', limit?: 5 }` joins matches with `===== path =====` headers, so each part stays attributable.
+- A single file over the byte cap **fails**; a glob over the total cap is **truncated** (`source.truncated`, `source.remaining`).
 
-## 3. Read `confidence_warning` correctly
+## 3. Read `confidence` and `confidence_warning` correctly
 
-`confidence` is the concentration of the distribution (`1 - H/ln N`), **not accuracy**. The tool appends a `confidence_warning` line naming the questions below the threshold and **keeps every answer unchanged** — it is a FLAG, not a filter.
+`confidence` is the concentration of the distribution (1 - H/ln N); it is NOT accuracy. A `confidence_warning` line names the questions below the threshold and leaves every answer unchanged — it is a FLAG, not a filter, and a question absent from it is NOT thereby endorsed. When it fires, read `probabilities` instead of the chosen label and escalate that question to your own reasoning.
 
-When it fires: read `probabilities` instead of the chosen label, and escalate those questions to your own reasoning. Be aware of the model you are on: `τ = 0.25` was calibrated on `tev1:0.8b`; on 4B-and-larger models confidence is effectively always ≥ 0.77, so the warning is **inert** there.
+## 4. Escalation means a different base model
 
-## 4. Escalation changes the model, therefore the base
+On overflow, and only when you did not pass `model`, the plugin escalates to a bigger-context model and stays on it. The result then carries `escalated: { from, to, sticky }` — a different base model, not just more room, so thresholds calibrated for one model may not apply to another.
 
-On a context overflow, and only when you did **not** pass `model`, the plugin escalates to a bigger-context model and keeps using it (sticky) until you pass `model` explicitly. When that happens the result carries `escalated: { from, to, sticky }`.
+## 5. Scanning answers localizable questions only
 
-A different model means a **different base model**, not just more room: confidence distributions differ and thresholds calibrated for one model may not apply to another. Treat `escalated` as a change of instrument, not a retry.
-
-## 5. Scanning only answers localizable questions
-
-`strategy: 'scan'` (or the automatic fallback) splits the material at semantic boundaries and asks per chunk. It is right for **localizable** questions — which chunks mention X, which are relevant.
-
-It is **wrong** for whole-document questions (is this entire document a complaint?): a per-chunk maximum is not the document-level probability. For those, let the plugin escalate so one model sees the whole thing.
-
-`aggregate` is `none` by default. With `any` you get a per-`noul` maximum marked **provisional** — cross-chunk probabilities are not calibrated, so it is a locating hint at best.
+`strategy: 'scan'` splits the material at semantic boundaries and asks per chunk: right for localizable questions (which chunks mention X), wrong for whole-document ones (a per-chunk maximum is not the document-level probability). `aggregate: 'any'` adds a per-`noul` maximum marked provisional — cross-chunk probabilities are not calibrated.
 
 ## 6. Read what actually happened
 
-- `model` — the model that actually answered (may differ from the one you named).
-- `plan` — `{ strategy, action, model, reason }`: what the plugin decided.
-- `source` — the reference that was read (path, line range, bytes) when you used `stateSource`.
-- `chunks` — in scan mode the per-chunk answers; the top level then has **no `answers`**.
-- `scan` — `{ failed, truncated, truncatedBy, aborted, remaining, bytesPerChunk, aggregate? }`. A partial scan is data, not a failure: check `truncated`/`aborted`/`remaining` before concluding.
+`model` is the model that answered; `plan` is what the plugin decided; `source` is the reference that was read; in scan mode `chunks` holds the per-chunk answers with no top-level `answers`, and `scan` reports `{ failed, truncated, truncatedBy, aborted, remaining, bytesPerChunk, aggregate? }` — a partial scan is data, not a failure.
 
 ## 7. Hard boundaries
 
-These answers are **probabilities, not proof**. Never treat them as correctness evidence, and never let one be the sole basis for a pass/allow decision — that requires artifact-level evidence. The tool must not decide routing, and must not be the basis of any **fail-open or fail-closed** policy; those belong to deterministic rules, otherwise a broken decision model breaks routing entirely.
-
-`tev1` family returns only probabilities and never text, so when a human-readable rationale must be preserved, use a generative model instead.
+These answers are probabilities, not proof. Never treat them as correctness evidence and never let one be the sole basis for a pass/allow decision — that needs artifact-level evidence. The tool must not decide routing and must not be the basis of any **fail-open or fail-closed** policy: those belong to deterministic rules. `tev1` returns only probabilities and never text, so for a human-readable rationale use a generative model.
