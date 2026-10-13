@@ -1,4 +1,5 @@
-import { test } from 'node:test';
+import {
+  test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ESCALATION_MARGIN,
@@ -8,6 +9,7 @@ import {
   resolveSticky,
   createSingleFlight,
   describeExhausted,
+  selectByCapacity,
 } from '../lib/escalate.js';
 
 /** 本机实测的阶梯（容量口径见 `.temp/numctx/notes.md`）。 */
@@ -189,4 +191,48 @@ test('describeExhausted：给出需求与来源、三条可行动项，且不得
   const conservative = describeExhausted({ from: 'clef-flash:latest', demand: 16384,
     demandSource: 'conservative', ladder: LADDER, reason: 'no-larger-entry' });
   assert.match(conservative, /服务端未给出数字/);
+});
+
+const LADDER3 = [
+  { model: 'tev1:0.8b', numCtx: 2050 },
+  { model: 'nimble:latest', numCtx: 8194 },
+  { model: 'clef-flash:latest', numCtx: 16384 },
+];
+
+test('selectByCapacity：显式指定优先（R1）', () => {
+  const out = selectByCapacity({ explicitModel: 'x:latest', defaultModel: 'tev1:0.8b', ladder: LADDER3, stateBytes: 10, defaultFitBytes: 4096 });
+  assert.deepEqual(out, { model: 'x:latest', reason: 'explicit', capacityBytes: null });
+});
+
+test('selectByCapacity：小材料走默认档（每次省 0.77–1.12 s 的那一支）', () => {
+  const out = selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: LADDER3, stateBytes: 400, defaultFitBytes: 4096 });
+  assert.equal(out.model, 'tev1:0.8b');
+  assert.equal(out.reason, 'fits-default');
+  assert.equal(selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: LADDER3, stateBytes: 4096, defaultFitBytes: 4096 }).reason, 'fits-default', '边界含等号');
+});
+
+test('selectByCapacity：大材料直发容量足够的最小档（省掉先吃 400 那一轮）', () => {
+  const nimble = selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: LADDER3, stateBytes: 5000, defaultFitBytes: 4096 });
+  assert.equal(nimble.model, 'nimble:latest');
+  assert.equal(nimble.reason, 'fits-ladder');
+  assert.equal(selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: LADDER3, stateBytes: 20000, defaultFitBytes: 4096 }).model, 'clef-flash:latest');
+});
+
+test('selectByCapacity：谁都不够就走最大档；阶梯为空才用粘滞兜底', () => {
+  const huge = selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: LADDER3, stateBytes: 10_000_000, defaultFitBytes: 4096 });
+  assert.equal(huge.model, 'clef-flash:latest');
+  assert.equal(huge.reason, 'largest');
+  const empty = selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: [], stateBytes: 5000, defaultFitBytes: 4096, stickyModel: 'nimble:latest' });
+  assert.equal(empty.model, 'nimble:latest');
+  assert.equal(empty.reason, 'sticky-fallback');
+  const noSticky = selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: [], stateBytes: 5000, defaultFitBytes: 4096 });
+  assert.equal(noSticky.model, 'tev1:0.8b');
+  assert.equal(noSticky.reason, 'default-fallback');
+});
+
+test('selectByCapacity：容量未知的阶梯条目被忽略；字节数未知按无穷处理', () => {
+  const odd = selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: [{ model: 'a:latest' }, { model: 'nimble:latest', numCtx: 8194 }], stateBytes: 5000, defaultFitBytes: 4096 });
+  assert.equal(odd.model, 'nimble:latest', '缺 numCtx 的条目不得被当成候选');
+  const nan = selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: LADDER3, stateBytes: Number.NaN, defaultFitBytes: 4096 });
+  assert.equal(nan.reason, 'largest', '字节数未知时保守地走最大档');
 });

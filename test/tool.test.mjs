@@ -316,7 +316,7 @@ test('提升失败不得粘滞：坏档一次失败后，下一次调用必须�
   apply(ctx, Config({ baseUrl: fake.baseUrl, ladder: [{ model: 'big:latest', numCtx: 8194 }] }));
   const exec = { preview: false, signal: undefined, agent: { session: { header: { cwd: 'F:/ws' } } } };
   const questions = [{ name: 'q1', type: 'noul', instructions: 'x' }];
-  // 首次：溢出 → 提升到坏档（404）失败。**已知偏差**：提升用尽时目前直接抛最初的溢出错误，
+  // 首次：**估算**判为大材料 ⇒ 直发 ladder 里唯一的档（big:latest）⇒ 404。**已知偏差**：提升用尽时目前直接抛最初的溢出错误，
   // 而规格 §4 要求 auto 在「提升用尽」时转为扫描（登记为待办，r1 P1 / r3 P2）。
   // 本用例只钉「坏档不得粘滞」，故先接住这次抛出。
   const first = await registered[0].execute({ state: big, questions }, exec).catch((error) => error);
@@ -324,6 +324,53 @@ test('提升失败不得粘滞：坏档一次失败后，下一次调用必须�
   const second = await registered[0].execute({ state: small, questions }, exec);
   assert.equal(second.model, 'tev1:0.8b', '粘滞被毒化时这里会是 big:latest');
   assert.equal(seen.filter((m) => m === 'big:latest').length, 1, '坏档只该被尝试一次');
+  await fake.close();
+});
+
+test('A 方案：小材料走默认档，大材料直发大档，回到小材料又降回来（r5 实测省 13% 的那条规则）', async () => {
+  const fake = await startFakeOllama(() => ({ status: 200, body: ANSWERS }));
+  const { registered, ctx } = fakeCtx({ fs: treeFs({}) });
+  apply(ctx, Config({ baseUrl: fake.baseUrl }));
+  const exec = { preview: false, signal: undefined, agent: { session: { header: { cwd: 'F:/ws' } } } };
+  const questions = [{ name: 'q1', type: 'noul', instructions: 'x' }];
+  await registered[0].execute({ state: 'A'.repeat(300), questions }, exec);
+  assert.equal(fake.requests[0].json.model, 'tev1:0.8b', '小材料必须走默认档（大档是它的 7–9 倍慢）');
+  await registered[0].execute({ state: 'A'.repeat(6000), questions }, exec);
+  assert.equal(fake.requests[1].json.model, 'nimble:latest', '★ 大材料**直发**大档：不得先发默认档吃一次 400');
+  await registered[0].execute({ state: 'A'.repeat(300), questions }, exec);
+  assert.equal(fake.requests[2].json.model, 'tev1:0.8b', '★ 回到小材料必须降回默认档（旧粘滞会一直锁在大档上）');
+  await fake.close();
+});
+
+test('A 方案：估算偏乐观而实际溢出时，仍走既有的溢出提升兜底', async () => {
+  const fake = await startFakeOllama((req) => (req.json?.model === 'nimble:latest'
+    ? { status: 400, body: { error: 'prompt 0 has 3000 tokens; expected 1\u20138194 (input is never truncated)' } }
+    : { status: 200, body: ANSWERS }));
+  const { registered, ctx } = fakeCtx({ fs: treeFs({}) });
+  apply(ctx, Config({ baseUrl: fake.baseUrl }));
+  const value = await registered[0].execute(
+    { state: 'A'.repeat(6000), questions: [{ name: 'q1', type: 'noul', instructions: 'x' }] },
+    { preview: false, signal: undefined, agent: { session: { header: { cwd: 'F:/ws' } } } },
+  );
+  assert.equal(fake.requests[0].json.model, 'nimble:latest');
+  assert.equal(value.model, 'clef-flash:latest', '溢出后按阶梯提升到下一档');
+  assert.equal(value.escalated?.to, 'clef-flash:latest');
+  assert.equal(value.escalated?.from, 'nimble:latest');
+  await fake.close();
+});
+
+test('A 方案：显式 model 优先于容量选择，并被记进粘滞（R1 不变）', async () => {
+  const fake = await startFakeOllama(() => ({ status: 200, body: ANSWERS }));
+  const { registered, ctx } = fakeCtx({ fs: treeFs({}) });
+  apply(ctx, Config({ baseUrl: fake.baseUrl }));
+  const exec = { preview: false, signal: undefined, agent: { session: { header: { cwd: 'F:/ws' } } } };
+  const questions = [{ name: 'q1', type: 'noul', instructions: 'x' }];
+  const first = await registered[0].execute({ state: 'A'.repeat(100), questions, model: 'tev1:latest' }, exec);
+  assert.equal(fake.requests[0].json.model, 'tev1:latest', '显式指定必须被尊重');
+  assert.equal(first.model, 'tev1:latest');
+  assert.equal(first.plan.model, 'tev1:latest', 'plan 里回显的也必须是显式选中的档');
+  // 注：plan.reason 描述的是**策略**（inline/scan/escalate），不反映选档原因 ——
+  // 「选档原因可观测」已登记为待办（r3 审查 P2：成功提升时 plan 回显 reason=inline）。
   await fake.close();
 });
 
