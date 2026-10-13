@@ -12,6 +12,7 @@ A **local** System One model returns probabilities for a bounded question — ro
 Ask 1–64 questions about one shared `state` in a single call; the types are `choice`, `noul` and `score`. **NEVER loop one call per item** — every call re-sends the whole `state`. Put a candidate list in `state` and ask one question per candidate instead.
 
 - `noul` returns a NUMBER, not a boolean: 0.475 means a 47.5% chance of yes.
+- `criteria` shapes: `choice` → option name to description (2-26 options); `score` → level descriptions lowest to highest (2-26 levels); `noul` → optional false/true descriptions, omit for No/Yes.
 - `score` is reported on the 0..N-1 level scale, not normalised to 0-1.
 
 ## 2. Reference material instead of inlining it

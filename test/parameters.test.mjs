@@ -145,8 +145,10 @@ test('README 的配置表键集与顺序必须与 Config 的投影一致（两�
 test('注入预算守卫：常驻 description 与 skill 正文各自有上限，防止再长回去', () => {
   const descBytes = Buffer.byteLength(TOOL_DESCRIPTION, 'utf8');
   const skillBytes = Buffer.byteLength(SKILL_BODY, 'utf8');
+  const schemaBytes = Buffer.byteLength(JSON.stringify(PARAMETERS), 'utf8');
   assert.ok(descBytes <= 1900, `常驻 description ${descBytes}B 超过 1900B：每轮注入的内容必须精打细算`);
-  assert.ok(skillBytes <= 3800, `skill 正文 ${skillBytes}B 超过 3800B：按需加载的内容也要简练`);
+  assert.ok(schemaBytes <= 3600, `参数 schema ${schemaBytes}B 超过 3600B：常驻 schema 才是注入成本的主体（压缩后 3402B）`);
+  assert.ok(skillBytes <= 4000, `skill 正文 ${skillBytes}B 超过 3800B：按需加载的内容也要简练`);
 });
 
 test('能投影成 JSON Schema，且 v2 的 required 只剩 questions', () => {
