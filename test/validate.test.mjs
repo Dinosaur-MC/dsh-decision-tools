@@ -1,6 +1,11 @@
-import { test } from 'node:test';
+import {
+  test } from 'node:test';
 import assert from 'node:assert/strict';
-import { prepareRequest, DecisionValidationError, LIMITS } from '../lib/validate.js';
+import { prepareRequest,
+  DecisionValidationError,
+  LIMITS,
+  analyzeBody,
+} from '../lib/validate.js';
 
 const TICKET = 'Our checkout has returned 500 errors since 9am.';
 const CHOICE_Q = {
@@ -189,4 +194,18 @@ test('V2 续：题名不得为纯数字串（纯数字会被 JS 对象映射重�
   // （"01" 其实不会被重排，这里同样会拒），宁可多拒也不错排。
   assert.doesNotThrow(() => prepareRequest(base({ questions: [{ name: 'q1', type: 'noul', instructions: 'x' }] })));
   assert.doesNotThrow(() => prepareRequest(base({ questions: [{ name: '1a', type: 'noul', instructions: 'x' }] })));
+});
+
+test('analyzeBody：把请求体归因到材料与问题文本，并识别逐字重复的判据', () => {
+  const rubric = '这段判据很长'.repeat(20);
+  const questions = [1, 2, 3, 4].map((n) => ({ name: 'r' + n, type: 'noul', instructions: rubric }));
+  const out = analyzeBody('short material', questions);
+  assert.equal(out.stateBytes, 14);
+  assert.ok(out.questionBytes > out.stateBytes, '问题文本远大于材料');
+  assert.equal(out.repeatedQuestions, 3, '4 题逐字相同 ⇒ 3 题是重复的');
+  assert.ok(out.repeatedBytes > 0);
+  assert.match(out.hint, /只写一次/, '必须给出可行动建议');
+  assert.ok(out.questionShare > 0.5);
+  const clean = analyzeBody('x'.repeat(200), [{ name: 'a', type: 'noul', instructions: 'one' }, { name: 'b', type: 'noul', instructions: 'two' }, { name: 'c', type: 'noul', instructions: 'three' }]);
+  assert.equal(clean.hint, null, '材料占多数且无重复 ⇒ 不出提示');
 });

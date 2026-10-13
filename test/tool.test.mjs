@@ -794,3 +794,19 @@ test('§4.11：collectLowConfidence 跳过 noul、缺失按低计、<=0 关闭�
   assert.deepEqual(collectLowConfidence([], 0.25), []);
   assert.deepEqual(collectLowConfidence({}, 0.25), []);
 });
+
+test('重复判据会被归因出来：告警指向问题文本，而不是误导性地让人改材料（真机样例）', async () => {
+  const fake = await startFakeOllama(() => ({ status: 200, body: ANSWERS }));
+  const { registered, ctx } = fakeCtx({ fs: treeFs({}) });
+  apply(ctx, Config({ baseUrl: fake.baseUrl }));
+  const rubric = '是否属于本课题不可裁的核心文献'.repeat(12);
+  const questions = [1, 2, 3, 4, 5].map((n) => ({ name: 'r' + n, type: 'noul', instructions: rubric }));
+  const value = await registered[0].execute(
+    { state: 'x'.repeat(50), questions },
+    { preview: false, signal: undefined, agent: { session: { header: { cwd: 'F:/ws' } } } },
+  );
+  assert.equal(typeof value.body_warning, 'string', '应当出告警');
+  assert.match(value.body_warning, /问题文本|重复/, '告警必须归因到问题文本');
+  assert.match(value.body_warning, /只写一次/, '并给可行动建议');
+  await fake.close();
+});

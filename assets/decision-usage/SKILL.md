@@ -15,13 +15,15 @@ Ask 1–64 questions about one shared `state` in a single call; the types are `c
 - `criteria` shapes: `choice` → option name to description (2-26 options); `score` → level descriptions lowest to highest (2-26 levels); `noul` → optional false/true descriptions, omit for No/Yes.
 - `score` is reported on the 0..N-1 level scale, not normalised to 0-1.
 
+### Many similar judgments
+
+When N questions share the same rubric, write the rubric **once** — put it in `state` (every question sees the same material) and leave only the differing part in `instructions`. Question text is repeated on the wire per question and the cost is roughly **question count × body**, so a 35-fold repeated rubric can dwarf the material it judges.
 ## 2. Reference material instead of inlining it
 
 `state` and `stateSource` are mutually exclusive. With `stateSource` the plugin reads the file itself, and the material never enters your context.
 
-- `{ kind: 'file', path: 'docs/spec.md', startLine?: 10, endLine?: 40 }` — `path` must be workspace-root-relative; absolute paths, `..` and escaping symlinks are refused; the range is 1-based inclusive and an out-of-range range fails loudly instead of truncating.
-- `{ kind: 'glob', pattern: 'docs/one-level/*.md', limit?: 5 }` joins matches with `===== path =====` headers, so each part stays attributable.
-- A single file over the byte cap **fails**; a glob over the total cap is **truncated** (`source.truncated`, `source.remaining`).
+- `{ kind: 'file', path: 'docs/spec.md', startLine?: 10, endLine?: 40 }` — `path` must be workspace-root-relative; absolute paths, `..` and escaping symlinks are refused; the range is 1-based inclusive and an out-of-range range fails loudly.
+- A single file over the cap **fails**; a glob over the total cap is **truncated**.
 
 ## 3. Read `confidence` and `confidence_warning` correctly
 
@@ -29,7 +31,7 @@ Ask 1–64 questions about one shared `state` in a single call; the types are `c
 
 ## 4. Escalation means a different base model
 
-On overflow, and only when you did not pass `model`, the plugin escalates to a bigger-context model and stays on it. The result then carries `escalated: { from, to, sticky }` — a different base model, not just more room, so thresholds calibrated for one model may not apply to another.
+On overflow, and only when you did not pass `model`, the plugin escalates to a bigger-context model and stays on it. The result then carries `escalated: { from, to, sticky }` — a different base model, so thresholds calibrated for one model may not apply to another.
 
 ## 5. Scanning answers localizable questions only
 
@@ -37,7 +39,7 @@ On overflow, and only when you did not pass `model`, the plugin escalates to a b
 
 ## 6. Read what actually happened
 
-`model` is the model that answered; `plan` is what the plugin decided; `source` is the reference that was read; in scan mode `chunks` holds the per-chunk answers with no top-level `answers`, and `scan` reports `{ failed, truncated, truncatedBy, aborted, remaining, bytesPerChunk, aggregate? }` — a partial scan is data, not a failure.
+`model` is the model that answered; `plan` is what the plugin decided; in scan mode `chunks` holds the per-chunk answers with no top-level `answers`, and `scan` reports `failed`/`truncated`/`aborted`/`remaining` — a partial scan is data, not a failure.
 
 ## 7. Hard boundaries
 
