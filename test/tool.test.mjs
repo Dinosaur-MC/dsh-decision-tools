@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { name, inject, Config, apply } from '../lib/index.js';
 import { resolveSoftBodyBytes, resolveMinConfidence, collectLowConfidence } from '../lib/tool.js';
+import { COMPANION_SKILL } from '../lib/tool.js';
+import { SKILL_NAME } from '../lib/skill.js';
 import { TOOL_DESCRIPTION } from '../lib/parameters.js';
 import { LIMITS } from '../lib/validate.js';
 import { startFakeOllama } from './fake-ollama.mjs';
@@ -83,6 +85,10 @@ function fakeCtx(options = {}) {
     registered,
     ctx: {
       tools: { register: (definition) => { registered.push(definition); return () => {}; } },
+      // 「用该工具必须拿到配套 skill」：默认给一个在场的假技能注册表；用例可覆盖成缺失。
+      skills: options.skills === undefined
+        ? { get: async (n) => ({ name: n, content: '# companion skill body' }) }
+        : options.skills,
     ...(options.fs === undefined ? {} : { fs: options.fs }),
     },
   };
@@ -96,7 +102,7 @@ const ANSWERS = {
 
 test('插件导出形状与默认配置', () => {
   assert.equal(name, 'decision-tools');
-  assert.deepEqual(inject, ['tools', 'fs']);
+  assert.deepEqual(inject, ['tools', 'fs', 'skills'], '工具行硬依赖 skills 服务：没有技能服务就不提供工具');
   assert.equal(typeof apply, 'function');
   assert.deepEqual(Config({}), {
     baseUrl: 'http://localhost:11434',
@@ -374,6 +380,37 @@ test('A 方案：显式 model 优先于容量选择，并被记进粘滞（R1 �
   await fake.close();
 });
 
+test('配套 skill 的跨文件不变量：工具声明必须指名同一个 skill 名', () => {
+  assert.equal(COMPANION_SKILL, SKILL_NAME, 'lib/tool.js 的 COMPANION_SKILL 必须等于 lib/skill.js 的 SKILL_NAME');
+  assert.match(TOOL_DESCRIPTION, new RegExp(SKILL_NAME), '常驻描述必须指名配套 skill，否则模型无从知道指引在哪');
+});
+
+test('拿不到配套 skill 时拒绝服务（不是静默降级）', async () => {
+  const { registered, ctx } = fakeCtx({ skills: { get: async () => undefined } });
+  apply(ctx, Config({}));
+  await assert.rejects(
+    registered[0].execute(
+      { state: 'x', questions: [{ name: 'q1', type: 'noul', instructions: 'x' }] },
+      { preview: false, signal: undefined, agent: { session: { header: { cwd: 'F:/ws' } } } },
+    ),
+    (error) => error.kind === 'skill_missing' && /配套技能/.test(error.message),
+  );
+});
+
+test('首次使用把配套 skill 正文随结果交付，第二次只留提示（构造性保证「用工具=拿到指引」）', async () => {
+  const fake = await startFakeOllama(() => ({ status: 200, body: ANSWERS }));
+  const { registered, ctx } = fakeCtx({ fs: treeFs({}) });
+  apply(ctx, Config({ baseUrl: fake.baseUrl }));
+  const exec = { preview: false, signal: undefined, agent: { session: { header: { cwd: 'F:/ws' } } } };
+  const args = { state: 'x', questions: [{ name: 'q1', type: 'noul', instructions: 'x' }] };
+  const value = await registered[0].execute(args, exec);
+  const rendered = registered[0].output.render({}, value);
+  assert.match(rendered[0].text, /companion skill/, '首次渲染必须带出 skill 正文');
+  const second = await registered[0].execute(args, exec);
+  const rendered2 = registered[0].output.render({}, second);
+  assert.doesNotMatch(rendered2[0].text, /companion skill/, '第二次不重复交付全文');
+  await fake.close();
+});
 test('toolName 配置改变工具名', () => {
   const { registered, ctx } = fakeCtx();
   apply(ctx, Config({ toolName: 'decide' }));
