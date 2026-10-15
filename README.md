@@ -85,7 +85,7 @@ stay put.
 | `minConfidence` | unset (falls back to `LIMITS.minConfidence`, 0.25) | `choice`/`score` answers whose `confidence` is below this — or missing — are named in a `confidence_warning`; `0` disables the gate |
 | `maxChoiceOptions` | unset (falls back to `LIMITS.maxChoiceOptions`, 255) | Upper bound on `choice` option count. The OpenAPI spec notes *"The option limit depends on the model"*, so raise or lower this if your model differs. `score` is a separate, spec-fixed 2–10 and is **not** configurable. |
 | `escalationEnabled` | `true` | Automatic escalation to a bigger-context decision model on context overflow. Passing `model` on a call disables it for that call. |
-| `ladder` | unset (uses `DEFAULT_LADDER`) | Ordered `{ model, numCtx }[]` escalation candidates. The built-in ladder deliberately excludes `clef:latest` (27B on 8 GB never returned within 300 s). |
+| `ladder` | unset (uses `DEFAULT_LADDER`) | Ordered `{ model, numCtx }[]` escalation candidates. Two deliberate exclusions: `clef:latest` (27B on 8 GB never returned within 300 s) and `nimble:latest` (its `num_ctx` 8194 is only 2 tokens above tev1's 8192, so it can never satisfy the capacity margin — a rung that is never selectable). Re-read `/api/show` after re-pulling; these are snapshots. |
 | `escalationMaxAttempts` | `3` | Maximum escalation attempts before failing with an actionable error instead of silently degrading. |
 | `scanFirstChunkBytes` | unset (uses `LIMITS.softBodyBytes`) | Byte budget for the first scan chunk; later chunks are re-cut from the server's own token numbers. |
 | `scanMaxChunks` | unset (uses `LIMITS.scanMaxChunks`) | Maximum chunks per scan; exceeding it returns a partial scan rather than failing. |
@@ -138,7 +138,12 @@ The defaults above are the ones declared in `lib/tool.js` (`Config`).
    `Clef: non-finite logit` under Ollama 0.35.1; re-tested on **0.40.3** (and with the model
    files re-pulled), `clef-flash:latest`, `clef:latest` and `nimble:latest` all return 200 for
    all three question types, and the two `clef` models now advertise `vision`. The fix cannot be
-   attributed to a single cause (Ollama version *and* model files both changed). **Vision is
+   attributed to a single cause (Ollama version *and* model files both changed).
+   ⚠️ **State changed again on 2026-10-15**: under Ollama **0.40.4** old-format models are
+   rejected (`was downloaded in a format that is no longer supported`). After re-pulling
+   `nimble:latest`, `clef-flash:latest` and `clef:latest` in turn (16:08–18:0x that day),
+   **all six decision models are available again**. ⇒ Availability flips with re-pulls;
+   any "works / doesn't work" claim must be re-measured. **Vision is
    still not supported**: there is no `images` parameter and no path-based image loading — see
    ADR-3. The `model_broken` mapping is kept as a guard against an upstream regression.
 2. **Bigger is not necessarily more correct.** On the same ticket, `tev1:0.8b`

@@ -139,11 +139,25 @@
 
 ## 4. 成本与容量口径（真机实测冻结）
 
-- **模型窗口**（`num_ctx`，非架构声明）：**2026-10-15 重测**（Ollama 0.40.4）——
-  `tev1:0.8b` **8192** · `tev1:latest` **8192** · `nimble-v3:latest` **32768**。
-  （旧值 `2050 / 2050 / nimble 8194 / clef-flash 16384` 已随模型重拉失效；`nimble:latest`
-  与两个 `clef` 当前因「下载格式不再受支持」不可用，`ollama pull` 可修。）
+- **模型窗口**（`num_ctx`，非架构声明）：**2026-10-15 16:34 重测**（Ollama 0.40.4）——
+  `tev1:0.8b` **8192** · `tev1:latest` **8192** · `nimble:latest` **8194** ·
+  `clef-flash:latest` **16384** · `clef:latest` **16384** · `nimble-v3:latest` **32768**。
+  （旧值 `2050 / 2050 / 8194 / 16384` 已随模型重拉失效。）
   ⚠️ **这是快照**：`num_ctx` 会在模型重拉后变化，权威读法是 `/api/show` 的 `parameters`。
+- **模型可用性（2026-10-15 18:07 实测）**：**6 个 decision 模型全部可用**（`tev1:0.8b` /
+  `tev1:latest` / `nimble:latest` / `nimble-v3:latest` / `clef-flash:latest` / `clef:latest`）。
+  ⚠️ Ollama **0.40.4 会拒收未重拉的旧格式模型**（`was downloaded in a format that is no
+  longer supported`），而**该状态随重拉瞬变**：同日内 `nimble`/`clef-flash`/`clef`
+  先后由不可用变为可用（16:08→18:0x）。⇒ 任何「可用/不可用」陈述**必须现测**，
+  且不得据一次瞬态把模型移出配置。
+- **测试装置的并发竞态（2026-10-15 记录，非产品缺陷）**：在**人为并发负载**下，套件会出现
+  约 1/10 概率的间歇失败，症状是 client 层分类从预期值退化为 **`unreachable`**
+  （第 4/5/7/138/141 例都出现过，**每次不同的用例**）。已证**不是本轮改动引入**：
+  ① 同样的竞态在改动前的 **HEAD（`409a526`）隔离 worktree 上同样复现**；② 我的 `lib/client.js`
+  改动**只是注释**；③ 空闲时连跑 40 次无命中，只有加并发负载才出现。根因是**每个用例各起一个
+  临时端口上的假服务、而 undici 连接池是进程级全局的**，负载下端口被复用导致池中旧连接指向
+  已关闭的服务。`server.keepAliveTimeout = 0` 试过**无效**（仍 1/11 命中）⇒ 已撤回，未留在仓库。
+  真正要修需要**按用例隔离 fetch 调度器**（`undici` 的 `Agent`/`Pool` 显式注入）而非依赖全局池。
 - **服务端 criteria 硬限**（OpenAPI + 实测）：`choice` **2–255**（规格注明依模型而异；
   256 → 400 `too many options (256), this model supports at most 255`）·
   `score` **2–10**（11 → 400 `score criteria must be an array of 2–10 levels`）。

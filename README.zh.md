@@ -82,7 +82,7 @@
 | `minConfidence` | 未设（回落到 `LIMITS.minConfidence`，0.25） | `confidence` 低于该值（或缺失）的 `choice`/`score` 答案会被列进 `confidence_warning`；`0` 关闭该门限 |
 | `maxChoiceOptions` | 未设（回落到 `LIMITS.maxChoiceOptions`，255） | `choice` 选项数上限。OpenAPI 明说 *「The option limit depends on the model」*，故模型不同时应在此调整。`score` 是**另一条**约束、由规格写死为 2–10，**不可配置**。 |
 | `escalationEnabled` | `true` | 上下文溢出时自动提升到更大上下文的判定模型。调用时传了 `model` 会在该次调用禁用自动提升。 |
-| `ladder` | 未设（用 `DEFAULT_LADDER`） | 有序的 `{ model, numCtx }[]` 提升候选。内置阶梯**刻意不含 `clef:latest`**（27B 在 8 GB 显存上 300 s 未返回）。 |
+| `ladder` | 未设（用 `DEFAULT_LADDER`） | 有序的 `{ model, numCtx }[]` 提升候选。两处刻意排除：`clef:latest`（27B 在 8 GB 显存上 300 s 未返回）；`nimble:latest`（其 `num_ctx` 8194 只比 tev1 的 8192 大 2 token，永远过不了容量余量 ⇒ 一档**选不中**的档）。重拉模型后须重读 `/api/show`，这些是快照。 |
 | `escalationMaxAttempts` | `3` | 提升尝试次数上限；用尽即抛可行动错误，绝不静默降级。 |
 | `scanFirstChunkBytes` | 未设（用 `LIMITS.softBodyBytes`） | 首块字节预算；后续块据服务端自己的 token 数字重切。 |
 | `scanMaxChunks` | 未设（用 `LIMITS.scanMaxChunks`） | 单次扫描的块数上限；触顶返回**部分结果**而非失败。 |
@@ -127,8 +127,12 @@
 1. **`clef` 系缺陷已于 2026-10-12 复测消失。** 原先在 Ollama 0.35.1 上任何请求都报
    `Clef: non-finite logit`；在 **0.40.3** 上复测（且模型文件被重拉过），`clef-flash:latest`、
    `clef:latest`、`nimble:latest` 三型全部返回 200，两个 `clef` 现已声明 `vision`。
-   **修复来源无法单一归因**（Ollama 版本与模型文件两者都变了）。**但本版仍不支持视觉**：
-   没有 `images` 参数、也没有路径式读图 —— 见 ADR-3。`model_broken` 映射保留，作为上游回归的兜底。
+   **修复来源无法单一归因**（Ollama 版本与模型文件两者都变了）。
+   ⚠️ **2026-10-15 状态再变**：Ollama 升到 **0.40.4** 后，旧格式模型会被拒（`was downloaded
+   in a format that is no longer supported`）；当日 16:08–18:0x 依次重拉
+   `nimble:latest`/`clef-flash:latest`/`clef:latest` 之后，**6 个 decision 模型全部恢复可用**。
+   ⇒ **模型可用性随重拉瞬变，任何「可用/不可用」的陈述都必须现测**。
+   **但本版仍不支持视觉**：没有 `images` 参数、也没有路径式读图 —— 见 ADR-3。`model_broken` 映射保留，作为上游回归的兜底。
 2. **更大不必然更对。** 同一题上 `tev1:0.8b` 给 `bug`（p=0.9648），而
    `tev1:latest`（4.2B）给 `billing`（p=0.5710，`bug` 仅 0.3212）——
    按题面看 `billing` 是更弱的答案。请按题实测选型。

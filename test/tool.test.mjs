@@ -339,15 +339,29 @@ test('A 方案：小材料走默认档，大材料直发大档，回到小材料
   apply(ctx, Config({ baseUrl: fake.baseUrl }));
   const exec = { preview: false, signal: undefined, agent: { session: { header: { cwd: 'F:/ws' } } } };
   const questions = [{ name: 'q1', type: 'noul', instructions: 'x' }];
-  // 「大材料」的阈值随默认档容量走：默认档 tev1:0.8b 现为 num_ctx=8192 ⇒ 容量
-  // 8192×3.33×0.6 ≈ 16367 B，故 6000 B 已不再是"大"。用 20000 B 才越过它、
-  // 落在 nimble-v3（32768 ⇒ ≈65477 B）之内。
+  // 「大材料」的阈值随默认档容量走：默认档 tev1:0.8b 现为 num_ctx=8192 ⇒ 可用字节上限
+  // 8192×3.33×0.6 ≈ 16368 B，故 6000 B 已不再是"大"。用 40000 B 越过 clef-flash
+  // （16384 ⇒ ≈32735 B）后落到最大档 nimble-v3（32768 ⇒ ≈65470 B）。
   await registered[0].execute({ state: 'A'.repeat(300), questions }, exec);
   assert.equal(fake.requests[0].json.model, 'tev1:0.8b', '小材料必须走默认档（大档是它的 7–9 倍慢）');
-  await registered[0].execute({ state: 'A'.repeat(20000), questions }, exec);
+  await registered[0].execute({ state: 'A'.repeat(40000), questions }, exec);
   assert.equal(fake.requests[1].json.model, 'nimble-v3:latest', '★ 大材料**直发**大档：不得先发默认档吃一次 400');
   await registered[0].execute({ state: 'A'.repeat(300), questions }, exec);
   assert.equal(fake.requests[2].json.model, 'tev1:0.8b', '★ 回到小材料必须降回默认档（旧粘滞会一直锁在大档上）');
+  await fake.close();
+});
+
+test('A 方案：中等材料只升到「够用的最小档」（clef-flash 是真正可用的中间档）', async () => {
+  const fake = await startFakeOllama(() => ({ status: 200, body: ANSWERS }));
+  const { registered, ctx } = fakeCtx({ fs: treeFs({}) });
+  apply(ctx, Config({ baseUrl: fake.baseUrl }));
+  const exec = { preview: false, signal: undefined, agent: { session: { header: { cwd: 'F:/ws' } } } };
+  const questions = [{ name: 'q1', type: 'noul', instructions: 'x' }];
+  // 20000 B 越过 tev1（16368 B）但没越过 clef-flash（32735 B）⇒ 必须选最小够用档，
+  // 而不是直接跳到最大档。这正是「排除 8194 死档、纳入 16384 中间档」的行为收益。
+  await registered[0].execute({ state: 'A'.repeat(20000), questions }, exec);
+  assert.equal(fake.requests[0].json.model, 'clef-flash:latest',
+    '中等材料应落在够用的最小档，不得直接跳最大档');
   await fake.close();
 });
 

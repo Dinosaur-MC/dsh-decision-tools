@@ -36,15 +36,36 @@ test('ESCALATION_MARGIN 冻结为 0.6（策略值）', () => {
   assert.equal(ESCALATION_MARGIN, 0.6);
 });
 
-test('DEFAULT_LADDER 只含本机实测容量，且刻意不含 clef:latest / clef-flash:latest', () => {
+test('DEFAULT_LADDER 只含本机实测容量；clef:latest 因超时、nimble:latest 因容量无增益而不入', () => {
   assert.deepEqual(DEFAULT_LADDER.map((entry) => entry.model),
-    ['tev1:0.8b', 'tev1:latest', 'nimble-v3:latest']);
+    ['tev1:0.8b', 'tev1:latest', 'clef-flash:latest', 'nimble-v3:latest']);
   assert.equal(DEFAULT_LADDER.find((e) => e.model === 'tev1:0.8b').numCtx, 8192);
+  assert.equal(DEFAULT_LADDER.find((e) => e.model === 'clef-flash:latest').numCtx, 16384);
   assert.equal(DEFAULT_LADDER.find((e) => e.model === 'nimble-v3:latest').numCtx, 32768);
   assert.equal(DEFAULT_LADDER.some((e) => e.model === 'clef:latest'), false,
     '27B 在 8 GB 显存上 prefill 21500 B 300 s 未返回，不得进默认阶梯');
-  assert.equal(DEFAULT_LADDER.some((e) => e.model === 'clef-flash:latest'), false,
-    '2026-10-15 起 clef-flash 因「下载格式不再受支持」不可用，不得进默认阶梯');
+  assert.equal(DEFAULT_LADDER.some((e) => e.model === 'nimble:latest'), false,
+    'nimble 的 8194 只比 tev1 的 8192 大 2 token ⇒ 溢出时永远选不中（死档），与「是否可用」无关');
+});
+
+test('阶梯里每一档都必须真正「比前一档大」——排除 8194 这种 2-token 假提升', () => {
+  // 这是上面那条排除规则的**可执行判据**：相邻档位必须能被真的选中。
+  // 从 tev1(8192) 溢出 ⇒ 需求 > 8192；选档要求 numCtx × 0.6 ≥ 需求。
+  // 8194 × 0.6 = 4916 < 8192 ⇒ nimble:latest 永远不可能被选中。
+  const demandJustOver = 8193;
+  const nimblePick = selectEscalation({
+    ladder: [{ model: 'nimble:latest', numCtx: 8194 }],
+    from: 'tev1:0.8b', failure: { actual: demandJustOver }, currentNumCtx: 8192,
+  });
+  assert.equal(nimblePick.ok, false, '8194 这条 2-token 提升必须选不中（否则它就是个假档）');
+  assert.equal(nimblePick.reason, 'exceeds-largest');
+  // 而 clef-flash 同条件下必须选得中，证明它是有效档。
+  const flashPick = selectEscalation({
+    ladder: [{ model: 'clef-flash:latest', numCtx: 16384 }],
+    from: 'tev1:0.8b', failure: { actual: demandJustOver }, currentNumCtx: 8192,
+  });
+  assert.equal(flashPick.ok, true);
+  assert.equal(flashPick.entry.model, 'clef-flash:latest');
 });
 
 test('demandOf：带数字用实测 actual；缺席或不可用一律回落到当前模型声明容量', () => {
@@ -200,10 +221,11 @@ test('describeExhausted：给出需求与来源、三条可行动项，且不得
   assert.match(conservative, /服务端未给出数字/);
 });
 
+/** 测试夹具阶梯（**不是** DEFAULT_LADDER）：用本机 2026-10-15 16:34 实测容量。 */
 const LADDER3 = [
-  { model: 'tev1:0.8b', numCtx: 2050 },
-  { model: 'nimble:latest', numCtx: 8194 },
+  { model: 'tev1:0.8b', numCtx: 8192 },
   { model: 'clef-flash:latest', numCtx: 16384 },
+  { model: 'nimble-v3:latest', numCtx: 32768 },
 ];
 
 test('selectByCapacity：显式指定优先（R1）', () => {
@@ -219,15 +241,20 @@ test('selectByCapacity：小材料走默认档（每次省 0.77–1.12 s 的那�
 });
 
 test('selectByCapacity：大材料直发容量足够的最小档（省掉先吃 400 那一轮）', () => {
-  const nimble = selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: LADDER3, stateBytes: 5000, defaultFitBytes: 4096 });
-  assert.equal(nimble.model, 'nimble:latest');
-  assert.equal(nimble.reason, 'fits-ladder');
-  assert.equal(selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: LADDER3, stateBytes: 20000, defaultFitBytes: 4096 }).model, 'clef-flash:latest');
+  // 可用字节上限 = numCtx × BYTES_PER_TOKEN × margin：
+  //   tev1(8192) → 16368 B · clef-flash(16384) → 32735 B · nimble-v3(32768) → 65470 B
+  const flash = selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: LADDER3, stateBytes: 20000, defaultFitBytes: 4096 });
+  assert.equal(flash.model, 'clef-flash:latest');
+  assert.equal(flash.reason, 'fits-ladder');
+  // 20000 已越过 tev1 的 16368 B ⇒ 落到 clef-flash；再往上越过 32735 B 才到 nimble-v3
+  const v3 = selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: LADDER3, stateBytes: 40000, defaultFitBytes: 4096 });
+  assert.equal(v3.model, 'nimble-v3:latest');
+  assert.equal(v3.reason, 'fits-ladder');
 });
 
 test('selectByCapacity：谁都不够就走最大档；阶梯为空才用粘滞兜底', () => {
   const huge = selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: LADDER3, stateBytes: 10_000_000, defaultFitBytes: 4096 });
-  assert.equal(huge.model, 'clef-flash:latest');
+  assert.equal(huge.model, 'nimble-v3:latest');
   assert.equal(huge.reason, 'largest');
   const empty = selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: [], stateBytes: 5000, defaultFitBytes: 4096, stickyModel: 'nimble:latest' });
   assert.equal(empty.model, 'nimble:latest');
