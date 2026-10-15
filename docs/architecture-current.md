@@ -135,11 +135,11 @@
 
 ### 3.7 常量与阈值（`LIMITS`，唯一来源）
 
-`maxQuestions: 64` · `minChoiceOptions: undefined` · `maxChoiceOptions: 255` · `minScoreLevels: undefined` · `maxScoreLevels: 10` · `maxBodyBytes: 65536` · `maxSourceBytes: 61440` · `scanMaxChunks: 32` · `scanMaxTotalBytes: 4194304` · `scanDeadlineMs: 180000` · `scanMaxAdaptRounds: 2` · `softBodyBytes: 4096` · `minConfidence: 0.25`
+`maxQuestions: 64` · `minOptions: 2` · `maxChoiceOptions: 255` · `maxScoreLevels: 10` · `maxBodyBytes: 65536` · `maxSourceBytes: 61440` · `scanMaxChunks: 32` · `scanMaxTotalBytes: 4194304` · `scanDeadlineMs: 180000` · `scanMaxAdaptRounds: 2` · `softBodyBytes: 4096` · `minConfidence: 0.25`
 
 ## 4. 成本与容量口径（真机实测冻结）
 
-- **模型窗口**（`num_ctx`，非架构声明）：**2026-10-15 16:34 重测**（Ollama 0.40.4）——
+- **模型窗口**（`num_ctx`，2026-10-15 重拉后实测）：tev1:0.8b num_ctx                        8192 · tev1:latest num_ctx                        8192 · clef-flash:latest num_ctx                        16384 · nimble-v3:latest num_ctx                        32768 · nimble:latest num_ctx                        8194 · clef:latest num_ctx                        16384。**注意：这与 2026-10-13 之前的记录不同**（当时 tev1:0.8b 为 2050、默认阶梯含 `nimble:latest` 8194）。
   `tev1:0.8b` **8192** · `tev1:latest` **8192** · `nimble:latest` **8194** ·
   `clef-flash:latest` **16384** · `clef:latest` **16384** · `nimble-v3:latest` **32768**。
   （旧值 `2050 / 2050 / 8194 / 16384` 已随模型重拉失效。）

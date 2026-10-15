@@ -40,7 +40,7 @@
 }
 ```
 
-实测代价：请求体 26056 B（73% 是判据）、`input_tokens` 282651（= 题数 × 请求体）、被推出小模型窗口被迫用 nimble。
+实测代价：请求体 26056 B（73% 是判据）、`input_tokens` 282651（= 题数 × 请求体）、被推出小模型窗口被迫用 nimble。**注意该样例发生在 2026-10-13，当时 tev1:0.8b 的窗口是 2050**；窗口现为 8192，同样的形状不再必然触发升档——但「按题数重复计费」这一条与窗口无关，仍然成立。
 
 v3 形状（判据只写一次）：
 
@@ -75,7 +75,7 @@ v3 形状（判据只写一次）：
 ## 4. 成本与窗口：决定「一次能问多少」
 
 - **计费 = 题数 × 请求体**（已实测：`input_tokens = Σ prompt_k`）⇒ 重复判据被乘 N 次；
-- **窗口**（`num_ctx`，非架构声明）：tev1 2050 · nimble 8194 · clef-flash 16384；
+- **窗口**（`num_ctx`，2026-10-15 实测）：tev1:0.8b num_ctx                        8192 · tev1:latest num_ctx                        8192 · clef-flash:latest num_ctx                        16384 · nimble-v3:latest num_ctx                        32768 · nimble:latest num_ctx                        8194 · clef:latest num_ctx                        16384；默认阶梯现为 tev1:0.8b → tev1:latest → clef-flash:latest → nimble-v3:latest；
 - **字节换算**：英文 3.33 B/token，**中文实测 2.32 B/token** ⇒ 中文材料要按更小的字节数留余量；
 - 结论：项数多时要么**判据只写一次**（v3 形状），要么**拆批**；`scan` 救的是材料太大，**不救题数太多**。
 
