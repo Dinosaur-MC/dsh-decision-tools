@@ -65,9 +65,9 @@ stay put.
 
 | Type | Criteria | Answer |
 |---|---|---|
-| `choice` | 2–26 named options with descriptions | the most likely option plus each option's probability |
+| `choice` | 2–255 named options with descriptions | the most likely option plus each option's probability |
 | `noul` | optional `{"false": ..., "true": ...}` descriptions | `noul`: the probability of true (a number, not a boolean) |
-| `score` | 2–26 descriptions ordered lowest → highest | `score`: probability-weighted mean of the zero-based levels, on the 0..N-1 scale |
+| `score` | 2–10 descriptions ordered lowest → highest | `score`: probability-weighted mean of the zero-based levels, on the 0..N-1 scale |
 
 `confidence` is distribution concentration, `1 - H(p)/ln N`. It is **not** calibrated accuracy.
 
@@ -83,6 +83,7 @@ stay put.
 | `softBodyBytes` | unset (falls back to `LIMITS.softBodyBytes`, 4096) | body size in bytes above which the result carries a `body_warning` |
 | `bodyWarning` | unset (on) | `false` never emits `body_warning`; unset or `true` keeps it on |
 | `minConfidence` | unset (falls back to `LIMITS.minConfidence`, 0.25) | `choice`/`score` answers whose `confidence` is below this — or missing — are named in a `confidence_warning`; `0` disables the gate |
+| `maxChoiceOptions` | unset (falls back to `LIMITS.maxChoiceOptions`, 255) | Upper bound on `choice` option count. The OpenAPI spec notes *"The option limit depends on the model"*, so raise or lower this if your model differs. `score` is a separate, spec-fixed 2–10 and is **not** configurable. |
 | `escalationEnabled` | `true` | Automatic escalation to a bigger-context decision model on context overflow. Passing `model` on a call disables it for that call. |
 | `ladder` | unset (uses `DEFAULT_LADDER`) | Ordered `{ model, numCtx }[]` escalation candidates. The built-in ladder deliberately excludes `clef:latest` (27B on 8 GB never returned within 300 s). |
 | `escalationMaxAttempts` | `3` | Maximum escalation attempts before failing with an actionable error instead of silently degrading. |
@@ -147,19 +148,19 @@ The defaults above are the ones declared in `lib/tool.js` (`Config`).
 3. First call includes model load (measured on this machine: 14.3 s cold and
    11.1 s warm for `tev1:0.8b`; 15.7 s cold and 8.0 s warm for `tev1:latest`).
 4. No streaming, no tool calling, one request one response.
-5. Server limits: 64 KiB request without images, 64 questions, 2–26 options per
-   question. The binding limit is usually smaller: the effective context is the model's
-   own `num_ctx`, not the architecture's context length. On this machine
-   `ollama show tev1:0.8b` reports `context length 262144` but `num_ctx = 2050`, and
-   measured on real English technical prose that ceiling is only ~6.8 KiB of body
-   (~3.33 bytes/token), so a ~8 KB body already returns HTTP 400
-   `prompt 0 has <N> tokens; expected 1–<M> (input is never truncated)`, mapped to
+5. Server limits: 64 KiB request without images, 64 questions, **2–255 `choice` options**
+   (the OpenAPI spec notes the option limit is model-dependent) and **2–10 `score` levels** —
+   two independent limits, not one. The binding limit is usually smaller: the effective
+   context is the model's own `num_ctx`, not the architecture's context length. On this machine
+   `ollama show tev1:0.8b` reports `context length 262144` but `num_ctx = 8192` (re-pulled
+   2026-10-15; it was 2050 before), and measured on real English technical prose that ceiling
+   is roughly `num_ctx / 3.33` bytes of body (~3.33 bytes/token), so an over-sized body returns
+   HTTP 400 `prompt 0 has <N> tokens; expected 1–<M> (input is never truncated)`, mapped to
    `context_overflow` — the input is **not** truncated and no partial answer is returned.
-   The plugin's **default** advisory size threshold sits well inside that ceiling
-   (configurable `softBodyBytes`, default `LIMITS.softBodyBytes = 4096` B ≈ 1230 tokens,
-   ≈ 60 % of 2050), so it can warn **before** the server rejects: crossing it only adds a
-   `body_warning` to the result and changes no rejection behaviour. The authoritative guard
-   stays the server's token check.
+   The plugin's **default** advisory size threshold is a fixed byte count
+   (`LIMITS.softBodyBytes = 4096` B), deliberately independent of any model's `num_ctx`: it can
+   warn **before** the server rejects, and crossing it only adds a `body_warning` to the result
+   and changes no rejection behaviour. The authoritative guard stays the server's token check.
    Byte count is a crude proxy, though: dense scripts (CJK) and ID-heavy text tokenize
    worse than 3.33 B/token and this threshold under-protects on such input.
 6. **Bounded decisions only.** This plugin answers bounded questions whose candidate set is known up front. Open-ended generation, reasoning chains, and candidates that must be discovered while thinking still belong to a generative model.

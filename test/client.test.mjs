@@ -75,7 +75,10 @@ test('400 → invalid_request，带出服务端原文与合法类型清单；上
       assert.equal(error.kind, 'invalid_request');
       assert.match(error.message, /type must be choice, noul, or score/);
       assert.match(error.hint, /choice、noul、score/);
-      assert.match(error.hint, /2[-–]26/, 'hint 必须保留可行动的选项数约束');
+      // hint 必须保留可行动的**两条**边界，且不得再把二者混成一个数
+      // （2026-10-15：旧文案写「选项数与等级数需在 2–26」，两个方向都错）。
+      assert.match(error.hint, /choice 选项数需在 2[-–]255/, 'hint 必须给出 choice 的真实上限');
+      assert.match(error.hint, /score 等级数需在 2[-–]10/, 'hint 必须给出 score 的真实上限');
       // ADR-6 之后 callSystemOne 只收 prepareRequest 产出的线格式（questions 恒为对象映射），
       // 而工具对**模型**公布的参数契约是数组、validate.js 的 V1 还会拒绝模型直接给对象，
       // 所以 400 不可能是 questions 的形状问题。hint 里再出现「对象映射」就是在教模型做

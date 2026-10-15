@@ -339,29 +339,36 @@ test('A 方案：小材料走默认档，大材料直发大档，回到小材料
   apply(ctx, Config({ baseUrl: fake.baseUrl }));
   const exec = { preview: false, signal: undefined, agent: { session: { header: { cwd: 'F:/ws' } } } };
   const questions = [{ name: 'q1', type: 'noul', instructions: 'x' }];
+  // 「大材料」的阈值随默认档容量走：默认档 tev1:0.8b 现为 num_ctx=8192 ⇒ 容量
+  // 8192×3.33×0.6 ≈ 16367 B，故 6000 B 已不再是"大"。用 20000 B 才越过它、
+  // 落在 nimble-v3（32768 ⇒ ≈65477 B）之内。
   await registered[0].execute({ state: 'A'.repeat(300), questions }, exec);
   assert.equal(fake.requests[0].json.model, 'tev1:0.8b', '小材料必须走默认档（大档是它的 7–9 倍慢）');
-  await registered[0].execute({ state: 'A'.repeat(6000), questions }, exec);
-  assert.equal(fake.requests[1].json.model, 'nimble:latest', '★ 大材料**直发**大档：不得先发默认档吃一次 400');
+  await registered[0].execute({ state: 'A'.repeat(20000), questions }, exec);
+  assert.equal(fake.requests[1].json.model, 'nimble-v3:latest', '★ 大材料**直发**大档：不得先发默认档吃一次 400');
   await registered[0].execute({ state: 'A'.repeat(300), questions }, exec);
   assert.equal(fake.requests[2].json.model, 'tev1:0.8b', '★ 回到小材料必须降回默认档（旧粘滞会一直锁在大档上）');
   await fake.close();
 });
 
 test('A 方案：估算偏乐观而实际溢出时，仍走既有的溢出提升兜底', async () => {
-  const fake = await startFakeOllama((req) => (req.json?.model === 'nimble:latest'
-    ? { status: 400, body: { error: 'prompt 0 has 3000 tokens; expected 1\u20138194 (input is never truncated)' } }
+  const fake = await startFakeOllama((req) => (req.json?.model === 'nimble-v3:latest'
+    ? { status: 400, body: { error: 'prompt 0 has 3000 tokens; expected 1\u201332768 (input is never truncated)' } }
     : { status: 200, body: ANSWERS }));
   const { registered, ctx } = fakeCtx({ fs: treeFs({}) });
-  apply(ctx, Config({ baseUrl: fake.baseUrl }));
+  apply(ctx, Config({ baseUrl: fake.baseUrl, ladder: [
+    { model: 'tev1:0.8b', numCtx: 8192 },
+    { model: 'nimble-v3:latest', numCtx: 32768 },
+    { model: 'synthetic-wide:latest', numCtx: 65536 },
+  ] }));
   const value = await registered[0].execute(
-    { state: 'A'.repeat(6000), questions: [{ name: 'q1', type: 'noul', instructions: 'x' }] },
+    { state: 'A'.repeat(20000), questions: [{ name: 'q1', type: 'noul', instructions: 'x' }] },
     { preview: false, signal: undefined, agent: { session: { header: { cwd: 'F:/ws' } } } },
   );
-  assert.equal(fake.requests[0].json.model, 'nimble:latest');
-  assert.equal(value.model, 'clef-flash:latest', '溢出后按阶梯提升到下一档');
-  assert.equal(value.escalated?.to, 'clef-flash:latest');
-  assert.equal(value.escalated?.from, 'nimble:latest');
+  assert.equal(fake.requests[0].json.model, 'nimble-v3:latest');
+  assert.equal(value.model, 'synthetic-wide:latest', '溢出后按阶梯提升到下一档');
+  assert.equal(value.escalated?.to, 'synthetic-wide:latest');
+  assert.equal(value.escalated?.from, 'nimble-v3:latest');
   await fake.close();
 });
 

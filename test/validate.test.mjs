@@ -107,20 +107,32 @@ test('V3 类型只接受 choice / noul / score', () => {
   );
 });
 
-test('V4 choice 选项数 2–26，且必须是对象', () => {
+test('V4 choice 选项数 2–255（服务端按模型可放宽），且必须是对象', () => {
   const opts = (n) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`k${i}`, `desc ${i}`]));
   assert.doesNotThrow(() => prepareRequest(base({ questions: [{ ...CHOICE_Q, criteria: opts(26) }] })));
-  expectReject(base({ questions: [{ ...CHOICE_Q, criteria: opts(1) }] }), /有 1 个选项，合法范围 2–26/);
-  expectReject(base({ questions: [{ ...CHOICE_Q, criteria: opts(27) }] }), /有 27 个选项，合法范围 2–26/);
+  assert.doesNotThrow(() => prepareRequest(base({ questions: [{ ...CHOICE_Q, criteria: opts(255) }] })),
+    '255 是 OpenAPI 的 maxProperties，也是本机实测上限（256 才 400）');
+  expectReject(base({ questions: [{ ...CHOICE_Q, criteria: opts(1) }] }), /有 1 个选项，合法范围 2–255/);
+  expectReject(base({ questions: [{ ...CHOICE_Q, criteria: opts(256) }] }), /有 256 个选项，合法范围 2–255/);
+  // 覆盖点：OpenAPI 明说 "The option limit depends on the model"，故上限可配。
+  assert.doesNotThrow(() => prepareRequest(base({
+    questions: [{ ...CHOICE_Q, criteria: opts(30) }], maxChoiceOptions: 30,
+  })));
+  expectReject(base({ questions: [{ ...CHOICE_Q, criteria: opts(31) }], maxChoiceOptions: 30 }),
+    /有 31 个选项，合法范围 2–30/);
   expectReject(base({ questions: [{ ...CHOICE_Q, criteria: ['a', 'b'] }] }), /必须是「选项名 → 描述」的对象/);
 });
 
-test('V5/V6 score 必须是由低到高的字符串数组，长度 2–26', () => {
+test('V5/V6 score 必须是由低到高的字符串数组，长度 2–10（与 choice 的 255 无关）', () => {
   const score = (criteria) => ({ name: 's', type: 'score', instructions: 'How urgent?', criteria });
   assert.doesNotThrow(() => prepareRequest(base({ questions: [score(['low', 'high'])] })));
-  assert.doesNotThrow(() => prepareRequest(base({ questions: [score(Array.from({ length: 26 }, (_, i) => `lv${i}`))] })));
-  expectReject(base({ questions: [score(['only'])] }), /有 1 档，合法范围 2–26/);
-  expectReject(base({ questions: [score(Array.from({ length: 27 }, (_, i) => `lv${i}`))] }), /有 27 档，合法范围 2–26/);
+  assert.doesNotThrow(() => prepareRequest(base({ questions: [score(Array.from({ length: 10 }, (_, i) => `lv${i}`))] })));
+  expectReject(base({ questions: [score(['only'])] }), /有 1 档，合法范围 2–10/);
+  expectReject(base({ questions: [score(Array.from({ length: 11 }, (_, i) => `lv${i}`))] }), /有 11 档，合法范围 2–10/);
+  // ★ 回归：11–26 档曾因与 choice 共用 maxOptions=26 而被本地**放行**，
+  // 直到服务端才 400 `score criteria must be an array of 2–10 levels`。
+  expectReject(base({ questions: [score(Array.from({ length: 26 }, (_, i) => `lv${i}`))] }),
+    /有 26 档，合法范围 2–10/, '26 档必须在本地被拦，不得发往服务端');
   expectReject(base({ questions: [score({ 0: 'low', 1: 'high' })] }), /必须是由低到高排列的字符串数组/);
   expectReject(base({ questions: [score(['low', '  '])] }), /criteria\[1\]（score）必须是非空字符串/);
 });
@@ -161,17 +173,20 @@ test('V8 边界：正好 65536 字节通过，再多 1 字节被拒', () => {
   expectReject(base({ state: 'x'.repeat(lo + 1) }), /请求体 \d+ 字节，超过服务端上限 65536 字节（64 KiB）；请缩减 state/);
 });
 
-test('LIMITS 冻结：4 项服务端硬限 + 7 项本地阈值（体积/置信度/引用式读取/扫描预算）', () => {
+test('LIMITS 冻结：服务端硬限 + 本地阈值（体积/置信度/引用式读取/扫描预算）', () => {
   // softBodyBytes 不是服务端限制，是本地的**策略**阈值（非实测退化点）；
   // 它同样被逐字锁定，避免有人顺手调小/调大而不留痕。
-  // 4096 B ≈ 1230 token ≈ 60% 的 tev1:0.8b num_ctx=2050（实测 3.33 B/token），
-  // 依据与已知局限见 lib/validate.js 该常量的注释。
   // minConfidence 同理是**策略**阈值：它只决定 `confidence_warning` 那一行，不改变任何
   // 拒绝行为；0.25 的标定样本（4 题 × 6 个候选排列）与其三条已知局限同样写在该常量注释里。
+  //
+  // maxChoiceOptions 与 maxScoreLevels **必须分开**（2026-10-15 修正）：服务端对二者是
+  // 独立约束 —— OpenAPI 写 choice `maxProperties: 255`（且注明 "The option limit depends
+  // on the model"）、score `maxItems: 10`。修正前是单个 `maxOptions: 26`，两个方向都错。
   assert.deepEqual(LIMITS, {
     maxQuestions: 64,
     minOptions: 2,
-    maxOptions: 26,
+    maxChoiceOptions: 255,
+    maxScoreLevels: 10,
     maxBodyBytes: 65536,
     // v2 新增（ADR-7 / ADR-9）：引用式读取上限 + 扫描的三重预算与自适应轮数。
     // maxSourceBytes 必须 < maxBodyBytes（65536），否则 state 会先被 body 守卫拒掉。

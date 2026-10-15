@@ -44,7 +44,7 @@
 ### 1.3 一次调用的数据流
 
 1. **入口**：`execute(args, exec)`；先 `ctx.skills.get('decision-usage')`，拿不到 ⇒ 抛 `kind=skill_missing` **拒绝服务**。
-2. **参数校验**：`assertStateExclusive`（`state` 与 `stateSource` 恰有其一）→ `resolveStrategy` → 逐题校验（题名唯一、题型合法、选项数 2–26）。
+2. **参数校验**：`assertStateExclusive`（`state` 与 `stateSource` 恰有其一）→ `resolveStrategy` → 逐题校验（题名唯一、题型合法、`choice` 选项数 2–`maxChoiceOptions`（默认 255）、`score` 档位 2–10）。
 3. **材料物化**：`source.js` 读盘（三道闸：描述符字符串校验 / `ctx.fs.contains(root)` / `readBytes` 上限）。`file` 超限**报错**；`glob` 总量超限**截断**并报 `truncated`/`remaining`。材料**不进模型上下文**。
 4. **模型选择**：`selectByCapacity` —— 显式 `model` 优先 → 估算字节 ≤ 默认档阈值走默认档 → 否则取阶梯里**容量足够的最小档** → 都不够取最大档 → 阶梯空/容量未知才用粘滞兜底。结果写进 `sticky`。
 5. **请求**：`prepareRequest` 把工具面转成线格式（数组 → **对象映射**）；单飞闸 `createSingleFlight`（互斥，不共享结果）。
@@ -139,7 +139,15 @@
 
 ## 4. 成本与容量口径（真机实测冻结）
 
-- **模型窗口**（`num_ctx`，非架构声明）：`tev1:0.8b` 2050 · `nimble:latest` 8194 · `clef-flash:latest` 16384。
+- **模型窗口**（`num_ctx`，非架构声明）：**2026-10-15 重测**（Ollama 0.40.4）——
+  `tev1:0.8b` **8192** · `tev1:latest` **8192** · `nimble-v3:latest` **32768**。
+  （旧值 `2050 / 2050 / nimble 8194 / clef-flash 16384` 已随模型重拉失效；`nimble:latest`
+  与两个 `clef` 当前因「下载格式不再受支持」不可用，`ollama pull` 可修。）
+  ⚠️ **这是快照**：`num_ctx` 会在模型重拉后变化，权威读法是 `/api/show` 的 `parameters`。
+- **服务端 criteria 硬限**（OpenAPI + 实测）：`choice` **2–255**（规格注明依模型而异；
+  256 → 400 `too many options (256), this model supports at most 255`）·
+  `score` **2–10**（11 → 400 `score criteria must be an array of 2–10 levels`）。
+  二者是**独立约束**，不可共用一个常量。
 - **冷加载**：tev1 约 4.8 s · nimble 约 15.0 s；**warm 单次**：小材料 97 ms vs 865 ms（大档慢 7–9 倍）。
 - **计费口径（已证实）**：`input_tokens = Σ prompt_k = 题数 ×(该 body 的精确 token 数 + 每问模板常数 38)+（题号≥10 的题数）` ⇒ 请求体被**按题数重复计费**。
 - **字节↔token**：英文冻结口径 3.33 B/token；**实测中文语料 2.32 B/token** ⇒ 同为 4096 B，中文约占 tev1 窗口的 **86%**（注释里写的是留 40%）。

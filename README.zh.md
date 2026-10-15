@@ -62,9 +62,9 @@
 
 | Type | Criteria | Answer |
 |---|---|---|
-| `choice` | 2–26 个带描述的具名选项 | 最可能的选项，外加每个选项的概率 |
+| `choice` | 2–255 个带描述的具名选项 | 最可能的选项，外加每个选项的概率 |
 | `noul` | 可选 `{"false": ..., "true": ...}` 描述 | `noul`：为真的概率（是一个数，不是布尔） |
-| `score` | 2–26 条由低到高排序的描述 | `score`：零基等级的概率加权均值，落在 0..N-1 刻度上 |
+| `score` | 2–10 条由低到高排序的描述 | `score`：零基等级的概率加权均值，落在 0..N-1 刻度上 |
 
 `confidence` 是**分布集中度** `1 - H(p)/ln N`，**不是**校准正确率。
 
@@ -80,6 +80,7 @@
 | `softBodyBytes` | 未设（回落到 `LIMITS.softBodyBytes`，4096） | 超过该字节数的 body 会在返回值里带一行 `body_warning` |
 | `bodyWarning` | 未设（开启） | `false` 时永不产出 `body_warning`；未设或 `true` 则保持开启 |
 | `minConfidence` | 未设（回落到 `LIMITS.minConfidence`，0.25） | `confidence` 低于该值（或缺失）的 `choice`/`score` 答案会被列进 `confidence_warning`；`0` 关闭该门限 |
+| `maxChoiceOptions` | 未设（回落到 `LIMITS.maxChoiceOptions`，255） | `choice` 选项数上限。OpenAPI 明说 *「The option limit depends on the model」*，故模型不同时应在此调整。`score` 是**另一条**约束、由规格写死为 2–10，**不可配置**。 |
 | `escalationEnabled` | `true` | 上下文溢出时自动提升到更大上下文的判定模型。调用时传了 `model` 会在该次调用禁用自动提升。 |
 | `ladder` | 未设（用 `DEFAULT_LADDER`） | 有序的 `{ model, numCtx }[]` 提升候选。内置阶梯**刻意不含 `clef:latest`**（27B 在 8 GB 显存上 300 s 未返回）。 |
 | `escalationMaxAttempts` | `3` | 提升尝试次数上限；用尽即抛可行动错误，绝不静默降级。 |
@@ -134,17 +135,17 @@
 3. 首次调用含模型加载（本机实测：`tev1:0.8b` 冷 14.3 s、热 11.1 s；
    `tev1:latest` 冷 15.7 s、热 8.0 s）。
 4. 无流式、无工具调用，一请求一响应。
-5. 服务端硬限：无图请求 64 KiB、64 题、每题 2–26 个选项。但真正先撞上的往往更小：
-   有效上下文是该模型自己的 `num_ctx`，不是架构声明的 context length。本机
-   `ollama show tev1:0.8b` 显示 `context length 262144`，而 `num_ctx = 2050`；
-   按真实英技术散文实测（约 3.33 B/token），该上限只折合 **约 6.8 KiB 的 body**，
-   因此 **约 8 KB 的 body 就会返回 HTTP 400**
+5. 服务端硬限：无图请求 64 KiB、64 题、**`choice` 2–255 个选项**（OpenAPI 明说该上限
+   依模型而异）与 **`score` 2–10 档** —— 这是**两条独立**的约束，不是同一个数。但真正
+   先撞上的往往更小：有效上下文是该模型自己的 `num_ctx`，不是架构声明的 context length。本机
+   `ollama show tev1:0.8b` 显示 `context length 262144`，而 `num_ctx = 8192`（2026-10-15
+   重拉后；此前是 2050）；按真实英技术散文实测（约 3.33 B/token），该上限约折合
+   `num_ctx / 3.33` 字节的 body，超出即返回 HTTP 400
    `prompt 0 has <N> tokens; expected 1–<M> (input is never truncated)`，
    映射为 `context_overflow` —— 输入**不会被截断**，也不会给出部分答案。
-   本插件的**默认**体积告警阈值**远在该上限之内**（可配置的 `softBodyBytes`，默认
-   `LIMITS.softBodyBytes = 4096` B ≈ 1230 token ≈ 2050 的 60 %），故能在服务端拒绝
-   **之前**响；越过它只在返回值里多一行 `body_warning`，**不改变任何拒绝行为**，
-   权威守卫仍是服务端的 token 检查。
+   本插件的**默认**体积告警阈值是一个固定字节数（`LIMITS.softBodyBytes = 4096` B），
+   **刻意不跟随任何模型的 `num_ctx`**：它能在服务端拒绝**之前**响；越过它只在返回值里
+   多一行 `body_warning`，**不改变任何拒绝行为**，权威守卫仍是服务端的 token 检查。
    注意字节数只是**粗糙代理**：中日韩等密集文字与 ID 密集文本的 token/字节比
    远差于 3.33，此时该阈值**保护不足**。
 6. **只解决「有界判定」。** 候选集合已知且有界的问题才归本插件；开放式生成、需要推理链、候选要边想边发现的情形，仍须交给生成式模型。
