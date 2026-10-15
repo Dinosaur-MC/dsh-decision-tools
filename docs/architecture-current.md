@@ -1,6 +1,6 @@
 # dsh-decision-tools — 现状盘点（架构 / 功能 / 接口）
 
-> 快照时点：HEAD `322ffe2`（2026-10-13）· 套件 **172/172 绿** · 工作树干净。
+> 快照时点：HEAD `549b057`（2026-10-13）· 套件 **174/174 绿** · 工作树干净。
 > 本文只描述**现状**（as-is），不含 v3 提案；末尾单列已知偏差与待定项。
 
 ## 0. 一句话
@@ -135,7 +135,7 @@
 
 ### 3.7 常量与阈值（`LIMITS`，唯一来源）
 
-`maxQuestions: 64` · `minOptions: 2` · `maxOptions: 26` · `maxBodyBytes: 65536` · `maxSourceBytes: 61440` · `scanMaxChunks: 32` · `scanMaxTotalBytes: 4194304` · `scanDeadlineMs: 180000` · `scanMaxAdaptRounds: 2` · `softBodyBytes: 4096` · `minConfidence: 0.25`
+`maxQuestions: 64` · `minChoiceOptions: undefined` · `maxChoiceOptions: 255` · `minScoreLevels: undefined` · `maxScoreLevels: 10` · `maxBodyBytes: 65536` · `maxSourceBytes: 61440` · `scanMaxChunks: 32` · `scanMaxTotalBytes: 4194304` · `scanDeadlineMs: 180000` · `scanMaxAdaptRounds: 2` · `softBodyBytes: 4096` · `minConfidence: 0.25`
 
 ## 4. 成本与容量口径（真机实测冻结）
 
@@ -170,7 +170,7 @@
 
 ## 5. 测试与门禁
 
-- 套件 `node --test test/*.test.mjs` = **172 例**（显式 `test(` 155 条 + 表驱动生成 17 条：§4.9 锚点 10、skill 锚点 7）。
+- 套件 `node --test test/*.test.mjs` = **174 例**（显式 `test(` 159 条 + 表驱动生成 17 条：§4.9 锚点 10、skill 锚点 7）。
 - 守卫：§4.9 十点判别性锚点、README 配置表与 `Config` 投影一致、注入预算上限（description ≤1900 / schema ≤3600 / skill ≤4000）、`COMPANION_SKILL === SKILL_NAME`、缺 skill 拒服务、首次交付 skill 正文。
 - 另有：`node --check lib/*.js`、CR 字节 = 0、变异自检（累计 30+ 个定点变异全杀）、隔离实例真机冒烟。
 
