@@ -22,11 +22,12 @@
 
 | 模式 | 必给字段 | 语义 |
 |---|---|---|
-| 批量项目判定 | `material` + `rubric` + `items` + `type` | 同一判据，对 N 个项目**各自独立**判定 |
+| 批量项目判定 | `material` + `rubric` + `items` + `type`（`choice`/`score` 另需顶层 `criteria`） | 同一判据，对 N 个项目**各自独立**判定 |
 | 单材料多问题 | `material` + `questions` | 同一份材料上问 M 个**互不相同**的问题 |
 
 - **`items` 的身份契约**：每一项是**自带的完整待判对象**（短文本或标识均可），其内容由调用方给全；**材料内的定位由 `material` 决定**，工具不得让模型临时推断「这一项是引用还是内容」。
 - **`questions[k]` 的形状**：`{ name, type, instructions, criteria? }`，`name` 唯一且非空。
+- **`criteria` 的两处形态（不得混用）**：批量模式用**顶层 `criteria`**（标签集只写一次，wire 层复制到每题）；异质模式用**每题自己的 `criteria`**（不同问题可能有不同标签集）。**异质模式里出现顶层 `criteria` 即报错**（与 `items`/`questions` 互斥同源：不给「谁生效」留空间）；`noul` 不接受任何 `criteria`。
 - 互斥校验发生在**校验层**（计划 Task 10 的 `assertModeExclusive`）：两者都给 ⇒ `kind='mode_conflict'`；都不给 ⇒ `kind='mode_missing'`。
 
 **依据**：`docs/use-cases.md` 前五类形状（前三类与第四类语义不同）；外部评审 §4.2（避免「哪个字段生效」的歧义）。
@@ -137,6 +138,7 @@ keep_alive 只在此处透传；model 由 client 传入，不进 state
 | `strategy` | 删除，改传 `depth` | 要（改名 + 选档） |
 | `aggregate` | 删除（语义并入 depth 与自动分批） | 要（删掉） |
 | `questions[].instructions` | **语义不变**，但在批量模式下不再承载共享判据 | 视模式 |
+| `criteria` | **新增顶层字段**（批量模式用；异质模式仍在每题里传） | 要（批量模式新写法） |
 | 新增 `rubric`/`items`/`type` | 批量模式的必给字段 | 要（新写法） |
 | `answers` | 改为 `results[]` | 要（换读法） |
 | `chunks` | 删除（结果始终在 `results`） | 要（换读法） |

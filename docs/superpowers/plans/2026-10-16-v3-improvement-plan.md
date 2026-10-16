@@ -226,7 +226,7 @@ test('判据写在材料之后，且只出现一次', () => {
 
 **Files:** Modify: `lib/parameters.js`；Test: `test/parameters.test.mjs`
 
-**Interfaces:** Produces `PARAMETERS` = `material` / `rubric` / `items` / `questions` / `type` / `depth` / `model`（顺序即注入顺序；JSON Schema 的 `required` **只有 `material`**；`depth` 可选、缺省 `normal`；模式内的 `rubric`/`items`/`type` 或 `questions` 由校验层 `assertModeExclusive` 与逐模式校验把关，不写进 schema 的 required）。
+**Interfaces:** Produces `PARAMETERS` = `material` / `rubric` / `items` / `questions` / `type` / `criteria` / `depth` / `model`（`criteria` 为批量模式的顶层标签集，异质模式仍在每题里传；两者混用即报错）（顺序即注入顺序；JSON Schema 的 `required` **只有 `material`**；`depth` 可选、缺省 `normal`；模式内的 `rubric`/`items`/`type` 或 `questions` 由校验层 `assertModeExclusive` 与逐模式校验把关，不写进 schema 的 required）。
 
 - [ ] **Step 1: 写失败测试** — 断言：① 六个键名与顺序；② 描述里写明「`items` 与 `questions` 同时给出即报错」；③ 注入预算仍 ≤1900/≤3600 B。
 - [ ] **Step 2: 跑它，确认失败** — 期望 FAIL（旧键仍在）。
