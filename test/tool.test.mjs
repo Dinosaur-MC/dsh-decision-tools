@@ -90,7 +90,10 @@ const register = (config = {}) => fakeCtx();
 
 test('插件导出形状与默认配置', () => {
   assert.equal(name, 'decision-tools');
-  assert.deepEqual(inject, ['tools', 'fs', 'skills'], '工具行硬依赖 skills 服务：没有技能服务就不提供工具');
+  // `jobs`/`agents` 是**真机打出来的**：不声明时 monitor 的后台路径报
+  // `cannot get property "jobs" without inject`（Cordis 只对 `prop in fiber.inject` 解析服务），
+  // 而前台路径不受影响 —— 这类缺陷只有真机能暴露。
+  assert.deepEqual(inject, ['tools', 'fs', 'skills', 'jobs', 'agents'], '工具行硬依赖 skills/jobs/agents 服务');
   assert.equal(typeof apply, 'function');
   assert.deepEqual(Config({}), {
     baseUrl: 'http://localhost:11434',
