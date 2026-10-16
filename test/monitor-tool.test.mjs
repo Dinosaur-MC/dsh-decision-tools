@@ -524,6 +524,42 @@ test('Q5：file/glob 的每一次读取都走注入的 deps.read（绕开它改�
   for (const descriptor of descriptors) assert.equal(descriptor.kind, 'file');
 });
 
+test('task-34：sessionId 与 exec.agent 随每次调用注入 monitor deps（exec 里 idle ⇒ 必须唤醒）', async () => {
+  const run = async (status) => {
+    const { jobs, state } = fakeJobs();
+    const t = fakeTime();
+    const { ctx } = fakeCtx({ jobs });
+    const read = fakeReader({ 'logs/a.txt': 'hit' });
+    const deliveries = [];
+    const out = registerMonitorTool(ctx, {
+      // 刻意不传 deps.agent / deps.sessionId：两者必须由 execute 从 exec 取（task-34 的契约）。
+      deps: {
+        decide: async () => ({ probability: 0.9 }),
+        read, clock: t.clock, sleep: t.sleep,
+        deliver: (mode, payload) => { deliveries.push({ mode, payload }); },
+      },
+    });
+    const exec = { signal: undefined, agent: { id: 'session-7', status, session: { header: { cwd: 'F:/ws' } } } };
+    const value = await out.definition.execute({
+      rubric: 'x', source: { kind: 'file', path: 'logs/a.txt' }, background: true, notify: 'inbox',
+      intervalMs: 1000, timeoutMs: 5000, countThreshold: 1,
+    }, exec);
+    await state.handles[0].done;
+    return { value, deliveries, state };
+  };
+
+  const idle = await run('idle');
+  assert.equal(idle.value.jobId, 'monitor-job-1');
+  assert.equal(idle.state.specs[0].owner, 'session-7', 'sessionId 必须传给后台作业的 owner');
+  assert.equal(idle.deliveries.length, 1);
+  assert.equal(idle.deliveries[0].mode, 'followup',
+    'exec.agent 是 idle ⇒ 必须唤醒；agent 没随调用注入时，这里会静默变成 inject');
+
+  const working = await run('working');
+  assert.equal(working.deliveries.length, 1);
+  assert.equal(working.deliveries[0].mode, 'inject', '忙就不唤醒（同一份注入代码的反向守卫）');
+});
+
 test('probe-safe：events 源在 ctx.monitorEventLog 读取即抛时，预检给可行动的 invalid_request', async () => {
   const t = fakeTime();
   const ctx = { tools: { register: () => () => {} } };
