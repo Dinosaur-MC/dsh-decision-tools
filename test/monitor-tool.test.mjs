@@ -588,6 +588,33 @@ test('task-34（续）：deps.deliver 收到第三个实参 {agent, sessionId}�
   assert.equal(seen[0].payload.message.source.form, 'notice', 'payload 仍是 notify.js 的两参契约形状');
 });
 
+test('task-34（续）：deps.runCommand 收到第三个实参 {agent, sessionId}（委托 pwsh 需要 caller agent）', async () => {
+  const t = fakeTime();
+  const { ctx } = fakeCtx();
+  const seen = [];
+  const out = registerMonitorTool(ctx, {
+    deps: {
+      decide: async () => ({ probability: 0.99 }),
+      clock: t.clock, sleep: t.sleep,
+      runCommand: async (source, options, info) => { seen.push({ source, options, info }); return { text: 'MARKER-X', totalBytes: 8 }; },
+    },
+  });
+  const exec = { signal: undefined, agent: { id: 'session-11', status: 'idle', session: { header: { cwd: 'F:/ws' } } } };
+  const value = await out.definition.execute({
+    rubric: 'x', source: { kind: 'command', argv: ['pwsh', '-Command', 'Write-Output MARKER-X'] },
+    intervalMs: 1000, timeoutMs: 3000, countThreshold: 1,
+  }, exec);
+
+  assert.equal(value.hit, true);
+  assert.equal(seen.length, 1, 'command 不走描述符预检 ⇒ 只探测一次');
+  assert.deepEqual(seen[0].source.argv, ['pwsh', '-Command', 'Write-Output MARKER-X'],
+    'argv[0] 是解释器、其余是命令文本，描述符原样交给装配层');
+  assert.equal(typeof seen[0].options.signal, 'undefined', 'options 原样透传（signal/tailBytes 不减不增）');
+  assert.ok(seen[0].info, 'runCommand 必须收到第三个实参');
+  assert.equal(seen[0].info.agent.id, 'session-11', '委托上游工具要用调用者 agent，否则 pwsh 这类解析不到');
+  assert.equal(seen[0].info.sessionId, 'session-11');
+});
+
 test('probe-safe：events 源在 ctx.monitorEventLog 读取即抛时，预检给可行动的 invalid_request', async () => {
   const t = fakeTime();
   const ctx = { tools: { register: () => () => {} } };
