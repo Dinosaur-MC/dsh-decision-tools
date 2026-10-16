@@ -48,5 +48,6 @@ test('非溢出失败一律原样上抛，不套近乎', () => {
 });
 
 test('未知策略即报错（参数校验之外的纵深防御）', () => {
-  assert.throws(() => planAction({ requested: 'chunk' }), /strategy 只允许 auto \/ inline \/ scan/);
+  assert.throws(() => planAction({ requested: 'chunk' }), /策略只允许 auto \/ inline \/ scan/);
+  // 纯函数契约覆盖：v3 生产只以 requested ∈ {auto, inline} 且失败后调用（见 lib/plan.js 模块头）。
 });

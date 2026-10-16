@@ -767,3 +767,74 @@ test('§4.11：collectLowConfidence 跳过 noul、缺失按低计、<=0 关闭�
   assert.equal(Object.keys(answers).length, 4, '入参不得被修改');
   assert.equal(answers.c.confidence, undefined);
 });
+
+test('material 截断必须进 coverage：glob 总量超限 ⇒ truncatedBy=material（task-13 复审 P1）', async () => {
+  // 契约：docs/architecture-current.md §1.3 步骤 3 / §1.4 / 规格 ADR-12 —— 「glob 总量超限截断并报
+  // coverage.truncated/truncatedBy」「截断的材料不得当完整材料用」。程序化调用方读的就是 coverage。
+  const fake = await startFakeOllama(echoNoul());
+  try {
+    const half = 'a'.repeat(40000);
+    const fs = treeFs({ 'big/a.txt': half, 'big/b.txt': half.replace(/a/g, 'b') });
+    const { registered, ctx } = fakeCtx({ fs });
+    apply(ctx, Config({ baseUrl: fake.baseUrl }));
+    const value = await registered[0].execute(
+      { material: { glob: { pattern: 'big/*.txt' } }, questions: [Q('q')] },
+      EXEC,
+    );
+    assert.equal(value.material.descriptor.truncated, true, 'glob 总量超 maxSourceBytes ⇒ descriptor 必须标截断');
+    assert.equal(value.material.descriptor.remaining, 1, '欠账 1 个文件');
+    assert.equal(value.coverage.truncated, true, '★ 截断的材料不得当完整材料用：机器可读字段必须为 true');
+    assert.equal(value.coverage.truncatedBy, 'material', 'material 截断的契约值是 material（Lead 裁定）');
+  } finally {
+    await fake.close();
+  }
+});
+
+test('deep 分块扫描的流量必须进 cost：inputTokens=服务端自报合计、bodyBytes=全部请求体之和（task-13 复审 P1）', async () => {
+  let serverTokens = 0;
+  const fake = await startFakeOllama((req) => {
+    const body = String(req.json?.state ?? '');
+    if (body.length > 1200) return { status: 400, body: { error: 'prompt 0 has 2100 tokens; expected 1\u20132050 (input is never truncated)' } };
+    serverTokens += 100;
+    return {
+      status: 200,
+      body: {
+        model: req.json?.model,
+        usage: { input_tokens: 100, output_tokens: 1 },
+        answers: Object.fromEntries(Object.keys(req.json?.questions ?? {}).map((k) => [k, { type: 'noul', noul: 0.7 }])),
+      },
+    };
+  });
+  try {
+    const { registered, ctx } = fakeCtx();
+    apply(ctx, Config({ baseUrl: fake.baseUrl, ladder: [{ model: 'tev1:0.8b', numCtx: 8192 }], scanFirstChunkBytes: 1000 }));
+    const value = await registered[0].execute({ material: 'x'.repeat(5000), questions: [Q('q1')], depth: 'deep' }, EXEC);
+    assert.ok(fake.requests.length > 2, `deep 必须真的分块，实际 ${fake.requests.length} 次请求`);
+    assert.ok(serverTokens > 0, '假服务必须自报过 usage');
+    assert.equal(value.cost.inputTokens, serverTokens, '★ cost 必须累加分块请求的 usage.input_tokens（旧实现为 0，与 notes 自相矛盾）');
+    const sentBytes = fake.requests.reduce((n, r) => n + Buffer.byteLength(r.raw, 'utf8'), 0);
+    assert.equal(value.cost.bodyBytes, sentBytes, '★ cost.bodyBytes 必须等于实际发出的全部请求体字节');
+  } finally {
+    await fake.close();
+  }
+});
+
+test('deep 自适应重切共用一份墙钟预算：预算耗尽后不得再开新一轮（task-13 复审 P2）', async () => {
+  // 旧实现每轮各自 runScan(deadlineMs=配置值) ⇒ 每轮重新计时，总墙钟可达约 3×（1 + scanMaxAdaptRounds）。
+  // 每一块都在服务端**同步忙等 60 ms** 再回 400：保证第 1 块就吃掉 2 倍于预算的墙钟（不依赖亚毫秒计时）。
+  const fake = await startFakeOllama(() => {
+    const until = Date.now() + 60;
+    while (Date.now() < until);
+    return { status: 400, body: { error: 'prompt 0 has 2100 tokens; expected 1\u20132050 (input is never truncated)' } };
+  });
+  try {
+    const { registered, ctx } = fakeCtx();
+    apply(ctx, Config({ baseUrl: fake.baseUrl, ladder: [{ model: 'tev1:0.8b', numCtx: 8192 }], scanFirstChunkBytes: 1000, scanDeadlineMs: 20 }));
+    const value = await registered[0].execute({ material: 'x'.repeat(5000), questions: [Q('q1')], depth: 'deep' }, EXEC);
+    // 1 次原始批请求 + 1 次分块请求：第 2 轮起剩余预算已 ≤ 0，不得再发。
+    assert.equal(fake.requests.length, 2, `共用预算 ⇒ 只允许 1 轮分块，实际 ${fake.requests.length} 次请求`);
+    assert.equal(value.coverage.truncatedBy, 'deadline', '首轮因墙钟用尽而截断');
+  } finally {
+    await fake.close();
+  }
+});

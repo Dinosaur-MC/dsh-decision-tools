@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runScan, aggregateNoul, MAX_CONCURRENCY } from '../lib/scan.js';
+import { chunk } from '../lib/source.js';
 
 const DOC = ['# A', '', 'one', '', '# B', '', 'two', '', '# C', '', 'three'].join('\n');
 const BUDGET = 12;
@@ -113,4 +114,27 @@ test('runScan：aggregate 为 any 时才产出聚合块，默认（none）缺席
   assert.equal(any.aggregate.perQuestion.c1.max, 0.5, '聚合块来自逐块 noul 概率的最大值');
   const none = await runScan({ text: DOC, budgetBytes: BUDGET, callModel: echoModel([]) });
   assert.equal('aggregate' in none, false, '默认不得产出聚合块（暂定产物宁可缺席）');
+});
+
+test('中断：取消落在**最后一块**时也必须如实置 aborted（task-13 复审 P2）', async () => {
+  // 现状只在循环顶部检查 signal.aborted ⇒ 取消发生在最后一块的飞行途中时，那个检查再也跑不到，
+  // 结果是 aborted=false + failed 里躺着一个 kind=aborted 的块（调用方无从区分取消与出错）。
+  const total = chunk(DOC, { budgetBytes: BUDGET }).chunks.length;
+  const controller = new AbortController();
+  let calls = 0;
+  const model = async () => {
+    calls += 1;
+    if (calls === total) {
+      controller.abort();
+      const error = new Error('调用被取消。');
+      error.kind = 'aborted';
+      throw error;
+    }
+    return { ok: calls };
+  };
+  const r = await runScan({ text: DOC, budgetBytes: BUDGET, callModel: model, signal: controller.signal });
+  assert.equal(calls, total, '最后一块必须真的被调用过（否则本用例不成立）');
+  assert.equal(r.failed.length, 1, '只有最后一块失败');
+  assert.equal(r.failed[0].kind, 'aborted');
+  assert.equal(r.aborted, true, '★ 取消失败必须体现为 aborted，不能只看循环顶部');
 });

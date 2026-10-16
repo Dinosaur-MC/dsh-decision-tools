@@ -101,7 +101,7 @@ test('400 → invalid_request，带出服务端原文与合法类型清单；上
     assert.match(error.message, /请求超出模型上下文：2359 token，上限 2050。/,
       'message 必须同时给出服务端报的实际 token 数与上限');
     assert.match(error.message, /input is never truncated/, '服务端原文必须保持可用');
-    assert.match(error.hint, /缩减 state/);
+    assert.match(error.hint, /缩小 material/, 'hint 必须用 v3 的参数名（material），不得再让模型去改 state');
     assert.match(error.hint, /num_ctx/, 'hint 必须给出调高该模型 num_ctx 这条路');
     assert.match(error.hint, /更大的模型/, 'hint 必须给出换模型这条路');
     assert.match(error.hint, /未被截断/, '必须明说输入未被截断，别让调用方以为拿到了部分答案');
