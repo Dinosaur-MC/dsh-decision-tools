@@ -78,6 +78,8 @@ material: string                          // 内联材料
 - **缺位表示**：`coverage.failed = requested − answered`；未答项在 `results` 里以 `value: null` **占位**（保持 `results.length === requested`，调用方不必靠下标对齐）。
 - **`cost` 的两项语义**：`escalated` 为布尔（本次是否发生升档）；`attempts[]` 为 `{ model, failureKind }` 列表（诊断用，正常路径长度为 1）。
 
+- **渲染层只呈现概率，不呈现阈值化判定**：`noul` 行只打 `P(true)`，**不打布尔 `value`** —— 布尔是阈值化产物，写进模型可见文本会让它把概率读成判定；`value` 仍保留在返回数据结构里供机器消费。渲染层**不做任何阈值比较**（阈值只在 `lib/tool.js` 一处），低置信只经 `notes[]` 表达。
+
 - **模型选择的可观测性走 `notes[]`**：`plan` 已被本 ADR 硬切，选档结论以 `notes[]` 的首行呈现（形如 `模型选择：<model>（<选档原因>）`）——否则调用方无法从结果解释「为什么用了这个模型」。
 
 **依据**：外部评审 §5.3（输出要能区分完成/部分完成/失败/取消）；当前 `answers`/`chunks` 互斥的读法对调用方是额外负担。
