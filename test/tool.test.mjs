@@ -333,6 +333,33 @@ test('提升失败不得粘滞：坏档一次失败后，下一次调用必须�
   await fake.close();
 });
 
+test('非容量类失败不得换档：提升目标回 500 时原样上抛，且不再试更大的档（r7 P0）', async () => {
+  // 旧实现：提升循环只判「要不要进循环」，一旦进了循环，每一档的失败都不分种类继续往上换
+  // —— 于是中间某档回 500 会被静默吞掉，换一个更大的档重试成功，调用方永远看不到真实错误。
+  const seen = [];
+  const fake = await startFakeOllama((req) => {
+    const model = req.json?.model;
+    seen.push(model);
+    if (model === 'mid:latest') return { status: 500, body: { error: 'boom' } };
+    if (model === 'wide:latest') return { status: 200, body: ANSWERS };
+    return { status: 400, body: { error: 'prompt 0 has 2100 tokens; expected 1\u20132050 (input is never truncated)' } };
+  });
+  const { registered, ctx } = fakeCtx({ fs: treeFs({}) });
+  apply(ctx, Config({ baseUrl: fake.baseUrl, ladder: [
+    { model: 'tev1:0.8b', numCtx: 8192 },
+    { model: 'mid:latest', numCtx: 16384 },
+    { model: 'wide:latest', numCtx: 32768 },
+  ] }));
+  const exec = { preview: false, signal: undefined, agent: { session: { header: { cwd: 'F:/ws' } } } };
+  const error = await registered[0]
+    .execute({ state: 'x'.repeat(300), questions: [{ name: 'q1', type: 'noul', instructions: 'x' }] }, exec)
+    .then(() => null, (e) => e);
+  assert.equal(error?.kind, 'server_error', '非容量类失败必须原样上抛，不得被容量提升掩盖');
+  assert.deepEqual(seen, ['tev1:0.8b', 'mid:latest'],
+    '只发两次：初始档 + 第一个提升目标；wide 不该被尝试（换档救不了 500）');
+  await fake.close();
+});
+
 test('A 方案：小材料走默认档，大材料直发大档，回到小材料又降回来（r5 实测省 13% 的那条规则）', async () => {
   const fake = await startFakeOllama(() => ({ status: 200, body: ANSWERS }));
   const { registered, ctx } = fakeCtx({ fs: treeFs({}) });
