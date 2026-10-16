@@ -162,6 +162,14 @@
   256 → 400 `too many options (256), this model supports at most 255`）·
   `score` **2–10**（11 → 400 `score criteria must be an array of 2–10 levels`）。
   二者是**独立约束**，不可共用一个常量。
+  - **口径注（2026-10-16）：`2–255` 是本机实测值，不是跨版本契约。** 官方文档自身并不一致：
+    决策指南仍写 `choice` **2–26 named options**
+    （`https://docs.ollama.com/capabilities/decision`），而 API 参考的
+    `SystemOneChoiceQuestion.criteria` 写 `maxProperties: 255` 并注明
+    **"The option limit depends on the model"**（`https://docs.ollama.com/api/systemone`）。
+    ⇒ **运行时能力优先于静态常量**：`LIMITS.maxChoiceOptions = 255` 只是「不预先拒绝」的宽松默认，
+    加 `Config.maxChoiceOptions` 覆盖点；真正的上限以服务端 400 为准
+    （本机无机器可读规格：`/openapi.json` / `/swagger.json` / `/docs` 一律 404 ⇒ 本地探测路不通）。
 - **冷加载**：tev1 约 4.8 s · nimble 约 15.0 s；**warm 单次**：小材料 97 ms vs 865 ms（大档慢 7–9 倍）。
 - **计费口径（已证实）**：`input_tokens = Σ prompt_k = 题数 ×(该 body 的精确 token 数 + 每问模板常数 38)+（题号≥10 的题数）` ⇒ 请求体被**按题数重复计费**。
 - **字节↔token**：英文冻结口径 3.33 B/token；**实测中文语料 2.32 B/token** ⇒ 同为 4096 B，中文约占 tev1 窗口的 **86%**（注释里写的是留 40%）。
