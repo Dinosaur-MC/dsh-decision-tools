@@ -105,8 +105,8 @@ decision({ upstream: { tool, arguments }, rubric, type, criteria, depth })
 
 | 工具类型 | 结果形态 | 取全文的方式 |
 |---|---|---|
-| 普通工具 | 结构化结果含**完整 `value`** | 直接用 `value` |
-| 进程型（pwsh/bash） | 内存只留 64000 B 尾部 + 宿主转储路径 | 读宿主交给我们的转储引用 |
+| 普通工具 | 结构化结果 `{isError:false, value, content}`：**`value` 永远是完整规范值**，`content` 是模型面投影（可能被截断） | 直接用 `value`（实测 200 KB：带 agent+parent 时 content 也不截断；只带 agent 时 content 截到 49931 B 而 value 仍 199994 B） |
+| 进程型（pwsh/bash） | 规范值含 `{kind, exitCode, signal, timedOut, stdout:{text,truncated,spillPath?}, stderr:{...}}`；内存每流上限 64000 B、转储上限 64 MiB（**两层截断**） | 读 `value.stdout.spillPath`（或模型面通知里的路径） |
 | 压缩期改写过的历史 | 旧结果被裁成 head+省略+tail | **不可恢复**，长程监控不得依赖回读会话日志 |
 
 ### 5.3 转储与 tee（不吞掉）
@@ -118,7 +118,7 @@ decision({ upstream: { tool, arguments }, rubric, type, criteria, depth })
 
 ### 5.4 防护
 
-1. **禁自递归**：`upstream.tool` 不得是本插件自己的工具（默认黑名单，可选白名单覆盖）。
+1. **禁自递归（必须自己加，宿主没有护栏）**：实测把工具委托给自己会一路递归到我们自己的护栏才停（首版探针无限递归，只能 `job_kill`）——**无深度上限、无 callId 去重**。⇒ `upstream.tool` 不得是本插件自己的工具（默认黑名单，可选白名单覆盖）。
 2. **转发 `exec.signal`**，并自管 deadline（宿主超时不抢占）。
 3. **读取器白名单**：只接受「我们自己写的转储目录」与「宿主交给我们的转储路径」（前缀校验 + 拒 `..`）。理由：`contains` 是纯路径谓词（对工作区外文件返回 false），而宿主允许读工作区外文件 ⇒ 闸必须是我们自己的显式规则。
 4. **转储生命周期自管**：宿主转储没有 session 级清理（只在插件激活时扫一次、删 30 天前），所以我们的目录必须有总量上限与清扫。
@@ -140,7 +140,12 @@ decision({ upstream: { tool, arguments }, rubric, type, criteria, depth })
 - 观测（订阅事件、读作业）在 **root 层**即可，无需额外权限；
 - 驱动（`jobs.start`、`tools.execute`）需要 agent 作用域：root 层 `ctx.jobs.start` 会抛「no job controller serves this agent」，`attachController(name)` 之后可用；
 - **装配坑**：root 层插件在 `apply` 时 `ctx.get('tools')` 是 `undefined`（工具服务未就绪），必须声明 `inject` 或延后获取；而 `ctx.on('tools/result')` 在 `apply` 时注册有效。
-- 委托执行必须带调用方的 `agent` 与 `signal`。
+- **委托的最小写法**：`ctx.tools.execute({callId, rootCallId, name, arguments, signal, agent: exec.agent, parent: exec.token})`。
+  - **必须带 `agent`**：插件 `apply` 拿到的是**无作用域全局视图**，只注册在 agent/预设作用域里的工具名从全局看不存在 ⇒ 报 `unknown tool`（`UNKNOWN_TOOL`）。实测同刻对照：不带 agent 失败、带 `agent: exec.agent` 成功。
+  - **带 `parent` 还有额外效果**：嵌套派发带 `parent` 时**默认不进 spill** ⇒ 模型面 content 不被截断（实测 199994 B 全量）。我们的管道想要完整内容，故两者都带。
+  - **未知与被 disable 同形**：两者都返回 `unknown tool` + `UNKNOWN_TOOL` 且**不 throw** ⇒ 我们的报错必须写成「不存在或被禁用」。
+  - **官方约束机制**：`ctx.tools.restrict({allow,deny})` 与 `ctx.tools.guard(fn)` **只拦带 agent 的委托**（实测 deny 后带 agent 变 unknown、不带 agent 照跑）⇒ 部署可用它来限制我们；我们的设计始终带 agent 才接受约束。
+  - **实现硬约束**：`output.schema` / `parameters` 必须是**原生 JSON Schema**（`required` 为数组）；写成 `{type:'boolean',required:true}` 会让整插件抛 `JsonSchemaError` 而不激活。
 
 ## 8. 安全边界
 
@@ -157,13 +162,15 @@ decision({ upstream: { tool, arguments }, rubric, type, criteria, depth })
 | P1 | 前台一次性 | 三个用例（作业尾部出现关键字 / 文件出现某行 / glob 命中）⇒ `hit=true`、`at` 为毫秒、`count=1` |
 | P2 | 计数与阈值 | 抖动序列证明按探测结果计数；`countThreshold=3` 时第 3 次才返回；无 CD 生效（无抑制） |
 | P3 | 后台与通知 | `background=true` + `notify=inbox` ⇒ 真机证明模型收到通知并反应；连投 50 次通知不炸 inbox（合并与限频生效） |
-| P4 | 委托管道 | `upstream` 跑一个真命令 ⇒ 判定结果 + `spillPath` + `bytes` 齐全；200 KB 输出下全文可从 `spillPath` 取回；`timeoutMs` 到点返回而非挂死；caller abort 时立即返回 |
+| P4 | 委托管道 | `upstream` 跑一个真命令 ⇒ 判定结果 + `spillPath` + `bytes` 齐全；200 KB 输出下全文可从 `spillPath`（或 `value`）取回；`timeoutMs` 到点返回而非挂死；caller abort 时立即返回。**必须在能 spawn 子进程的宿主里跑**（受限会话见 §7 的 ACL 坑） |
 
 ## 10. 未验清单（不得当事实用）
 
 1. 进程型工具的 64000 B 截断与转储通知：隔离实例 `spawn EPERM` 触发不了（仅源码 + 真机磁盘旁证）。
 2. 运行态宿主版本可能早于 `0.2.0-rc.2`（磁盘存在互斥旧产物）⇒ 转储行为结论须按版本钉死。
-3. 无 agent 的 `ctx.tools.execute`（root 层）是否可行未测。
+3. 无 agent 的 `ctx.tools.execute`（root 层）是否可行未测（实测三条路都带过 agent，且带 agent 才是必然成功的路）。
+9. **真实 pwsh 的 stdout/exitCode/字节数未验**：被委托会话里子进程一律 `spawn EPERM`（workspace-write 下带 agent 更会命中 `SetNamedSecurityInfoW failed (Win32 5): grantWrite(<workdir>)`）；pwsh 的 `timeoutMs` promote 行为、取消时**上游 OS 进程**是否真被杀、200 KB 真命令的两层截断叠加，都只有源码依据。
+10. 委托**不走 agent-loop 调度器**：无 `isConcurrencySafe` 屏障、无深度计数；实测两个各 600 ms 的带 agent 委托并发 wall 621 ms（串行对照 1233 ms）⇒ 我们自己的并发与深度上限是必须的；注册成作业的调用受 `maxConcurrentJobsPerOwner`（默认 10）约束，未真跑。
 4. spill 文件权限在 Windows 的真值（源码 0600，真跑 0666）、`cleanupPeriodDays` 到期真删未验。
 5. 给**另一个** agent 注入通知未测（只测过同插件创建的那个）。
 6. `keepInbox:true` 分支、单次 await 超过 60 s、进程级 kill 边界未测。
