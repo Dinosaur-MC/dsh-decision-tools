@@ -40,10 +40,17 @@ function expectReject(args, matcher) {
 }
 
 test('合法请求返回 body，且只带服务端认识的字段', () => {
+  // ADR-15：题名只作**映射的键**，值里只有上游声明的字段（不再把整个问题对象塞进去）。
   assert.deepEqual(prepareRequest(base()), {
     model: 'tev1:0.8b',
     state: TICKET,
-    questions: { label: CHOICE_Q },
+    questions: {
+      label: {
+        type: 'choice',
+        instructions: 'Which label fits this ticket?',
+        criteria: { billing: 'Payments and refunds', bug: 'Software errors' },
+      },
+    },
   });
 });
 
@@ -152,12 +159,13 @@ test('instructions 必填', () => {
 
 test('V8 边界：正好 65536 字节通过，再多 1 字节被拒', () => {
   // 与 prepareRequest 组装出的 body 逐字段一致，才能精确落在边界上。
-  // 注意 questions 必须是 V10 转换后的**对象映射**形状 —— 用数组会让这个 helper
-  // 与真实 body 长度不同，二分会落在错的边界上（该测试本就用于探测 body 形状漂移）。
+  // 注意 questions 必须是 V10/ADR-15 转换后的**对象映射**形状，且值里**没有** `name`
+  // （题名只是映射的键）—— 用数组或整个问题对象会让这个 helper 与真实 body 长度不同，
+  // 二分会落在错的边界上（该测试本就用于探测 body 形状漂移）。
   const overhead = (n) => Buffer.byteLength(JSON.stringify({
     model: 'tev1:0.8b',
     state: 'x'.repeat(n),
-    questions: { label: CHOICE_Q },
+    questions: { label: { type: 'choice', instructions: 'Which label fits this ticket?', criteria: { billing: 'Payments and refunds', bug: 'Software errors' } } },
   }), 'utf8');
 
   let lo = 0;
