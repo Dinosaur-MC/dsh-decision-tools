@@ -283,6 +283,27 @@ test('aggregate: any 在 scan 下真的接线：产出 aggregateNoul 的暂定�
   }
 });
 
+test('auto + 结构化 state：溢出后不得退化成扫描（没有可分的行），保持单发失败（r7 P0）', async () => {
+  // 旧实现把 scanAvailable 写死 true：结构化 state 溢出后 auto 会转扫描，
+  // 而 chunk() 对非字符串做 text.split ⇒ 抛无 kind 的裸 TypeError。
+  const fake = await startFakeOllama(() => ({
+    status: 400,
+    body: { error: 'prompt 0 has 2100 tokens; expected 1\u20132050 (input is never truncated)' },
+  }));
+  try {
+    const { registered, ctx } = fakeCtx({ fs: treeFs({}) });
+    apply(ctx, Config({ baseUrl: fake.baseUrl, ladder: [{ model: 'tev1:0.8b', numCtx: 8192 }] }));
+    const error = await registered[0]
+      .execute({ state: { ticket: 'x' }, questions: [{ name: 'q1', type: 'noul', instructions: 'x' }] },
+        { preview: false, signal: undefined })
+      .then(() => null, (e) => e);
+    assert.equal(error?.kind, 'context_overflow', '没有可扫的块 ⇒ 原样上抛溢出错误，不得变成裸 TypeError');
+    assert.equal(fake.requests.length, 1, '不得退化成分块扫描（那会多出多次请求）');
+  } finally {
+    await fake.close();
+  }
+});
+
 test('glob：** 吃零层必须命中 a/b/file.md（r2 P0：旧实现只消耗一段）', async () => {
   const fs = treeFs({ 'a/b/file.md': 'AB', 'a/b/b/file.md': 'ABB', 'a/x/b/file.md': 'AXB' });
   const { registered, ctx } = fakeCtx({ fs });

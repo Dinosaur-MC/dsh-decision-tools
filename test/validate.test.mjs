@@ -5,6 +5,7 @@ import { prepareRequest,
   DecisionValidationError,
   LIMITS,
   analyzeBody,
+  resolveStrategy,
 } from '../lib/validate.js';
 
 const TICKET = 'Our checkout has returned 500 errors since 9am.';
@@ -223,4 +224,21 @@ test('analyzeBody：把请求体归因到材料与问题文本，并识别逐字
   assert.ok(out.questionShare > 0.5);
   const clean = analyzeBody('x'.repeat(200), [{ name: 'a', type: 'noul', instructions: 'one' }, { name: 'b', type: 'noul', instructions: 'two' }, { name: 'c', type: 'noul', instructions: 'three' }]);
   assert.equal(clean.hint, null, '材料占多数且无重复 ⇒ 不出提示');
+});
+test('resolveStrategy：scan 要求字符串 state，否则给结构化错误（r7 P0）', () => {
+  // 旧实现不校验这一条：scan + 结构化 state 会一路走到 chunk() 的 text.split 上，
+  // 抛一个没有 kind 的裸 TypeError（调用方拿不到判据，也看不到可行做法）。
+  assert.throws(() => resolveStrategy({ strategy: 'scan' }, { a: 1 }), (error) => {
+    assert.equal(error.name, 'DecisionValidationError');
+    assert.equal(error.kind, 'scan_requires_text_state');
+    assert.match(error.message, /字符串/, '消息要说清 scan 要的是文本');
+    assert.match(error.message, /stateSource/, '消息必须给出可行做法');
+    return true;
+  });
+  assert.equal(resolveStrategy({ strategy: 'scan' }, 'text'), 'scan', '字符串材料照常扫描');
+  // 非 scan 时结构化 state 不归这里管（由 prepareRequest 的 state 校验负责）。
+  assert.equal(resolveStrategy({ strategy: 'auto' }, { a: 1 }), 'auto');
+  assert.equal(resolveStrategy({}, undefined), 'auto', '缺省策略仍是 auto');
+  assert.throws(() => resolveStrategy({ strategy: 'chunk' }, 'text'),
+    (error) => error.kind === 'invalid_request');
 });
