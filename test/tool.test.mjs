@@ -102,6 +102,23 @@ test('插件导出形状与默认配置', () => {
   });
 });
 
+test('Monitor / 管道的四个部署键：接受合法值、拒绝非法值（不设默认值，回落常量）', () => {
+  // 刻意不设默认值 ⇒ Config({}) 不出现这四个键（数值单源在 MONITOR_LIMITS / DEFAULT_SPILL_MAX_BYTES）。
+  const defaults = Config({});
+  for (const key of ['minProbeIntervalMs', 'notifyCoalesceWindowMs', 'maxNotificationsPerMinute', 'spillDirCap']) {
+    assert.equal(defaults[key], undefined, key + ' 不得在 Config 里复制常量作为默认值');
+  }
+  const ok = Config({ minProbeIntervalMs: 250, notifyCoalesceWindowMs: 0, maxNotificationsPerMinute: 30, spillDirCap: 1024 });
+  assert.equal(ok.minProbeIntervalMs, 250);
+  assert.equal(ok.notifyCoalesceWindowMs, 0, '0 合法：语义是关闭合并窗口');
+  assert.equal(ok.maxNotificationsPerMinute, 30);
+  assert.equal(ok.spillDirCap, 1024);
+  assert.throws(() => Config({ minProbeIntervalMs: 0 }), '下限必须 > 0');
+  assert.throws(() => Config({ maxNotificationsPerMinute: 0 }));
+  assert.throws(() => Config({ spillDirCap: 0 }));
+  assert.throws(() => Config({ notifyCoalesceWindowMs: -1 }));
+});
+
 test('工具名、参数契约（8 键 / required 只有 material）与输出契约（5 键）', () => {
   const { registered, ctx } = fakeCtx();
   apply(ctx, Config({}));

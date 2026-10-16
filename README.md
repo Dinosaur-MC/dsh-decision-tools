@@ -115,6 +115,10 @@ descending order.
 | `scanMaxTotalBytes` | unset (uses `LIMITS.scanMaxTotalBytes`) | Cumulative byte cap per scan. |
 | `scanDeadlineMs` | unset (uses `LIMITS.scanDeadlineMs`) | Wall-clock budget per scan, independent of `timeoutMs`. |
 | `scanAggregate` | `none` | `any` adds a provisional max probability per `noul` question. Cross-chunk probabilities are not calibrated — never treat it as a decision. |
+| `minProbeIntervalMs` | unset (uses `MONITOR_LIMITS.minProbeIntervalMs`, 1000) | Lower bound for the `monitor` tool's probe interval: the model's `intervalMs` is raised to at least this. |
+| `notifyCoalesceWindowMs` | unset (uses `MONITOR_LIMITS.defaultNotifyCoalesceWindowMs`, 5000) | Window in which same-kind `monitor` notifications are coalesced — the inbox has no backpressure of its own. |
+| `maxNotificationsPerMinute` | unset (uses `MONITOR_LIMITS.defaultMaxNotificationsPerMinute`, 6) | Per-minute cap on `monitor` notifications. |
+| `spillDirCap` | unset (uses `DEFAULT_SPILL_MAX_BYTES`, 16 MiB) | Total byte cap for the pipe's own spill directory under the system temp area. |
 
 `softBodyBytes` is silently clamped to `LIMITS.maxBodyBytes` (65536) — a threshold above
 that byte cap could never fire — and a threshold set above the model's **real** capacity

@@ -111,6 +111,10 @@
 | `scanMaxTotalBytes` | 未设（用 `LIMITS.scanMaxTotalBytes`） | 单次扫描的累计字节上限。 |
 | `scanDeadlineMs` | 未设（用 `LIMITS.scanDeadlineMs`） | 单次扫描的墙钟预算，**独立于** `timeoutMs`。 |
 | `scanAggregate` | `none` | `any` 会给每道 `noul` 题加一个**暂定**的跨块最大概率。跨块概率未经校准 —— 不得当作判定依据。 |
+| `minProbeIntervalMs` | 未设（用 `MONITOR_LIMITS.minProbeIntervalMs`，1000） | `monitor` 探测间隔的**下限**：模型给的 `intervalMs` 会被抬到不小于它。 |
+| `notifyCoalesceWindowMs` | 未设（用 `MONITOR_LIMITS.defaultNotifyCoalesceWindowMs`，5000） | 同类 `monitor` 通知的合并窗口 —— inbox 自身没有任何背压。 |
+| `maxNotificationsPerMinute` | 未设（用 `MONITOR_LIMITS.defaultMaxNotificationsPerMinute`，6） | `monitor` 通知的每分钟上限。 |
+| `spillDirCap` | 未设（用 `DEFAULT_SPILL_MAX_BYTES`，16 MiB） | 管道自建转储目录（系统临时区）的总字节上限。 |
 
 `softBodyBytes` 会被**静默钳到** `LIMITS.maxBodyBytes`（65536）—— 高于该字节硬上限的阈值
 永远不可能触发；而把阈值设到模型**真实**容量（其 `num_ctx`）之上会让告警**静默失效**，
