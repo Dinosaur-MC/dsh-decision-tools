@@ -27,7 +27,7 @@
 
 - **`items` 的身份契约**：每一项是**自带的完整待判对象**（短文本或标识均可），其内容由调用方给全；**材料内的定位由 `material` 决定**，工具不得让模型临时推断「这一项是引用还是内容」。
 - **`questions[k]` 的形状**：`{ name, type, instructions, criteria? }`，`name` 唯一且非空。
-- **`criteria` 的两处形态（不得混用）**：批量模式用**顶层 `criteria`**（标签集只写一次，wire 层复制到每题）；异质模式用**每题自己的 `criteria`**（不同问题可能有不同标签集）。**异质模式里出现顶层 `criteria` 即报错**（与 `items`/`questions` 互斥同源：不给「谁生效」留空间）；`noul` 不接受任何 `criteria`。
+- **`criteria` 的两处形态（不得混用）**：批量模式用**顶层 `criteria`**（标签集只写一次，wire 层复制到每题）；异质模式用**每题自己的 `criteria`**（不同问题可能有不同标签集）。**异质模式里出现顶层 `criteria` 即报错**（与 `items`/`questions` 互斥同源：不给「谁生效」留空间）。批量模式的顶层 `criteria` 只对 `choice`/`score` 有意义：`type: 'noul'` 配顶层 `criteria` ⇒ `criteria_not_allowed`（noul 的两标签题面是**异质模式每题字段**，按 ADR-1..6 原样保留）。
 - 互斥校验发生在**校验层**（计划 Task 10 的 `assertModeExclusive`）：两者都给 ⇒ `kind='mode_conflict'`；都不给 ⇒ `kind='mode_missing'`。
 
 **依据**：`docs/use-cases.md` 前五类形状（前三类与第四类语义不同）；外部评审 §4.2（避免「哪个字段生效」的歧义）。
@@ -74,6 +74,7 @@ material: string                          // 内联材料
 
 - **`confidence` 保留**（上游每题都回，成本为零）；低于 `minConfidence` 的项**在 `notes[]` 里点名**，不再有独立的 `confidence_warning` 键。ADR-5 十点锚点中围绕置信度的两条据此改写，语义不变（**旗，不过滤**）。
 - **`coverage` 是对内部路径的如实报告**（分批 / 截断 / 失败 / 取消），不是调用方旋钮的回执。
+- **模型选择的可观测性走 `notes[]`**：`plan` 已被本 ADR 硬切，选档结论以 `notes[]` 的首行呈现（形如 `模型选择：<model>（<选档原因>）`）——否则调用方无法从结果解释「为什么用了这个模型」。
 
 **依据**：外部评审 §5.3（输出要能区分完成/部分完成/失败/取消）；当前 `answers`/`chunks` 互斥的读法对调用方是额外负担。
 
