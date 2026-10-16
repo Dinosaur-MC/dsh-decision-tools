@@ -71,6 +71,9 @@ material: string                          // 内联材料
 
 **硬切**：不提供兼容层（延续 v2 先例）。`results` 与批次数解耦 —— 调用方看到的永远是 N 条结果，分批是实现细节（ADR-14 + D6）。
 
+- **`confidence` 保留**（上游每题都回，成本为零）；低于 `minConfidence` 的项**在 `notes[]` 里点名**，不再有独立的 `confidence_warning` 键。ADR-5 十点锚点中围绕置信度的两条据此改写，语义不变（**旗，不过滤**）。
+- **`coverage` 是对内部路径的如实报告**（分批 / 截断 / 失败 / 取消），不是调用方旋钮的回执。
+
 **依据**：外部评审 §5.3（输出要能区分完成/部分完成/失败/取消）；当前 `answers`/`chunks` 互斥的读法对调用方是额外负担。
 
 **被取代**：`answers`、`usage`、`state_bytes`、`body_bytes`、`body_warning`、`confidence_warning`、`source`、`escalated`、`plan`、`chunks`、`scan`（迁移见文末表）。
@@ -79,13 +82,14 @@ material: string                          // 内联材料
 
 ## ADR-14 · `depth: quick | normal | deep` 取代 `strategy`；删 `aggregate`
 
-| depth | 模型档位 | 溢出升档 | 允许自动分批 | 超预算时 |
-|---|---|---|---|---|
-| `quick` | 只用默认档 | 否 | 否 | **报错**并给出可行建议（改 `normal` 或减少项数） |
-| `normal`（默认） | 容量分派（最小够用档） | 是（≤`escalationMaxAttempts`） | 是 | 按 body 预算分批 |
-| `deep` | 从更大档起步 | 是（上限更高） | 是 | 分批 + 优先大窗口档 |
+| depth | 模型档位 | 溢出升档 | 允许自动分批 | 允许**内部扫描** | 超预算时 |
+|---|---|---|---|---|---|
+| `quick` | 只用默认档 | 否 | 否 | 否 | **报错**并给出可行建议（改 `normal`，或少给几项） |
+| `normal`（默认） | 容量分派（最小够用档） | 是（≤`escalationMaxAttempts`） | 是 | 否（不主动扫描） | 按 body 预算分批 |
+| `deep` | 从更大档起步 | 是（上限更高） | 是 | 是 | 分批 + 优先大窗口档 |
 
 - **`aggregate` 删除**：逐块聚合是扫描的内部策略，不构成调用方契约；空转的参数比没有参数更坏。
+- **扫描（分块）在 v3 是内部行为，不是调用方可选模式**：只有 `depth='deep'` 允许插件在「材料装不下」或「问题本身可定位」时走分块；`normal` 只允许分批（同一份材料切成多次请求），不切块。`coverage` 如实报告是否走了分块（`truncated`/`truncatedBy`/`failed`/`aborted`）。**逐块最大聚合只是定位线索，不是文档级结论** —— 这条语义保留（技能文档必须继续写），但不再暴露成参数。
 - `model` 保留为**高级逃生口**：显式给出即关闭本次容量分派与升档（既有语义不变，R1 裁定保留）。
 
 **依据**：外部评审 §4.1；`docs/architecture-current.md` 已知偏差 #1（`aggregate` 被忽略）。
