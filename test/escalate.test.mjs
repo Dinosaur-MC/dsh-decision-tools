@@ -202,23 +202,29 @@ test('createSingleFlight：前一个失败只影响它自己，等待者照常�
   assert.equal(await ok, 'second', '★ 不得把失败传播给等待者（旧实现里第二个任务根本不执行）');
 });
 
-test('describeExhausted：给出需求与来源、三条可行动项，且不得指向请求形状', () => {
-  const msg = describeExhausted({ from: 'tev1:0.8b', demand: 50000, demandSource: 'observed',
-    ladder: LADDER, reason: 'exceeds-largest' });
-  assert.match(msg, /50000/);
-  assert.match(msg, /服务端报错实测/);
-  assert.match(msg, /synthetic-wide:latest/, '必须点名阶梯上限那一档');
-  assert.match(msg, /缩减 state/);
-  assert.match(msg, /Modelfile PARAMETER num_ctx/, '抬高容量只有部署侧一条路');
-  assert.match(msg, /分块扫描/);
-  assert.doesNotMatch(msg, /choice|noul|score|选项数|对象映射/,
+test('describeExhausted：统一终态带尝试过的档与失败分类、三条可行动项，且不得指向请求形状', () => {
+  // v2 的签名（from/demand/ladder/reason）只描述「为什么选不中」，调用方拿不到「试过哪些档」。
+  // 新签名以**实际尝试序列**为准：终态里逐条附上 model 与 failureKind（r7 P0）。
+  const attempts = [
+    { model: 'tev1:0.8b', failureKind: 'context_overflow' },
+    { model: 'clef-flash:latest', failureKind: 'context_overflow' },
+  ];
+  const err = describeExhausted({ attempts, lastError: { message: '请求超出模型上下文：3000 token，上限 16384。' } });
+  assert.equal(err.name, 'SystemOneError');
+  assert.equal(err.kind, 'escalation_exhausted');
+  assert.deepEqual(err.attempts, attempts, 'attempts 必须逐条带 model 与 failureKind');
+  assert.match(err.message, /tev1:0\.8b/);
+  assert.match(err.message, /clef-flash:latest/);
+  assert.match(err.message, /缩减材料/);
+  assert.match(err.message, /Modelfile PARAMETER num_ctx/, '抬高容量只有部署侧一条路');
+  assert.match(err.message, /分块扫描/);
+  assert.doesNotMatch(err.message, /choice|noul|score|选项数|对象映射/,
     '溢出与请求形状无关，文案不得回落到形状类建议');
-  const noLarger = describeExhausted({ from: 'synthetic-wide:latest', demand: 200000,
-    demandSource: 'observed', ladder: LADDER, reason: 'no-larger-entry' });
-  assert.match(noLarger, /已经是阶梯里容量最大的一档/);
-  const conservative = describeExhausted({ from: 'synthetic-wide:latest', demand: 65536,
-    demandSource: 'conservative', ladder: LADDER, reason: 'no-larger-entry' });
-  assert.match(conservative, /服务端未给出数字/);
+  // 空尝试列表也必须能出话（消息里不得出现 undefined）。
+  const empty = describeExhausted({ attempts: [] });
+  assert.equal(empty.kind, 'escalation_exhausted');
+  assert.deepEqual(empty.attempts, []);
+  assert.doesNotMatch(empty.message, /undefined/);
 });
 
 /** 测试夹具阶梯（**不是** DEFAULT_LADDER）：用本机 2026-10-15 16:34 实测容量。 */

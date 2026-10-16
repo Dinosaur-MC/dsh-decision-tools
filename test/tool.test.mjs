@@ -304,6 +304,37 @@ test('auto + 结构化 state：溢出后不得退化成扫描（没有可分的�
   }
 });
 
+test('升档耗尽：三档全溢出 ⇒ 统一终态 escalation_exhausted，附尝试过的模型与失败分类（r7 P0）', async () => {
+  const seen = [];
+  const fake = await startFakeOllama((req) => {
+    seen.push(req.json?.model);
+    return { status: 400, body: { error: 'prompt 0 has 2100 tokens; expected 1\u20132050 (input is never truncated)' } };
+  });
+  try {
+    const { registered, ctx } = fakeCtx({ fs: treeFs({}) });
+    apply(ctx, Config({ baseUrl: fake.baseUrl, ladder: [
+      { model: 'tev1:0.8b', numCtx: 8192 },
+      { model: 'mid:latest', numCtx: 16384 },
+      { model: 'wide:latest', numCtx: 32768 },
+    ] }));
+    const error = await registered[0]
+      .execute({ state: 'x'.repeat(300), strategy: 'inline', questions: [{ name: 'q1', type: 'noul', instructions: 'x' }] },
+        { preview: false, signal: undefined })
+      .then(() => null, (e) => e);
+    assert.equal(error?.name, 'SystemOneError');
+    assert.equal(error?.kind, 'escalation_exhausted',
+      '旧实现在耗尽时抛最后一档的原始 context_overflow，调用方看不出「试过哪些档」');
+    assert.deepEqual(error?.attempts, [
+      { model: 'tev1:0.8b', failureKind: 'context_overflow' },
+      { model: 'mid:latest', failureKind: 'context_overflow' },
+      { model: 'wide:latest', failureKind: 'context_overflow' },
+    ]);
+    assert.deepEqual(seen, ['tev1:0.8b', 'mid:latest', 'wide:latest']);
+  } finally {
+    await fake.close();
+  }
+});
+
 test('glob：** 吃零层必须命中 a/b/file.md（r2 P0：旧实现只消耗一段）', async () => {
   const fs = treeFs({ 'a/b/file.md': 'AB', 'a/b/b/file.md': 'ABB', 'a/x/b/file.md': 'AXB' });
   const { registered, ctx } = fakeCtx({ fs });
