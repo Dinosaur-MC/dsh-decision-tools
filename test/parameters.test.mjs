@@ -24,14 +24,21 @@ test('参数契约的结构不变量（DSL 的硬性要求）', () => {
   // depth 缺省 normal（ADR-14），只有两档语义可选之外的枚举值在本地被拒。
   assert.deepEqual(PARAMETERS.depth.enum, ['quick', 'normal', 'deep']);
 
-  // material：内联字符串 + 引用两种形态（file / glob 同在 object 分支里，恰有其一由校验层把关）。
+  // material：内联字符串 + 引用两种形态（file / glob / tool 同在 object 分支里，恰有其一由校验层把关）。
   assert.equal(PARAMETERS.material.oneOf.length, 2);
   const reference = PARAMETERS.material.oneOf.find((branch) => branch.type === 'object');
   assert.equal(typeof reference.additionalProperties, 'boolean');
-  assert.deepEqual(Object.keys(reference.properties), ['file', 'glob']);
+  assert.deepEqual(Object.keys(reference.properties), ['file', 'glob', 'tool']);
   assert.equal(reference.properties.file.properties.path.required, true);
   assert.equal(reference.properties.glob.properties.pattern.required, true);
-  for (const branch of [reference.properties.file, reference.properties.glob]) {
+  assert.equal(reference.properties.tool.properties.name.required, true, 'tool 必须显式给工具名');
+  assert.deepEqual(
+    Object.keys(reference.properties.tool.properties),
+    ['name', 'arguments'],
+    'arguments 是被委托工具自己的参数面，故只做开放对象（不复制它的 schema）',
+  );
+  assert.equal(typeof reference.properties.tool.properties.arguments.additionalProperties, 'boolean');
+  for (const branch of [reference.properties.file, reference.properties.glob, reference.properties.tool]) {
     assert.equal(typeof branch.additionalProperties, 'boolean', 'object 节点必须显式声明 openness');
   }
 
