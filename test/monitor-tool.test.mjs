@@ -12,6 +12,7 @@ import {
 import { valueSchemaSpecToJsonSchema, validateJsonSchemaValue } from '@deepseek-ai/dsh-tools';
 import { MONITOR_LIMITS, validateMonitorArgs, DecisionValidationError } from '../lib/validate.js';
 import { DecisionSourceError } from '../lib/source.js';
+import { apply, Config } from '../lib/index.js';
 
 /**
  * 宿主自己的 output 校验路径：`defineTool` 用 `valueSchemaSpecToJsonSchema` 归一 output.schema，
@@ -282,9 +283,12 @@ test('file 源走注入的 read：断言被调用、描述符与 cwd 正确，�
   const { out, read } = setup({}, { fs, files: { 'logs/a.txt': 'hello world' } });
   const value = await out.definition.execute({ rubric: 'x', source: { kind: 'file', path: 'logs/a.txt' } }, EXEC);
 
-  assert.equal(read.calls.length, 1, 'file 源必须走注入的 deps.read');
+  // 1 次描述符预检 + 1 次真实探测：**两次都必须走注入的 deps.read**。
+  assert.equal(read.calls.length, 2, 'file 源必须走注入的 deps.read');
   assert.deepEqual(read.calls[0].descriptor, { kind: 'file', path: 'logs/a.txt' });
+  assert.deepEqual(read.calls[1].descriptor, { kind: 'file', path: 'logs/a.txt' });
   assert.equal(read.calls[0].options.cwd, 'F:/ws');
+  assert.equal(read.calls[1].options.cwd, 'F:/ws');
   assert.deepEqual(touched, [], 'monitor-tool 不得自己实现文件读取（否则又是一份漂移的语义）');
   assert.equal(value.hit, true);
   assert.equal(value.evidence, 'hello world');
@@ -293,8 +297,9 @@ test('file 源走注入的 read：断言被调用、描述符与 cwd 正确，�
 test('glob 源同样走注入的 read，并保留描述符形状', async () => {
   const { out, read } = setup({}, { files: { 'logs/*.txt': 'globbed' } });
   const value = await out.definition.execute({ rubric: 'x', source: { kind: 'glob', pattern: 'logs/*.txt' } }, EXEC);
-  assert.equal(read.calls.length, 1);
+  assert.equal(read.calls.length, 2, '1 次预检 + 1 次探测');
   assert.deepEqual(read.calls[0].descriptor, { kind: 'glob', pattern: 'logs/*.txt' });
+  assert.deepEqual(read.calls[1].descriptor, { kind: 'glob', pattern: 'logs/*.txt' });
   assert.equal(value.hit, true);
   assert.equal(value.evidence, 'globbed');
 });
@@ -417,6 +422,106 @@ test('后台 + notify=inbox 但没注入 notifier/deliver ⇒ 直接拒绝，不
     () => out.definition.execute({ rubric: 'x', source: { kind: 'file', path: 'logs/a.txt' }, background: true, notify: 'inbox' }, EXEC),
     (error) => error instanceof TypeError,
   );
+});
+
+test('P1：坏 source.path 当场失败（不进探测循环、不发判定请求、一次间隔都不睡）', async () => {
+  const t = fakeTime();
+  let decided = 0;
+  const read = async (descriptor) => {
+    // 复刻 decision 那个 reader 的**原始**文案（material.*）：本文具层不做改写，改写由注入 reader 负责。
+    throw new DecisionSourceError(
+      'material.file.path 必须是工作区根内的相对路径（拒绝绝对路径与 .. 段）：' + descriptor.path,
+      { kind: 'invalid_request' },
+    );
+  };
+  const { ctx } = fakeCtx();
+  const out = registerMonitorTool(ctx, {
+    deps: { decide: async () => { decided += 1; return { probability: 0.9 }; }, read, clock: t.clock, sleep: t.sleep },
+  });
+
+  await assert.rejects(
+    () => out.definition.execute({ rubric: 'x', source: { kind: 'file', path: '../outside.txt' } }, EXEC),
+    (error) => {
+      assert.ok(error instanceof DecisionSourceError, '必须把原始错误原样外抛');
+      assert.equal(error.kind, 'invalid_request');
+      return true;
+    },
+  );
+  assert.equal(decided, 0, '预检失败 ⇒ 一条判定请求都不该发');
+  assert.equal(t.sleeps.length, 0, '预检失败 ⇒ 一次间隔都不该睡（远小于 intervalMs 就返回）');
+});
+
+test('P1：文件「还不存在」不算配置错误（留给探测循环等它出现，这是 P1 的用例）', async () => {
+  const t = fakeTime();
+  const read = async () => {
+    throw new DecisionSourceError('source 指向的文件不存在：logs/later.txt', { kind: 'source_missing' });
+  };
+  const { ctx } = fakeCtx();
+  const out = registerMonitorTool(ctx, {
+    deps: { decide: async () => ({ probability: 0.1 }), read, clock: t.clock, sleep: t.sleep },
+  });
+  const value = await out.definition.execute({
+    rubric: 'x', source: { kind: 'file', path: 'logs/later.txt' }, intervalMs: 1000, timeoutMs: 3000,
+  }, EXEC);
+  assert.equal(value.hit, false);
+  assert.equal(value.timedOut, true, '跑到自管 deadline 才返回');
+  assert.equal(value.samples, 3, '照常按 intervalMs 探测三轮');
+  assert.equal(value.errors, 3, '每次都记进 errors（可诊断），但不终止也不外抛');
+});
+
+test('Q4：坏 source.path 的文案由注入 reader 改写成 source.*（去掉 lib/tool.js 的改写必须红）', async () => {
+  // 这里跑**真实的 apply**：readForMonitor 就在 lib/tool.js 的 apply 里，是它把 material.* 改写成 source.*。
+  // 本文具层刻意**不做**这份改写（否则 tool.js 那份就成了死代码，这条守卫也就失去意义）。
+  const registered = [];
+  const ctx = {
+    tools: { register: (definition) => { registered.push(definition); return () => {}; } },
+    skills: { get: async (name) => ({ name, content: '# companion' }) },
+    fs: {
+      resolve: async () => { throw new Error('不安全描述符必须在碰 fs 之前就被拒'); },
+      contains: () => false,
+      readBytes: async () => Buffer.from(''),
+      listDir: async () => [],
+    },
+  };
+  apply(ctx, Config({}));
+  const monitor = registered.find((definition) => definition.name === 'monitor');
+  assert.ok(monitor, 'monitor 必须被注册');
+
+  await assert.rejects(
+    () => monitor.execute({
+      rubric: 'x',
+      source: { kind: 'file', path: '../outside.txt' },
+      // 这条用例走的是**真** apply（真实默认时钟/休眠）⇒ 显式把探测循环钉在一秒内：
+      // 万一预检被改坏，也不至于让守卫退化成 120 s 的墙钟等待（变异自证时要跑得动）。
+      intervalMs: 1000,
+      timeoutMs: 1000,
+    }, EXEC),
+    (error) => {
+      assert.equal(error.kind, 'invalid_request');
+      assert.ok(error.message.includes('source.file.path'), '文案必须指向 monitor 的公开参数路径，实际：' + error.message);
+      assert.equal(error.message.includes('material'), false, '不得残留 material.*，实际：' + error.message);
+      return true;
+    },
+  );
+});
+
+test('Q5：file/glob 的每一次读取都走注入的 deps.read（绕开它改走第二份实现必须红）', async () => {
+  const t = fakeTime();
+  const descriptors = [];
+  const read = async (descriptor) => {
+    descriptors.push(descriptor);
+    return { state: 'sample', source: { bytes: 6, path: descriptor.path } };
+  };
+  const { ctx } = fakeCtx();
+  const out = registerMonitorTool(ctx, {
+    deps: { decide: async () => ({ probability: 0.1 }), read, clock: t.clock, sleep: t.sleep },
+  });
+  const value = await out.definition.execute({
+    rubric: 'x', source: { kind: 'file', path: 'logs/a.txt' }, intervalMs: 1000, timeoutMs: 3000,
+  }, EXEC);
+  assert.equal(value.samples, 3);
+  assert.equal(descriptors.length, 4, '1 次预检 + 3 次探测，全部经注入的 reader');
+  for (const descriptor of descriptors) assert.equal(descriptor.kind, 'file');
 });
 
 test('render 是全函数：异形 value 退化占位、绝不抛、绝不漏 undefined / NaN', () => {
