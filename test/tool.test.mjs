@@ -7,6 +7,7 @@ import { TOOL_DESCRIPTION } from '../lib/parameters.js';
 import { LIMITS } from '../lib/validate.js';
 import { toWireRequest } from '../lib/wire.js';
 import { overflowReply, startFakeOllama } from './fake-ollama.mjs';
+import { valueSchemaSpecToJsonSchema, validateJsonSchemaValue } from '@deepseek-ai/dsh-tools';
 import { selectEscalation } from '../lib/escalate.js';
 
 /**
@@ -982,4 +983,23 @@ test('apply 注册两个工具，且 decision 在前、monitor 在后（注册�
   const { registered, ctx } = fakeCtx();
   apply(ctx, Config({ baseUrl: 'http://127.0.0.1:1' }));
   assert.deepEqual(registered.map((definition) => definition.name), ['decision', 'monitor']);
+});
+
+test('宿主契约：真实 execute 的返回必须通过 OUTPUT_SCHEMA 的强校验（additionalProperties:false 是运行时校验）', async () => {
+  // 这条守卫来自一个真 P0：monitor 工具的 output schema 少声明了一个真会返回的键，
+  // 而宿主 createSuccessResult 会 validateJsonSchemaValue(output.schema, value) —— 违反即抛 ToolOutputError，
+  // 也就是**每次成功返回都被当失败**；而套件全绿是因为测试直呼 execute，绕过了宿主 dispatch。
+  // 这里用**宿主自己的两个函数**（与 defineTool 归一、createSuccessResult 强校验同一条路）验 decision 的返回。
+  const fake = await startFakeOllama(echoNoul());
+  try {
+    const { registered, ctx } = fakeCtx();
+    apply(ctx, Config({ baseUrl: fake.baseUrl }));
+    const value = await registered[0].execute({ material: 'ticket', questions: [Q('q1')] }, EXEC);
+    const schema = valueSchemaSpecToJsonSchema(OUTPUT_SCHEMA);
+    assert.deepEqual(validateJsonSchemaValue(schema, value, 'value'), [], 'execute 的返回必须与 OUTPUT_SCHEMA 逐键一致');
+    // 反空转自证：多一个未声明字段必须被判违规 —— 否则这条守卫就是空转的（判据是 violations 非空，不是「函数没抛」）。
+    assert.notDeepEqual(validateJsonSchemaValue(schema, { ...value, _probe: 1 }, 'value'), []);
+  } finally {
+    await fake.close();
+  }
 });
