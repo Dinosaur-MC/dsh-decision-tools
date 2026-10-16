@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { callSystemOne, SystemOneError } from '../lib/client.js';
 import { startFakeOllama } from './fake-ollama.mjs';
 import { isFetchBlockedPort } from './helpers/fetch-ports.mjs';
+import { firstFreeBlockedPort, startHttpServerOnPort } from './helpers/http.mjs';
 
 // 这是**线格式**的 body：Task 3 的 client 层直接收 body、不经过 prepareRequest，
 // 所以 questions 必须是对象映射 —— 假服务现在会像真服务一样拒绝数组（ADR-6）。
@@ -375,4 +376,27 @@ test('显式要求 blocked port：装置必须拒绝，而不是交出一个必�
       return true;
     },
   );
+});
+
+// ---------------------------------------------------------------------------
+// 真根因的**可复现形态**（2026-10-16）：把假服务真的起在一个 fetch 禁用端口上。
+// 失败形态是「服务端在听、请求却从未发出」—— 旧记录里它只是不可解释的 unreachable，
+// 提示还指向「确认 Ollama 已在运行」。本用例把它钉成 bad_port 这个稳定判据。
+// ---------------------------------------------------------------------------
+
+test('blocked port 单列判据：服务端在听却 0 命中时给 bad_port 与可行动提示，不得混成 unreachable', async () => {
+  const port = await firstFreeBlockedPort();
+  const raw = await startHttpServerOnPort(port, () => ({ status: 500, body: { error: 'boom' } }));
+  try {
+    const error = await failure({ baseUrl: raw.baseUrl, body: BODY, timeoutMs: 5000 });
+    // 「服务端一条都没收到」是这一类故障的判别性证据：失败发生在 fetch 内部，不是网络也不是服务端。
+    assert.equal(raw.requests.length, 0, '服务端在听，却一条请求都没收到 —— 请求在本地被拒');
+    assert.equal(error.kind, 'bad_port', 'fetch 的 blocked port 必须单列判据，不得混成 unreachable');
+    assert.equal(error.status, undefined, '请求从未发出，没有 HTTP 状态码');
+    assert.match(error.hint, /端口/, 'hint 必须给出「换端口 / 改 baseUrl」这条唯一可行的做法');
+    assert.match(error.message, new RegExp(String(port)), 'message 必须点名那个被拒的端口');
+    assert.doesNotMatch(error.hint, /ollama serve/, '这不是「Ollama 没在运行」，误导性提示不得回归');
+  } finally {
+    await raw.close();
+  }
 });
