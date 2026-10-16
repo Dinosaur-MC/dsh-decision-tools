@@ -229,7 +229,7 @@ JSON Schema 的 `required` **只有 `material`**；模式内部必填由校验�
 
 ## 5. 测试与门禁
 
-- 套件 `node --test test/*.test.mjs` = **345 例**（`b55b942` 代码态，本文档提交时实跑核对）= 顶层 `test(` 声明 **321** 条（`grep -c '^test('` 逐文件相加）+ 循环内生成的表驱动用例 **24** 条（§4.9 锚点 10 + skill 锚点 14）；共 **19** 个测试文件（`test/*.test.mjs`，另 `test/fake-ollama.mjs` 是装置、不算例）。
+- 套件 `node --test test/*.test.mjs` = **345 例**（`b55b942` 代码态，本文档提交时实跑核对）= 顶层 `test(` 声明 **321** 条（`grep -c '^test('` 逐文件相加）+ 循环内生成的表驱动用例 **24** 条（§4.9 锚点 10 + skill 锚点 14）；共 **18** 个测试文件（`ls test/*.test.mjs | wc -l` = 18）；另有装置 `test/fake-ollama.mjs`（不匹配 `test/*.test.mjs` 这个 glob，不算例）。
 - **墙钟纪律（精确版）**：**不得用真实计时派生判定**（如按 deadline 计数、按耗时决定分支）。deep 的多轮重切预算用可注入时钟 + 纯函数 `scanRoundBudget` 断言（曾有一条用服务端忙等 60 ms 的用例在并行负载下抖红，已重写）。**已登记的例外**：`test/client.test.mjs` 用 `Date.now()` 做 `elapsed < 2000 ms` 的粗上限兜底、`test/escalate.test.mjs` 有一处 10 ms 等待用于让承诺沉降 —— 这两处不派生判定结果，保留并登记（见 §6 #21）。
 - 守卫：§4.9 判别性锚点、skill 锚点（十四条 v3 读法 + 词表负例）、README 配置表与 `Config` 投影一致（**21 键**，两份 README 的键集与顺序 == `Config.dict`）、注入预算上限（`decision` description ≤1900 / 参数 schema ≤3600 / skill ≤4000；`monitor` description ≤1900 / 参数 schema ≤3600）、`COMPANION_SKILL === SKILL_NAME`、缺 skill 拒服务、首次交付 skill 正文；Monitor/管道新增：**零真实墙钟**（clock/sleep/decide/deliver 全注入）、通知三件套（合并 + 限频 + 唤醒预算）、`material.tool` 双形状对齐（模型面 `{name,arguments}` ↔ 校验层 `{tool,arguments}`）、禁自递归（名单含生效的 `toolName` 与 `monitorToolName`）、模型可见文案词表（v2 参数名负例，含 `stateSource`）、**output schema 与返回值键集一致**（monitor 侧 `7a3c104`、decision 侧 `b55b942`，两边都用宿主的 `valueSchemaSpecToJsonSchema` + `validateJsonSchemaValue` 钉住）。
 - 另有：`node --check lib/*.js`、CR 字节 = 0、变异自检（累计 30+ 定点变异全杀）、隔离实例真机冒烟。
