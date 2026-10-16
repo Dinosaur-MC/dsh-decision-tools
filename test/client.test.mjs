@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { callSystemOne, SystemOneError } from '../lib/client.js';
 import { startFakeOllama } from './fake-ollama.mjs';
+import { isFetchBlockedPort } from './helpers/fetch-ports.mjs';
 
 // 这是**线格式**的 body：Task 3 的 client 层直接收 body、不经过 prepareRequest，
 // 所以 questions 必须是对象映射 —— 假服务现在会像真服务一样拒绝数组（ADR-6）。
@@ -330,6 +331,48 @@ test('F1b：200 的 answers 是数组 / usage 不是对象 → bad_response', as
       const error = await failure({ baseUrl: fake.baseUrl, body: BODY, timeoutMs: 5000 });
       assert.equal(error.kind, 'bad_response');
       assert.match(error.message, /usage/);
+    },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// 装置不变量（2026-10-16，并发 flake 的真根因）：假服务**只交出 fetch 能用的端口**。
+//
+// 旧记录的失败原文是 `无法连接 Ollama：http://127.0.0.1:5060`（以及 5061），而 5060/5061
+// 都在 WHATWG Fetch 的 blocked port 列表里：fetch 对表内端口**在本地直接拒绝**，请求永远不到
+// 服务端，于是「假服务明明在听」的用例收到 unreachable。旧结论把成因记成「undici 进程级全局池」，
+// 已被证伪（证据见 .temp/task-6/ 与计划 Task 16：200/200 复现形状全绿、600 轮连接翻腾 0 失败、
+// 27833 条端口事件关联 0 命中、undici 不可 import）。真根因是端口落在 fetch 禁用列表上，
+// 所以装置必须跳过它们 —— 这两条用例就是那条不变量的守卫。
+// ---------------------------------------------------------------------------
+
+test('装置不变量：假服务跳过 fetch 的 blocked port，只交出真正能用的端口', async () => {
+  // 注入端口分配器，确定性地把装置逼到「先拿到两个禁用端口」的情形（与端口是否空闲无关：
+  // 实现是在绑定前预检，所以不会去占用一个注定不可用的端口）。
+  const pending = [5060, 5061, 0];
+  const fake = await startFakeOllama(() => ({ status: 500, body: { error: 'boom' } }), {
+    allocatePort: () => pending.shift(),
+  });
+  try {
+    assert.deepEqual(fake.blockedPortsSkipped.slice(0, 2), [5060, 5061], '禁用端口必须被跳过并留痕');
+    assert.ok(fake.blockedPortsSkipped.every((p) => isFetchBlockedPort(p)), '被跳过的必须确实都是禁用端口');
+    assert.equal(isFetchBlockedPort(fake.port), false, '交出的端口必须能被 fetch 使用');
+    // 端到端判据：交出的 baseUrl 必须真的能发出请求（旧装置在这一步会得到 unreachable）。
+    const error = await failure({ baseUrl: fake.baseUrl, body: BODY, timeoutMs: 5000 });
+    assert.equal(error.kind, 'server_error');
+    assert.equal(fake.requests.length, 1, '服务端必须真的收到这次请求');
+  } finally {
+    await fake.close();
+  }
+});
+
+test('显式要求 blocked port：装置必须拒绝，而不是交出一个必然发不出请求的 baseUrl', async () => {
+  await assert.rejects(
+    () => startFakeOllama(() => ({ status: 200, body: OK }), { port: 5060 }),
+    (error) => {
+      assert.match(error.message, /5060/);
+      assert.match(error.message, /blocked port/);
+      return true;
     },
   );
 });
