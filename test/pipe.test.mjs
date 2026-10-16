@@ -363,6 +363,51 @@ test('runUpstream：ctx 可给插件 ctx（ctx.tools）或工具服务本身；�
     return true;
   });
 });
+test('runUpstream：真实 Cordis ctx（未 inject 的 execute 读取会抛）仍走 ctx.tools 完成委托', async () => {
+  const { exec } = makeExec();
+  const calls = [];
+  const ctx = {};
+  Object.defineProperty(ctx, 'execute', {
+    get() { throw new Error('cannot get property "execute" without inject'); },
+    configurable: true,
+  });
+  ctx.tools = { execute(args) { calls.push(args); return okResult('spawn-ok'); } };
+  const out = await runUpstream(ctx, exec, { tool: 'pwsh', arguments: { command: 'Write-Output PROBE-OK' } });
+  assert.equal(out.isError, false);
+  assert.equal(out.raw, 'spawn-ok');
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].name, 'pwsh');
+  assert.equal(calls[0].agent, exec.agent);
+  assert.equal(calls[0].parent, exec.token);
+});
+
+test('runUpstream：ctx.tools 读取会抛、而 ctx 本身即工具服务时兜底分支仍可用', async () => {
+  const { exec } = makeExec();
+  const service = { execute: () => okResult('direct-ok') };
+  Object.defineProperty(service, 'tools', {
+    get() { throw new Error('cannot get property "tools" without inject'); },
+    configurable: true,
+  });
+  const out = await runUpstream(service, exec, { tool: 'read', arguments: {} });
+  assert.equal(out.raw, 'direct-ok');
+});
+
+test('runUpstream：execute 与 tools 读取都抛时归一为 pipe_unavailable（不泄漏平台报错）', async () => {
+  const { exec } = makeExec();
+  const ctx = {};
+  for (const key of ['execute', 'tools']) {
+    Object.defineProperty(ctx, key, {
+      get() { throw new Error('cannot get property "' + key + '" without inject'); },
+      configurable: true,
+    });
+  }
+  await assert.rejects(runUpstream(ctx, exec, { tool: 'pwsh', arguments: {} }), (error) => {
+    assert.ok(error instanceof DecisionPipeError, '期望 DecisionPipeError，得到 ' + error?.name);
+    assert.equal(error.kind, 'pipe_unavailable');
+    assert.match(error.message, /工具服务/);
+    return true;
+  });
+});
 
 test('spillWrite：无条件落盘（几字节也写），bytes / fullBytes / sha256Prefix 与磁盘相符', () => {
   const dir = freshDir('spill-small');
