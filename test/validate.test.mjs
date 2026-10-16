@@ -374,7 +374,7 @@ test('monitor：已删除的四个参数被显式拒绝（无 CD / 电平计数 
   for (const k of ['minGapMs', 'countMode', 'persistCount', 'resetCount']) {
     assert.throws(
       () => validateMonitorArgs({ rubric: 'x', source: M_SRC, [k]: 1 }),
-      (e) => e.kind === 'monitor_invalid' && e.message.includes(k),
+      (e) => e.kind === 'monitor_invalid' && e.message.includes(k) && e.message.includes('不存在'),
       '参数 ' + k + ' 必须被拒绝而不是静默忽略',
     );
   }
@@ -415,4 +415,16 @@ test('upstream：静态二层嵌套被拒，正常调用被归一', () => {
   const r = validateUpstream({ tool: ' pwsh ', arguments: { command: 'echo hi' } });
   assert.equal(r.tool, 'pwsh');
   assert.deepEqual(r.arguments, { command: 'echo hi' });
+});
+test('monitor：严格化后的参数不许静默降级', () => {
+  assert.throws(() => validateMonitorArgs({ rubric: 'x', source: M_SRC, hitThreshold: '0.9' }), (e) => e.kind === 'monitor_invalid');
+  assert.throws(() => validateMonitorArgs({ rubric: 'x', source: M_SRC, background: 'true' }), (e) => e.kind === 'monitor_invalid');
+  assert.throws(() => validateMonitorArgs({ rubric: 'x', source: M_SRC, coalesce: 0 }), (e) => e.kind === 'monitor_invalid');
+  assert.throws(() => validateMonitorArgs({ rubric: 'x', source: M_SRC, tailBytes: 1.5 }), (e) => e.kind === 'monitor_invalid');
+  assert.throws(() => validateMonitorArgs({ rubric: 'x', source: { kind: 'file', path: 'a', bogus: 1 } }), (e) => e.kind === 'source_invalid');
+  const big = validateMonitorArgs({ rubric: 'x', source: M_SRC, countThreshold: 1e9, tailBytes: 1e9, hitThreshold: 5 });
+  assert.equal(big.countThreshold, MONITOR_LIMITS.maxCountThreshold);
+  assert.equal(big.tailBytes, MONITOR_LIMITS.maxTailBytes);
+  assert.equal(big.hitThreshold, 1);
+  assert.equal(big.clampNotes.length, 3, '三处钳制都必须留痕');
 });
