@@ -250,6 +250,15 @@ test('resolveDepth：缺省 normal，非法值报错并给出合法清单', () =
   });
 });
 
+test('analyzeBody 的模型可见提示只称 v3 参数名（rubric，不再是已删除的 state）', () => {
+  const questions = ['同一句', '同一句', '同一句'].map((text, index) => ({ name: `q${index}`, type: 'noul', instructions: text }));
+  const out = analyzeBody('材料', questions);
+  assert.ok(out.hint !== null, '反空转：重复题面必须触发提示');
+  assert.match(out.hint, /instructions 与其它题逐字相同/, '反空转：确认走的是「重复文本」这条分支');
+  assert.match(out.hint, /放进 rubric/, '修复后的 v3 指向');
+  assert.doesNotMatch(out.hint, /\bstate\b/, 'v3 工具面八键里没有 state —— 模型照着改参只会再失败一次');
+});
+
 test('normalizeMaterial：内联 / file / glob 三形态归一，形状错误给结构化拒绝', () => {
   assert.deepEqual(normalizeMaterial('材料'), { kind: 'inline', text: '材料' });
   assert.deepEqual(normalizeMaterial({ file: { path: 'docs/a.md', startLine: 2, endLine: 3 } }),

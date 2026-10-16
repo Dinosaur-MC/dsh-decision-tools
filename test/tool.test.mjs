@@ -452,6 +452,73 @@ test('depth normal：小窗口下按预算分批，coverage.batches = 请求数�
   }
 });
 
+test('cost.attempts 按档记录：单档多批只留 1 条（不是逐批的请求日志，渲染不得读成换了 N 次档）', async () => {
+  const fake = await startFakeOllama(echoNoul());
+  try {
+    const { registered, ctx } = fakeCtx();
+    apply(ctx, Config({ baseUrl: fake.baseUrl, ladder: [{ model: 'tev1:0.8b', numCtx: 512 }] }));
+    const value = await registered[0].execute(
+      { material: 'm', rubric: 'r', items: ITEMS(8, 'x'.repeat(400)), type: 'noul' },
+      EXEC,
+    );
+    assert.ok(value.coverage.batches >= 2, `应切成多批，实际 ${value.coverage.batches}`);
+    assert.equal(fake.requests.length, value.coverage.batches, '每批一次请求');
+    // 旧实现把 attempts push 在 sendBatch 内 ⇒ 4 批 = 4 条「同档成功」，render 展开成「尝试: … ×4」。
+    assert.deepEqual(value.cost.attempts, [{ model: 'tev1:0.8b', failureKind: null }],
+      `同一档内 ${value.coverage.batches} 批只算 1 条尝试`);
+    assert.equal(value.cost.escalated, false, '没换过档');
+    assert.equal(value.coverage.batches, fake.requests.length, '批次信息在 coverage.batches（契约里已有），不塞进 attempts');
+  } finally {
+    await fake.close();
+  }
+});
+
+test('cost.attempts 跨档各记 1 条：容量失败 → 升档成功 = 2 条（顺序与 failureKind 正确）', async () => {
+  const fake = await startFakeOllama((req) => (req.json?.model === 'tev1:0.8b'
+    ? OVERFLOW
+    : { status: 200, body: { model: req.json?.model, answers: { q1: { type: 'noul', noul: 0.7 } } } }));
+  try {
+    const { registered, ctx } = fakeCtx();
+    apply(ctx, Config({ baseUrl: fake.baseUrl, ladder: [
+      { model: 'tev1:0.8b', numCtx: 8192 },
+      { model: 'mid:latest', numCtx: 16384 },
+    ] }));
+    const value = await registered[0].execute({ material: 'm', questions: [Q('q1')] }, EXEC);
+    assert.deepEqual(value.cost.attempts, [
+      { model: 'tev1:0.8b', failureKind: 'context_overflow' },
+      { model: 'mid:latest', failureKind: null },
+    ], '跨档各 1 条：起步档记失败分类、升档档记成功');
+    assert.equal(value.cost.escalated, true);
+  } finally {
+    await fake.close();
+  }
+});
+
+test('体积归因提示是「常开」的：小体积但重复的输入也出提示（与 softBodyBytes 阈值无关，Lead 裁定）', async () => {
+  // 这条提示讲的是**文本形状**（重复 / 问题占多数），任何体积下都有用 ⇒ 只有 bodyWarning 能关它。
+  // 若后人给它补上 `bodyBytes > effectiveSoftBodyBytes` 的闸门，本用例会红。
+  const drive = async (config) => {
+    const fake = await startFakeOllama(echoNoul());
+    try {
+      const { registered, ctx } = fakeCtx();
+      apply(ctx, Config({ baseUrl: fake.baseUrl, ...config }));
+      return await registered[0].execute(
+        { material: 'm', rubric: 'r', items: ['同一句', '同一句', '同一句'], type: 'noul' },
+        EXEC,
+      );
+    } finally {
+      await fake.close();
+    }
+  };
+  const on = await drive({ softBodyBytes: 500 });
+  const text = on.notes.join('\n');
+  assert.match(text, /instructions 与其它题逐字相同/, '形状类提示必须出现（与阈值无关）');
+  assert.match(text, /放进 rubric/, '提示必须指向 v3 的 rubric');
+  assert.doesNotMatch(text, /已超过建议的 500 字节/, '反空转：这条输入确实没超阈值 ⇒ 提示不是被体积闸门放出来的');
+  const off = await drive({ softBodyBytes: 500, bodyWarning: false });
+  assert.doesNotMatch(off.notes.join('\n'), /instructions 与其它题逐字相同/, 'bodyWarning: false 才关得掉');
+});
+
 test('depth deep：35 项在大窗口模型下只发 1 次请求', async () => {
   const fake = await startFakeOllama(echoNoul());
   try {

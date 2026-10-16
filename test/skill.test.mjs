@@ -36,6 +36,21 @@ test('apply 恰注册一个 provider，且候选形状正确', async () => {
   assert.ok(candidate.description.length > 0);
 });
 
+test('resourceBase.path 是**原生路径**（fileURLToPath），不是百分号编码的 URL pathname', async () => {
+  const { providers, ctx } = fakeCtx();
+  apply(ctx);
+  const [candidate] = await providers[0].list();
+  assert.equal(candidate.resourceBase.kind, 'directory');
+  assert.equal(candidate.resourceBase.path, fileURLToPath(new URL('../assets/decision-usage/', import.meta.url)),
+    '必须是 fileURLToPath 的产物：换回 URL.pathname 即红（Windows 上会变成 /F:/… 且保留 %20）');
+  assert.doesNotMatch(candidate.resourceBase.path, /%[0-9A-Fa-f]{2}/, '模型可见路径不得含百分号编码');
+  // 负对照：URL.pathname 对含空格的路径确实留下 %20 —— 证明上面的断言不是恒真。
+  // （Windows 的 file URL 必须带盘符，否则 fileURLToPath 抛 ERR_INVALID_FILE_URL_PATH。）
+  const spaced = new URL('file:///C:/tmp/a%20b/');
+  assert.match(spaced.pathname, /%20/, 'pathname 保留编码（这正是旧写法的缺陷）');
+  assert.doesNotMatch(fileURLToPath(spaced), /%/, 'fileURLToPath 解码');
+});
+
 test('get 返回正文且**不含 frontmatter**（正文才是模型读到的东西）', async () => {
   const { providers, ctx } = fakeCtx();
   apply(ctx);
