@@ -25,11 +25,24 @@ Then confirm the tool is visible with
 
 ## Usage
 
-One call, three question types, one shared state:
+One call, one `material`, and **one of two mutually exclusive modes** (giving both, or neither, is an error).
+
+**Batch** — one shared rubric judging N items independently; the rubric is written **once**:
 
 ```json
 {
-  "state": "Our checkout has returned 500 errors since 9am. The payments page shows a generic error and no orders go through.",
+  "material": "Our checkout has returned 500 errors since 9am. The payments page shows a generic error and no orders go through.",
+  "rubric": "Is this ticket a payment failure that needs a refund?",
+  "type": "noul",
+  "items": ["ticket 12", "ticket 13", "ticket 14"]
+}
+```
+
+**Mixed** — several distinct questions about the same material; here each question carries its own `criteria`:
+
+```json
+{
+  "material": "Our checkout has returned 500 errors since 9am. The payments page shows a generic error and no orders go through.",
   "questions": [
     { "name": "label", "type": "choice",
       "instructions": "Which label fits this ticket?",
@@ -46,30 +59,40 @@ One call, three question types, one shared state:
 }
 ```
 
-The answer to *that* request — one line per question, then the usage and byte-size
-lines. A real `tev1:0.8b` run on this machine: `node smoke/live.mjs` sends the same
-request and prints the four lines above (the byte-size line is added by the tool
-layer, not by the smoke script).
+`rubric` is written once and the wire layer repeats it for the model, so you never repeat it per item. A
+`choice`/`score` label set is written once too: in batch mode in the **top-level** `criteria`, in mixed mode in
+each question. `noul` takes no `criteria` at all, and a top-level `criteria` in mixed mode is an error.
+
+The mixed request above renders as one line per result, then `coverage`, `material`, `cost` and `notes`:
 
     label    choice  bug  p={bug=0.9648, account=0.0293, billing=0.0059}  conf=0.847
     refund   noul    P(true)=0.5045
-    urgency  score   1.1235 / 2  p={1=0.7369, 2=0.1933, 0=0.0698}  conf=0.337
-    (usage: input_tokens=796 output_tokens=4)
-    体积: state=113B body=682B
+    urgency  score   Soon  p={1=0.7369, 2=0.1933, 0=0.0698}  conf=0.337
+    覆盖: requested=3 answered=3 batches=1 truncated=false failed=0 aborted=false
+    cost: model=tev1:0.8b input_tokens=796 body=682B wall=97ms escalated=false attempts=1
+    模型选择：tev1:0.8b（fits-default）。
 
-The probabilities, the score and the token counts are model output and change with
-the model or the machine; the two byte counts describe the request above, so they
-stay put.
+The **shape** of those lines is fixed by the renderer (`lib/render.js`); `noul` deliberately prints only
+`P(true)` — the boolean in `results[].value` is a thresholded product, and printing it would invite reading a
+probability as a decision. The distributions and labels above are the ones measured earlier on `tev1:0.8b`
+for this ticket; the `coverage` / `cost` numbers are representative — the wire shape changed in this release,
+so re-measure bytes and `input_tokens` on your own machine.
 
 ## Question types
 
-| Type | Criteria | Answer |
+| Type | Criteria | `results[]` entry |
 |---|---|---|
-| `choice` | 2–255 named options with descriptions | the most likely option plus each option's probability |
-| `noul` | optional `{"false": ..., "true": ...}` descriptions | `noul`: the probability of true (a number, not a boolean) |
-| `score` | 2–10 descriptions ordered lowest → highest | `score`: probability-weighted mean of the zero-based levels, on the 0..N-1 scale |
+| `choice` | 2–255 named options with descriptions (`criteria` object) | `value` = the most likely option; `probabilities` = option → probability; `confidence` |
+| `noul` | optional `{"false": ..., "true": ...}` descriptions; **no `criteria`** (batch mode rejects one) | `value` = boolean (`P(true) >= 0.5`); `probabilities` = `{ true, false }`; no `confidence` (the server returns none) |
+| `score` | 2–10 descriptions ordered lowest → highest (`criteria` array) | `value` = the chosen level label; `probabilities` = level index (0..N-1) → probability; `confidence` |
 
-`confidence` is distribution concentration, `1 - H(p)/ln N`. It is **not** calibrated accuracy.
+`score`'s probability-weighted mean is not returned as a number, but you can recompute it as `Σ index × p`
+over `probabilities`. `confidence` is distribution concentration, `1 - H(p)/ln N`. It is **not** calibrated
+accuracy. Entries whose `confidence` is below `minConfidence` (or missing) are named in a `notes[]` line —
+a flag, not a filter: nothing is dropped, rewritten or rejected.
+
+When rendered, `noul` prints `P(true)` only, while `choice` / `score` print the label plus the probabilities in
+descending order.
 
 ## Configuration
 
@@ -80,9 +103,9 @@ stay put.
 | `timeoutMs` | `120000` | per-request budget, including cold model load |
 | `toolName` | `decision` | the name the model sees |
 | `keepAlive` | unset | passed through as `keep_alive`; unset uses the server default |
-| `softBodyBytes` | unset (falls back to `LIMITS.softBodyBytes`, 4096) | body size in bytes above which the result carries a `body_warning` |
-| `bodyWarning` | unset (on) | `false` never emits `body_warning`; unset or `true` keeps it on |
-| `minConfidence` | unset (falls back to `LIMITS.minConfidence`, 0.25) | `choice`/`score` answers whose `confidence` is below this — or missing — are named in a `confidence_warning`; `0` disables the gate |
+| `softBodyBytes` | unset (falls back to `LIMITS.softBodyBytes`, 4096) | body size in bytes above which the result carries a size note in `notes[]` |
+| `bodyWarning` | unset (on) | `false` never emits the size note; unset or `true` keeps it on |
+| `minConfidence` | unset (falls back to `LIMITS.minConfidence`, 0.25) | `choice`/`score` entries whose `confidence` is below this — or missing — are named in a `notes[]` line; `0` disables the gate |
 | `maxChoiceOptions` | unset (falls back to `LIMITS.maxChoiceOptions`, 255) | Upper bound on `choice` option count. The OpenAPI spec notes *"The option limit depends on the model"*, so raise or lower this if your model differs. `score` is a separate, spec-fixed 2–10 and is **not** configurable. |
 | `escalationEnabled` | `true` | Automatic escalation to a bigger-context decision model on context overflow. Passing `model` on a call disables it for that call. |
 | `ladder` | unset (uses `DEFAULT_LADDER`) | Ordered `{ model, numCtx }[]` escalation candidates. Two deliberate exclusions: `clef:latest` (27B on 8 GB never returned within 300 s) and `nimble:latest` (its `num_ctx` 8194 is only 2 tokens above tev1's 8192, so it can never satisfy the capacity margin — a rung that is never selectable). Re-read `/api/show` after re-pulling; these are snapshots. |
@@ -95,8 +118,11 @@ stay put.
 
 `softBodyBytes` is silently clamped to `LIMITS.maxBodyBytes` (65536) — a threshold above
 that byte cap could never fire — and a threshold set above the model's **real** capacity
-(its `num_ctx`) silently makes the warning useless; nothing inside the plugin can detect
-that, so the server's token check stays the authoritative guard.
+(its `num_ctx`) silently makes the note useless; nothing inside the plugin can detect
+that, so the server's token check stays the authoritative guard. Since this release the
+**model-selection** thresholds are computed per call from the chosen window, the 0.6
+margin and the material's language density (Chinese 2.32, English 3.33 bytes/token — see
+`lib/density.js`); this constant is only the fallback used when no window is known.
 
 `minConfidence` only ever **adds a flag**: every answer is returned unchanged, and the
 plugin never drops, rewrites or rejects one for being uncertain. `0` disables the gate
@@ -143,9 +169,12 @@ The defaults above are the ones declared in `lib/tool.js` (`Config`).
    rejected (`was downloaded in a format that is no longer supported`). After re-pulling
    `nimble:latest`, `clef-flash:latest` and `clef:latest` in turn (16:08–18:0x that day),
    **all six decision models are available again**. ⇒ Availability flips with re-pulls;
-   any "works / doesn't work" claim must be re-measured. **Vision is
-   still not supported**: there is no `images` parameter and no path-based image loading — see
-   ADR-3. The `model_broken` mapping is kept as a guard against an upstream regression.
+   any "works / doesn't work" claim must be re-measured. **Image input is not exposed by this
+   extension**: there is no `images` parameter and no path-based image loading — the upstream
+   `/v1/systemone` endpoint does accept `images` (base64 PNG/JPEG/WebP, shared by every question in
+   that request; local body cap 32 MiB including base64) and the `clef` / `clef-flash` models can
+   judge them, so this is a gap in this plugin, not an upstream limit — see ADR-3. The `model_broken`
+   mapping is kept as a guard against an upstream regression.
 2. **Bigger is not necessarily more correct.** On the same ticket, `tev1:0.8b`
    answered `bug` (p=0.9648) while `tev1:latest` (4.2B) answered `billing`
    (p=0.5710, `bug` only 0.3212) — and `billing` is the weaker answer given the
@@ -164,12 +193,13 @@ The defaults above are the ones declared in `lib/tool.js` (`Config`).
    `context_overflow` — the input is **not** truncated and no partial answer is returned.
    The plugin's **default** advisory size threshold is a fixed byte count
    (`LIMITS.softBodyBytes = 4096` B), deliberately independent of any model's `num_ctx`: it can
-   warn **before** the server rejects, and crossing it only adds a `body_warning` to the result
-   and changes no rejection behaviour. The authoritative guard stays the server's token check.
-   Byte count is a crude proxy, though: dense scripts (CJK) and ID-heavy text tokenize
-   worse than 3.33 B/token and this threshold under-protects on such input.
+   warn **before** the server rejects, and crossing it only adds a note to `notes[]` and changes no
+   rejection behaviour — model *selection*, by contrast, now computes its own per-call threshold
+   from the window, the 0.6 margin and the material's language density. The authoritative guard
+   stays the server's token check. Byte count is a crude proxy, though: dense scripts (CJK) and
+   ID-heavy text tokenize worse than 3.33 B/token and this threshold under-protects on such input.
 6. **Bounded decisions only.** This plugin answers bounded questions whose candidate set is known up front. Open-ended generation, reasoning chains, and candidates that must be discovered while thinking still belong to a generative model.
-7. **The confidence gate is a flag, not a guarantee.** Answers below the configured `minConfidence` — or with a missing `confidence` — are named in a `confidence_warning`; nothing is dropped, rewritten or rejected. The 0.25 default was calibrated on one small local sample (`tev1:0.8b`, 4 questions × 6 candidate orderings) and confidence scales differ by roughly an order of magnitude between models, so **re-calibrate per model**. A cross-session probe recorded an order-induced label flip at `confidence = 0.357`, above this threshold, and `confidence` measures concentration rather than accuracy — a question absent from the warning is **not** thereby endorsed.
+7. **The confidence gate is a flag, not a guarantee.** Answers below the configured `minConfidence` — or with a missing `confidence` — are named in a `notes[]` line; nothing is dropped, rewritten or rejected. The 0.25 default was calibrated on one small local sample (`tev1:0.8b`, 4 questions × 6 candidate orderings) and confidence scales differ by roughly an order of magnitude between models, so **re-calibrate per model**. A cross-session probe recorded an order-induced label flip at `confidence = 0.357`, above this threshold, and `confidence` measures concentration rather than accuracy — a question absent from the warning is **not** thereby endorsed.
 
 ## Development
 
@@ -187,14 +217,37 @@ fixture and is deliberately excluded from the published package.
 
 MIT. See LICENSE and THIRD_PARTY_NOTICES.
 
-## v2 (0.2.0)
+## Migrating from the earlier API (breaking)
 
-The contract is final — there are no compatibility switches.
+This release replaces the tool surface. There is **no compatibility layer** — the old keys below are no
+longer accepted as arguments or returned in a result. What to change:
 
-- `state` and `stateSource` are **mutually exclusive**: give exactly one. With `stateSource` the plugin reads the material itself and it **never enters your context**.
-- `stateSource: { kind: 'file', path, startLine?, endLine? }` or `{ kind: 'glob', pattern, limit? }`. Glob: `*` does not cross `/`, `**` is any depth. A **single file** over the byte cap fails loudly; a **glob over the total cap** is truncated (`source.truncated` / `source.remaining`).
-- `strategy`: `auto` (default) sends, then **escalates** to a bigger-context decision model on overflow, then falls back to **scanning**; `inline` never scans; `scan` always scans.
-- Escalation is sticky per process and only fires when you did **not** pass `model`; when it fires the result carries `escalated: { from, to, sticky }`.
-- Scanning returns `chunks` (per-chunk answers with line ranges) and **no top-level `answers`**. `scan.failed` / `truncated` / `aborted` / `remaining` tell you how complete the scan is; `aggregate` is provisional and must not be treated as a decision.
-- `plan` echoes what the plugin decided (`strategy` / `action` / `model` / `reason`).
-- The package also ships a **skill**: enabling the `dsh-decision-tools/skill` row puts `decision-usage` in the session skill catalog (the shipped `cordis.patch.yml` enables both rows).
+| Old | New | Action needed |
+|---|---|---|
+| `state` | `material` (a plain string is still a valid form) | rename |
+| `stateSource` | `material: { file: … }` / `{ glob: … }` | rename + reshape |
+| `strategy` | `depth: 'quick' \| 'normal' \| 'deep'` | rename + pick a level |
+| `aggregate` | removed (its semantics moved into `depth` and automatic batching) | delete it |
+| the shared rubric repeated in every `questions[].instructions` | `rubric` (written once) + `items` + `type` | use the batch mode |
+| the option set repeated per question | top-level `criteria` (batch mode); per-question only in mixed mode | move it once, to the top level |
+| `questions[].instructions` | meaning unchanged, but in batch mode it is no longer where the shared criterion lives | depends on the mode |
+| `answers[name]` | `results[]` — `{ id, type, value, probabilities?, confidence? }` | read differently |
+| `chunks` | removed (every result lives in `results`, one entry per item) | read differently |
+| `usage` / `state_bytes` / `body_bytes` | `cost` (`inputTokens` / `bodyBytes`) | read `cost` |
+| `body_warning` / `confidence_warning` | `notes[]` (strings, printed verbatim) | read `notes` |
+| `source` | `material` (`{ source, bytes, descriptor? }`) | read `material` |
+| `plan` | `notes[]` (its first line states the model and the selection reason) | read `notes` |
+| `escalated: { from, to, sticky }` | `cost.escalated` (boolean) + `cost.attempts[]` | read `cost` |
+| `scan` (`failed` / `truncated` / `aborted` / `remaining`) | `coverage` (`requested` / `answered` / `batches` / `truncated` / `truncatedBy` / `failed` / `aborted`) | read `coverage` |
+
+Also:
+
+- `items` and `questions` are **mutually exclusive**: giving both (`mode_conflict`) or neither
+  (`mode_missing`) is an error.
+- Scanning is no longer a parameter: it is an internal behaviour available only with `depth: 'deep'`.
+  `coverage` reports truthfully whether it ran, and a per-chunk maximum is a **locator, not a
+  document-level probability**.
+- Unchanged: the `model` escape hatch, escalation-sticky behaviour, the materials-never-enter-your-context
+  rule and the workspace guard, and every `Config` key in the table above.
+- The package also ships a **skill**: enabling the `dsh-decision-tools/skill` row puts `decision-usage` in
+  the session skill catalog (the shipped `cordis.patch.yml` enables both rows).

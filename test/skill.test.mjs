@@ -48,17 +48,26 @@ test('get 返回正文且**不含 frontmatter**（正文才是模型读到的东
 });
 
 /**
- * ADR-10 的七条必备内容：一条一锚点，一锚点一断言 —— 正文被「顺手精简」时点会静默消失，
+ * v3 的必备内容：一条一锚点，一锚点一断言 —— 正文被「顺手精简」时点会静默消失，
  * 而 skill 是**按需加载**的（不在工具 description 里，删掉不会有别的守卫报警）。
+ * 分组依据：ADR-11..16（两模式互斥 / material / 输出五键 / depth / wire / 密度）与 77dc063
+ * 的两处裁定（confidence 保留进 notes、扫描内部化仅 deep）。
  */
 const ANCHORS = [
-  ['① 一次多题 + 绝不逐条循环', /NEVER loop one call per item/i],
-  ['② 引用式材料与路径约束', /stateSource[\s\S]*workspace-root-relative/],
-  ['③ confidence 不是正确率', /not accuracy/i],
-  ['④ 提升换模型即换基座', /escalated[\s\S]*different base model/i],
-  ['⑤ 扫描只答可定位问题 + 聚合暂定', /localizable[\s\S]*provisional/i],
-  ['⑥ plan / chunks / scan 的读法', /`plan`[\s\S]*`chunks`[\s\S]*`scan`/],
-  ['⑦ 硬边界：不得作为 fail-open / fail-closed 依据', /fail-open or fail-closed/],
+  ['① 一次多题 + 绝不逐条循环', /ONE call[\s\S]*NEVER loop one call per item/],
+  ['② 两模式互斥（items XOR questions）', /exactly one mode[\s\S]*giving both is an error/],
+  ['③ criteria 两处形态：批量走顶层、异质走每题', /top-level `criteria` in batch mode, per-question in mixed mode/],
+  ['④ material 三形态与安全边界（工作区相对 / 单文件报错 / glob 截断）', /workspace-root-relative[\s\S]*truncated/],
+  ['⑤ depth 三档语义', /`quick`[\s\S]*`normal`[\s\S]*`deep`/],
+  ['⑥ 分批不改变返回结构（results 与批次解耦）', /Batching never changes `results\[\]`/],
+  ['⑦ 五键读法', /`results\[\]`[\s\S]*`coverage`[\s\S]*`cost`[\s\S]*`notes\[\]`/],
+  ['⑧ confidence 是集中度不是正确率', /\(1 - H\/ln N\); it is NOT accuracy/],
+  ['⑨ notes 点名是「旗」不是过滤器', /FLAG, not a filter[\s\S]*NOT thereby endorsed/],
+  ['⑩ noul 是数值不是布尔', /`noul` returns a NUMBER, not a boolean[\s\S]*0\.475[\s\S]*47\.5% chance of yes/],
+  ['⑪ score 报在 0..N-1 尺度（对应 probabilities 的键）', /0\.\.N-1 level scale, not normalised/],
+  ['⑫ deep 的逐块最大只是定位线索，不是文档级结论', /locator, not a document-level probability/],
+  ['⑬ 硬边界：概率不是证据、不得做 fail-open / fail-closed 判据', /artifact-level evidence[\s\S]*fail-open or fail-closed[\s\S]*deterministic rules/],
+  ['⑭ 换档即换基座（门限不可沿用）', /different base model, so thresholds calibrated for one may not carry over/],
 ];
 for (const [label, anchor] of ANCHORS) {
   test(`正文必备内容 ${label}`, () => {
@@ -66,6 +75,21 @@ for (const [label, anchor] of ANCHORS) {
     assert.match(raw, anchor, `assets/decision-usage/SKILL.md 缺少锚点 ${anchor}（ADR-10 的七条必备内容之一）`);
   });
 }
+
+test('v3 词表：正文必须出现 items/rubric/depth，且不含被删除的旧词', () => {
+  const raw = readFileSync(ASSET, 'utf8');
+  for (const word of ['items', 'rubric', 'depth']) assert.match(raw, new RegExp(word));
+  for (const gone of ['stateSource', 'strategy', 'aggregate', 'confidence_warning', 'body_warning']) {
+    assert.equal(raw.includes(gone), false, `SKILL.md 不得再出现被删除的旧词 ${gone}`);
+  }
+  // 旧键只在被当作**字段引用**（反引号包裹）时才算违规：正文里的自然语言 answers 不算。
+  // 注意 `escalated` / `source` 在 v3 里仍是**合法字段**（分别在 cost 与 material 内），故不入此表。
+  for (const key of ['answers', 'chunks', 'usage', 'plan', 'scan', 'state_bytes', 'body_bytes']) {
+    assert.equal(raw.includes('`' + key + '`'), false, `SKILL.md 不得再把旧键 ${key} 当字段引用`);
+  }
+  // 注意：v1/v2 不能用裸 substring 断言 —— 模型名 tev1 里就含 v1，而 ⑩ 要求它必须出现。
+  assert.equal(/\bv1\b|\bv2\b/.test(raw), false, 'SKILL.md 不得出现 v1/v2 这类沿革措辞');
+});
 
 test('parseSkill：缺 frontmatter 或缺 description 一律抛错（不静默注册无法路由的 skill）', () => {
   assert.throws(() => parseSkill('# no frontmatter', 'x.md'), /缺少 YAML frontmatter/);

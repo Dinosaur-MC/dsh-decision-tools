@@ -24,11 +24,24 @@
 
 ## Usage
 
-一次调用、三种题型、共享同一段 state：
+一次调用、一份 `material`，两种**互斥**模式择一（同时给或都不给都报错）。
+
+**批量（batch）** —— 一条共享判据判 N 项，判据**只写一次**：
 
 ```json
 {
-  "state": "Our checkout has returned 500 errors since 9am. The payments page shows a generic error and no orders go through.",
+  "material": "Our checkout has returned 500 errors since 9am. The payments page shows a generic error and no orders go through.",
+  "rubric": "Is this ticket a payment failure that needs a refund?",
+  "type": "noul",
+  "items": ["ticket 12", "ticket 13", "ticket 14"]
+}
+```
+
+**异质（mixed）** —— 同一份材料上问多个不同问题，每题自带 `criteria`：
+
+```json
+{
+  "material": "Our checkout has returned 500 errors since 9am. The payments page shows a generic error and no orders go through.",
   "questions": [
     { "name": "label", "type": "choice",
       "instructions": "Which label fits this ticket?",
@@ -45,28 +58,37 @@
 }
 ```
 
-**上面这次请求**的返回 —— 每题一行，末尾附 usage 与体积口径两行。本机 `tev1:0.8b`
-的一次真实运行：`node smoke/live.mjs` 发的就是同一个请求，会打印上面四行（体积行由
-工具层追加，冒烟脚本本身不打）。
+`rubric` 只写一次，wire 层会替模型逐题重复，你不必按项抄。`choice` / `score` 的标签集也只写一次：
+批量模式放**顶层** `criteria`，异质模式放每题里；`noul` 不接受任何 `criteria`，异质模式里出现
+顶层 `criteria` 会报错。
+
+上面那次异质请求的渲染结果 —— 每条结果一行，随后是 `coverage`、`material`、`cost`、`notes`：
 
     label    choice  bug  p={bug=0.9648, account=0.0293, billing=0.0059}  conf=0.847
     refund   noul    P(true)=0.5045
-    urgency  score   1.1235 / 2  p={1=0.7369, 2=0.1933, 0=0.0698}  conf=0.337
-    (usage: input_tokens=796 output_tokens=4)
-    体积: state=113B body=682B
+    urgency  score   Soon  p={1=0.7369, 2=0.1933, 0=0.0698}  conf=0.337
+    覆盖: requested=3 answered=3 batches=1 truncated=false failed=0 aborted=false
+    cost: model=tev1:0.8b input_tokens=796 body=682B wall=97ms escalated=false attempts=1
+    模型选择：tev1:0.8b（fits-default）。
 
-概率、分数与 token 数都是模型输出，换模型或换机器就会变；两个字节数刻画的是上面
-那次请求本身，因此固定不变。
+这些行的**形状**由渲染层（`lib/render.js`）固定；`noul` 刻意只打 `P(true)` —— `results[].value` 里的
+布尔是阈值化产物，打出来会让人把概率读成判定。上面的概率与标签取自早前在本机 `tev1:0.8b` 上对同一
+工单的实测分布；`coverage` / `cost` 两行的数字是**示意值** —— 本次改动换了 wire 形状，字节数与
+`input_tokens` 请在你自己的机器上重测。
 
 ## Question types
 
-| Type | Criteria | Answer |
+| Type | Criteria | `results[]` 项 |
 |---|---|---|
-| `choice` | 2–255 个带描述的具名选项 | 最可能的选项，外加每个选项的概率 |
-| `noul` | 可选 `{"false": ..., "true": ...}` 描述 | `noul`：为真的概率（是一个数，不是布尔） |
-| `score` | 2–10 条由低到高排序的描述 | `score`：零基等级的概率加权均值，落在 0..N-1 刻度上 |
+| `choice` | 2–255 个带描述的具名选项（`criteria` 对象） | `value` = 最可能的选项；`probabilities` = 选项 → 概率；带 `confidence` |
+| `noul` | 可选 `{"false": ..., "true": ...}` 描述；**不接受 `criteria`**（批量模式下给了会被拒） | `value` = 布尔（`P(true) >= 0.5`）；`probabilities` = `{ true, false }`；**无** `confidence`（上游不返回） |
+| `score` | 2–10 条由低到高排序的描述（`criteria` 数组） | `value` = 选中的档位标签；`probabilities` = 档位下标（0..N-1）→ 概率；带 `confidence` |
 
-`confidence` 是**分布集中度** `1 - H(p)/ln N`，**不是**校准正确率。
+`score` 的概率加权均值不再作为数字返回，但你可用 `probabilities` 复算 `Σ index × p`。
+`confidence` 是**分布集中度** `1 - H(p)/ln N`，**不是**校准正确率。`confidence` 低于 `minConfidence`
+（或缺失）的项会被列进 `notes[]` 的一行 —— 这是**旗，不是过滤器**：没有任何答案被删除、改写或拒绝。
+
+渲染时 `noul` 只打 `P(true)`，`choice` / `score` 打标签 + 降序概率。
 
 ## Configuration
 
@@ -77,9 +99,9 @@
 | `timeoutMs` | `120000` | 单次请求预算，含冷加载 |
 | `toolName` | `decision` | 模型看到的工具名 |
 | `keepAlive` | 未设 | 透传为 `keep_alive`；未设则用服务端默认 |
-| `softBodyBytes` | 未设（回落到 `LIMITS.softBodyBytes`，4096） | 超过该字节数的 body 会在返回值里带一行 `body_warning` |
-| `bodyWarning` | 未设（开启） | `false` 时永不产出 `body_warning`；未设或 `true` 则保持开启 |
-| `minConfidence` | 未设（回落到 `LIMITS.minConfidence`，0.25） | `confidence` 低于该值（或缺失）的 `choice`/`score` 答案会被列进 `confidence_warning`；`0` 关闭该门限 |
+| `softBodyBytes` | 未设（回落到 `LIMITS.softBodyBytes`，4096） | 超过该字节数的 body 会在 `notes[]` 里带一行体积归因 |
+| `bodyWarning` | 未设（开启） | `false` 时永不产出该行；未设或 `true` 则保持开启 |
+| `minConfidence` | 未设（回落到 `LIMITS.minConfidence`，0.25） | `confidence` 低于该值（或缺失）的 `choice`/`score` 项会被列进 `notes[]` 的一行；`0` 关闭该门限 |
 | `maxChoiceOptions` | 未设（回落到 `LIMITS.maxChoiceOptions`，255） | `choice` 选项数上限。OpenAPI 明说 *「The option limit depends on the model」*，故模型不同时应在此调整。`score` 是**另一条**约束、由规格写死为 2–10，**不可配置**。 |
 | `escalationEnabled` | `true` | 上下文溢出时自动提升到更大上下文的判定模型。调用时传了 `model` 会在该次调用禁用自动提升。 |
 | `ladder` | 未设（用 `DEFAULT_LADDER`） | 有序的 `{ model, numCtx }[]` 提升候选。两处刻意排除：`clef:latest`（27B 在 8 GB 显存上 300 s 未返回）；`nimble:latest`（其 `num_ctx` 8194 只比 tev1 的 8192 大 2 token，永远过不了容量余量 ⇒ 一档**选不中**的档）。重拉模型后须重读 `/api/show`，这些是快照。 |
@@ -132,7 +154,10 @@
    in a format that is no longer supported`）；当日 16:08–18:0x 依次重拉
    `nimble:latest`/`clef-flash:latest`/`clef:latest` 之后，**6 个 decision 模型全部恢复可用**。
    ⇒ **模型可用性随重拉瞬变，任何「可用/不可用」的陈述都必须现测**。
-   **但本版仍不支持视觉**：没有 `images` 参数、也没有路径式读图 —— 见 ADR-3。`model_broken` 映射保留，作为上游回归的兜底。
+   **但本扩展没有暴露图片输入**：没有 `images` 参数、也没有路径式读图 —— 上游 `/v1/systemone` 本身接受
+   `images`（base64 PNG/JPEG/WebP，被该次请求的所有问题共享；本地整包上限 32 MiB 含 base64），
+   `clef` / `clef-flash` 也能判图，所以这是**本扩展的缺口、不是上游限制** —— 见 ADR-3。
+   `model_broken` 映射保留，作为上游回归的兜底。
 2. **更大不必然更对。** 同一题上 `tev1:0.8b` 给 `bug`（p=0.9648），而
    `tev1:latest`（4.2B）给 `billing`（p=0.5710，`bug` 仅 0.3212）——
    按题面看 `billing` 是更弱的答案。请按题实测选型。
@@ -148,12 +173,14 @@
    `prompt 0 has <N> tokens; expected 1–<M> (input is never truncated)`，
    映射为 `context_overflow` —— 输入**不会被截断**，也不会给出部分答案。
    本插件的**默认**体积告警阈值是一个固定字节数（`LIMITS.softBodyBytes = 4096` B），
-   **刻意不跟随任何模型的 `num_ctx`**：它能在服务端拒绝**之前**响；越过它只在返回值里
-   多一行 `body_warning`，**不改变任何拒绝行为**，权威守卫仍是服务端的 token 检查。
+   **刻意不跟随任何模型的 `num_ctx`**：它能在服务端拒绝**之前**响；越过它只在 `notes[]` 里
+   多一行归因，**不改变任何拒绝行为**；而**选档**阈值自本次改动起改为按「窗口 × 0.6 余量 ×
+   语言密度」现算（中文 2.32 / 英文 3.33 B per token，见 `lib/density.js`），本常量只在拿不到
+   窗口信息时兜底。权威守卫仍是服务端的 token 检查。
    注意字节数只是**粗糙代理**：中日韩等密集文字与 ID 密集文本的 token/字节比
    远差于 3.33，此时该阈值**保护不足**。
 6. **只解决「有界判定」。** 候选集合已知且有界的问题才归本插件；开放式生成、需要推理链、候选要边想边发现的情形，仍须交给生成式模型。
-7. **置信度门限只加旗，不是保证。** 低于所配 `minConfidence`（或 `confidence` 缺失）的答案会被列进 `confidence_warning`；**没有任何答案**被删除、改写或拒绝。默认 0.25 只在一份小样本上标定过（`tev1:0.8b`，4 题 × 6 个候选排列），而不同模型的 confidence 尺度差约一个量级 ⇒ **换模型必须重新标定**。跨会话调研里唯一那次顺序翻转发生在 `confidence = 0.357`，高于本阈值；且 `confidence` 是分布集中度而非正确率 —— **没被列进告警 ≠ 该答案可信**。
+7. **置信度门限只加旗，不是保证。** 低于所配 `minConfidence`（或 `confidence` 缺失）的答案会被列进 `notes[]` 的一行；**没有任何答案**被删除、改写或拒绝。默认 0.25 只在一份小样本上标定过（`tev1:0.8b`，4 题 × 6 个候选排列），而不同模型的 confidence 尺度差约一个量级 ⇒ **换模型必须重新标定**。跨会话调研里唯一那次顺序翻转发生在 `confidence = 0.357`，高于本阈值；且 `confidence` 是分布集中度而非正确率 —— **没被列进告警 ≠ 该答案可信**。
 
 ## Development
 
@@ -171,14 +198,32 @@
 
 MIT。见 LICENSE 与 THIRD_PARTY_NOTICES。
 
-## v2（0.2.0）
+## 从旧版迁移（破坏性变更）
 
-契约已定稿，**没有兼容开关**。
+本版重建了工具面，**不提供兼容层** —— 下表的旧键不再作为参数接受、也不再出现在返回值里。要改的地方：
 
-- `state` 与 `stateSource` **恰有其一**。用 `stateSource` 时由插件自己读盘，材料**不进你的上下文**。
-- `stateSource: { kind: 'file', path, startLine?, endLine? }` 或 `{ kind: 'glob', pattern, limit? }`。glob：`*` 不跨 `/`，`**` 表示任意深度。**单文件**超字节上限即报错；**glob 总量**超上限则**截断**（`source.truncated` / `source.remaining`）。
-- `strategy`：`auto`（缺省）＝先直发，溢出时**自动提升**到更大上下文的判定模型，再退化为**分块扫描**；`inline` 从不扫描；`scan` 总是扫描。
-- 提升是**进程级粘滞**的，且只在**未显式传 `model`** 时发生；发生时结果里带 `escalated: { from, to, sticky }`。
-- 扫描返回 `chunks`（逐块答案 + 行范围），**顶层没有 `answers`**。`scan.failed` / `truncated` / `aborted` / `remaining` 说明这次扫描有多完整；`aggregate` 是**暂定**值，不得当作判定依据。
-- `plan` 回显插件实际决定的策略（`strategy` / `action` / `model` / `reason`）。
+| 旧 | 新 | 要不要动手 |
+|---|---|---|
+| `state` | `material`（字符串仍是合法形态之一） | 改名 |
+| `stateSource` | `material: { file: … }` / `{ glob: … }` | 改名 + 换形 |
+| `strategy` | `depth: 'quick' \| 'normal' \| 'deep'` | 改名 + 选档 |
+| `aggregate` | 删除（语义并入 `depth` 与自动分批） | 删掉 |
+| 共享判据在每条 `questions[].instructions` 里重复 | `rubric`（只写一次）+ `items` + `type` | 改用批量模式 |
+| 每个问题重复选项集 | 顶层 `criteria`（批量模式）；异质模式仍放每题 | 挪到顶层，只写一次 |
+| `questions[].instructions` | 语义不变，但批量模式下它不再承载共享判据 | 视模式 |
+| `answers[name]` | `results[]` —— `{ id, type, value, probabilities?, confidence? }` | 换读法 |
+| `chunks` | 删除（结果始终在 `results`，每项一条） | 换读法 |
+| `usage` / `state_bytes` / `body_bytes` | `cost`（`inputTokens` / `bodyBytes`） | 读 `cost` |
+| `body_warning` / `confidence_warning` | `notes[]`（字符串，原样打印） | 读 `notes` |
+| `source` | `material`（`{ source, bytes, descriptor? }`） | 读 `material` |
+| `plan` | `notes[]`（首行写明模型与选档原因） | 读 `notes` |
+| `escalated: { from, to, sticky }` | `cost.escalated`（布尔）+ `cost.attempts[]` | 读 `cost` |
+| `scan`（`failed` / `truncated` / `aborted` / `remaining`） | `coverage`（`requested` / `answered` / `batches` / `truncated` / `truncatedBy` / `failed` / `aborted`） | 读 `coverage` |
+
+另外：
+
+- `items` 与 `questions` **互斥**：同时给（`mode_conflict`）或都不给（`mode_missing`）都报错。
+- 扫描不再是参数：它是**只有** `depth: 'deep'` 才允许的内部行为；是否真的跑了由 `coverage` 如实报告，
+  且「逐块最大只是**定位线索**，不是文档级结论」这条不变。
+- 不变的部分：`model` 逃生口、提升的进程级粘滞、材料不进上下文的规则与工作区闸，以及上表所有 `Config` 键。
 - 本包还随带一个 **skill**：启用 `dsh-decision-tools/skill` 行即把 `decision-usage` 放进会话技能目录（随包 `cordis.patch.yml` 默认两行都启用）。

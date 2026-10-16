@@ -1,46 +1,50 @@
 ---
 name: decision-usage
-description: Use when a bounded judgment on local material is needed — routing, classification, filtering, relevance, rubric scoring — or when the `decision` tool, `stateSource`, escalation (`escalated`), or scanning (`chunks`) is involved.
+description: Use when a bounded judgment on local material is needed — routing, classification, filtering, relevance scoring — or with the `decision` tool's `material`/`rubric`/`items`/`depth`.
 ---
 
 # Using the local decision model (`decision`)
 
-A **local** System One model returns probabilities for a bounded question — routing, classification, filtering, relevance, rubric scoring. It never writes prose and never reasons step by step.
+A **local** System One model returns probabilities for a bounded question — routing, classification, filtering, relevance scoring.
 
-## 1. Everything in one call
+## 1. One call, one mode
 
-Ask 1–64 questions about one shared `state` in a single call; the types are `choice`, `noul` and `score`. **NEVER loop one call per item** — every call re-sends the whole `state`. Put a candidate list in `state` and ask one question per candidate instead.
+Give `material` plus exactly one mode; **giving both is an error**:
 
-- `noul` returns a NUMBER, not a boolean: 0.475 means a 47.5% chance of yes.
-- `criteria` shapes: `choice` → option name to description (2-26 options); `score` → level descriptions lowest to highest (2-26 levels); `noul` → optional false/true descriptions, omit for No/Yes.
-- `score` is reported on the 0..N-1 level scale, not normalised to 0-1.
+- `rubric` + `items` + `type` — one shared rubric judges N items independently. Write the rubric **once**.
+- `questions` — M different questions on the same material: `{ name, type, instructions, criteria? }`.
 
-### Many similar judgments
+Ask up to 64 items/questions in ONE call. **NEVER loop one call per item** — every call re-sends the whole `material` and costs roughly **count × body**. `type` is `choice`, `noul` or `score`. `noul` returns a NUMBER, not a boolean: 0.475 means a 47.5% chance of yes. `score` is reported on the 0..N-1 level scale, not normalised to 0-1. For `choice`/`score` write the label set **once**: top-level `criteria` in batch mode, per-question in mixed mode (`noul` takes none).
 
-When N questions share the same rubric, write the rubric **once** — put it in `state` (every question sees the same material) and leave only the differing part in `instructions`. Question text is repeated on the wire per question and the cost is roughly **question count × body**, so a 35-fold repeated rubric can dwarf the material it judges.
-## 2. Reference material instead of inlining it
+Each `item` is the complete short object to judge; the plugin never infers what it refers to in `material`.
 
-`state` and `stateSource` are mutually exclusive. With `stateSource` the plugin reads the file itself, and the material never enters your context.
+## 2. `material`: inline, file, or glob
 
-- `{ kind: 'file', path: 'docs/spec.md', startLine?: 10, endLine?: 40 }` — `path` must be workspace-root-relative; absolute paths, `..` and escaping symlinks are refused; the range is 1-based inclusive and an out-of-range range fails loudly.
-- A single file over the cap **fails**; a glob over the total cap is **truncated**.
+- a string (inline material);
+- `{ file: { path, startLine?, endLine? } }` — `path` must be workspace-root-relative; absolute paths, `..` and escaping symlinks are refused; ranges are 1-based inclusive;
+- `{ glob: { pattern, limit? } }`.
 
-## 3. Read `confidence` and `confidence_warning` correctly
+A single file over the cap **fails**; a glob over the total cap is **truncated** — truncated material is never complete.
 
-`confidence` is the concentration of the distribution (1 - H/ln N); it is NOT accuracy. A `confidence_warning` line names the questions below the threshold and leaves every answer unchanged — it is a FLAG, not a filter, and a question absent from it is NOT thereby endorsed. When it fires, read `probabilities` instead of the chosen label and escalate that question to your own reasoning.
+## 3. `depth`: how much work the plugin may do
 
-## 4. Escalation means a different base model
+- `quick` — default model only, no escalation, no batching; over budget it **fails**.
+- `normal` (default) — smallest model that fits, escalation on overflow, items batched across requests if needed. Batching never changes `results[]`: one entry per item.
+- `deep` — starts bigger, escalates further, and may split large material into chunks.
 
-On overflow, and only when you did not pass `model`, the plugin escalates to a bigger-context model and stays on it. The result then carries `escalated: { from, to, sticky }` — a different base model, so thresholds calibrated for one model may not apply to another.
+An explicit `model` disables capacity choice and escalation for that call. Escalation switches to a bigger-context model and stays there (`cost.escalated`) — a different base model, so thresholds calibrated for one may not carry over.
 
-## 5. Scanning answers localizable questions only
+## 4. Read `results`, `coverage`, `cost`, `notes`
 
-`strategy: 'scan'` splits the material at semantic boundaries and asks per chunk: right for localizable questions (which chunks mention X), wrong for whole-document ones (a per-chunk maximum is not the document-level probability). `aggregate: 'any'` adds a per-`noul` maximum marked provisional — cross-chunk probabilities are not calibrated.
+- `results[]` — `{ id, type, value, probabilities?, confidence? }`, one entry per item/question in order; `value` = chosen label (`choice`/`score`) or boolean (`noul`).
+- `coverage` — `requested`/`answered`/`batches`/`truncated`/`truncatedBy?`/`failed`/`aborted`: what actually happened; partial results are data, not failure.
+- `cost` — `model`, `inputTokens`, `bodyBytes`, `wallMs`, `escalated`, `attempts[]`.
+- `notes[]` — the plugin's own observations verbatim (size attribution, batching hints, low-confidence item names).
 
-## 6. Read what actually happened
+`confidence` is the concentration of the distribution (1 - H/ln N); it is NOT accuracy. A `notes[]` line that names low-confidence items is a FLAG, not a filter: an item not named is NOT thereby endorsed; every answer is unchanged, and when it fires read `probabilities` instead of the chosen label and escalate that question to your own reasoning.
 
-`model` is the model that answered; `plan` is what the plugin decided; in scan mode `chunks` holds the per-chunk answers with no top-level `answers`, and `scan` reports `failed`/`truncated`/`aborted`/`remaining` — a partial scan is data, not a failure.
+In `deep` the material may also be split into chunks; a per-chunk maximum is a **locator, not a document-level probability** — never read a per-chunk maximum as the document's probability.
 
-## 7. Hard boundaries
+## 5. Hard boundaries
 
-These answers are probabilities, not proof. Never treat them as correctness evidence and never let one be the sole basis for a pass/allow decision — that needs artifact-level evidence. The tool must not decide routing and must not be the basis of any **fail-open or fail-closed** policy: those belong to deterministic rules. `tev1` returns only probabilities and never text, so for a human-readable rationale use a generative model.
+These answers are probabilities, not proof. Never treat them as correctness evidence, and never let one be the sole basis for a pass/allow decision — that needs artifact-level evidence. The tool must NOT decide routing and must NOT be the basis of any **fail-open or fail-closed** policy: those belong to deterministic rules. The tev1 family returns only probabilities and never text, so for a human-readable rationale use a generative model.
