@@ -209,6 +209,27 @@ test('execute 拒绝非法参数（校验层是唯一入口）', async () => {
   );
 });
 
+test('decide 拿得到本次调用的 rubric / 阈值 / 信号（meta 透传，只用 text 的包装照常工作）', async () => {
+  const seen = [];
+  const { out } = setup({
+    decide: async (text, meta) => { seen.push({ text, meta }); return { probability: 0.9 }; },
+  });
+  const value = await out.definition.execute(
+    { rubric: 'has the marker appeared', source: { kind: 'file', path: 'logs/a.txt' }, hitThreshold: 0.7, type: 'noul' },
+    EXEC,
+  );
+  assert.equal(value.hit, true);
+  assert.equal(seen.length, 1, 'once + countThreshold=1 ⇒ 命中的那次探测即返回');
+  assert.equal(seen[0].text, 'hello world');
+  assert.equal(seen[0].meta.rubric, 'has the marker appeared');
+  assert.equal(seen[0].meta.hitThreshold, 0.7);
+  assert.equal(seen[0].meta.type, 'noul');
+  assert.equal(seen[0].meta.index, 0);
+  assert.equal(seen[0].meta.at, 1700000000000);
+  assert.equal(seen[0].meta.source.kind, 'file');
+  assert.equal(seen[0].meta.signal, undefined);
+});
+
 test('composeNotes 注入后 notes 用它的结果（本模块只透传，不新增文案）', async () => {
   const { out } = setup({ composeNotes: ({ clampNotes }) => ['(tool) ' + clampNotes.length] });
   const value = await out.definition.execute({ rubric: 'x', source: { kind: 'file', path: 'logs/a.txt' }, intervalMs: 1 }, EXEC);
