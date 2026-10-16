@@ -9,8 +9,18 @@ import {
   OUTPUT_SCHEMA,
   MONITOR_TOOL_DEFAULT_NAME,
 } from '../lib/monitor-tool.js';
+import { valueSchemaSpecToJsonSchema, validateJsonSchemaValue } from '@deepseek-ai/dsh-tools';
 import { MONITOR_LIMITS, validateMonitorArgs, DecisionValidationError } from '../lib/validate.js';
 import { DecisionSourceError } from '../lib/source.js';
+
+/**
+ * 宿主自己的 output 校验路径：`defineTool` 用 `valueSchemaSpecToJsonSchema` 归一 output.schema，
+ * `createSuccessResult` 用 `validateJsonSchemaValue(schema, value, 'value')` 强校验，有 violation 就抛
+ * `ToolOutputError`（于是**一次成功返回被宿主当成失败**）。这里直接跑同一条路。
+ */
+function hostOutputViolations(value) {
+  return validateJsonSchemaValue(valueSchemaSpecToJsonSchema(OUTPUT_SCHEMA), value, 'value');
+}
 
 /** 注入时钟 + 休眠：**绝不 sleep 真实时间**，休眠只推进假时钟。 */
 function fakeTime(start) {
@@ -161,6 +171,29 @@ test('参数用紧凑方言（逐属性 required / object 显式 additionalPrope
   assert.equal(native.properties.source.properties.kind.enum.includes('file'), true);
 });
 
+test('output.schema 与 execute 的返回值逐键一致（用宿主自己的校验器验前台/后台两种形状）', async () => {
+  const { out } = setup();
+  const foreground = await out.definition.execute({
+    rubric: 'x', source: { kind: 'file', path: 'logs/a.txt' }, intervalMs: 1000, timeoutMs: 5000, countThreshold: 1,
+  }, EXEC);
+  assert.deepEqual(hostOutputViolations(foreground), [],
+    '前台返回值必须过自己的 output.schema：宿主对每个成功返回值强校验，有 violation 就把成功当失败');
+  assert.equal(typeof foreground.probability, 'number', 'probability 是返回值与 render 都在用的字段，schema 必须声明它');
+
+  const { jobs } = fakeJobs();
+  const t = fakeTime();
+  const { ctx } = fakeCtx({ jobs });
+  const read = fakeReader({ 'logs/a.txt': 'hit' });
+  const backgroundTool = registerMonitorTool(ctx, {
+    deps: { decide: async () => ({ probability: 0.9 }), read, clock: t.clock, sleep: t.sleep },
+  });
+  const background = await backgroundTool.definition.execute({
+    rubric: 'x', source: { kind: 'file', path: 'logs/a.txt' }, background: true, intervalMs: 1000, timeoutMs: 5000,
+  }, EXEC);
+  assert.deepEqual(hostOutputViolations(background), [], '后台返回值同样必须过 schema');
+  assert.equal(typeof background.jobId, 'string');
+});
+
 test('参数键集与 MONITOR_LIMITS.allowedKeys 完全一致（两端漂移会红）', () => {
   assert.deepEqual(Object.keys(PARAMETERS).slice().sort(), MONITOR_LIMITS.allowedKeys.slice().sort());
 });
@@ -170,7 +203,8 @@ test('注入预算：description 与参数 schema 各自不超上限', () => {
   const schemaBytes = Buffer.byteLength(JSON.stringify(PARAMETERS), 'utf8');
   assert.ok(descriptionBytes <= 1900, 'description ' + descriptionBytes + 'B > 1900B');
   assert.ok(schemaBytes <= 3600, 'parameters ' + schemaBytes + 'B > 3600B');
-  console.log('# description=' + descriptionBytes + 'B parameters=' + schemaBytes + 'B');
+  const outputSchemaBytes = Buffer.byteLength(JSON.stringify(OUTPUT_SCHEMA), 'utf8');
+  console.log('# description=' + descriptionBytes + 'B parameters=' + schemaBytes + 'B outputSchema=' + outputSchemaBytes + 'B');
 });
 
 test('execute 走 validateMonitorArgs：钳制生效，clampNotes 原样透传（notes 未注入时等于它）', async () => {
