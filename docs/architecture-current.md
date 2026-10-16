@@ -23,14 +23,14 @@
 - 打包白名单：`lib/**/*.js`、`assets/**`、`cordis.patch.yml`、两份 README、`LICENSE`、`THIRD_PARTY_NOTICES`；`npm pack` 实测 **20 files / 78.0 kB**（`docs/`、`test/`、`smoke/` 在 git 里被跟踪但**不入包**）。
 - 运行态通过 profile 的 `link:` symlink 指向工作区 ⇒ 磁盘代码即运行代码，**改码后要重载宿主**才生效。
 
-### 1.2 模块图（13 个模块 / 3358 行）
+### 1.2 模块图（13 个模块 / 3364 行）
 
 | 模块 | 行 | 职责 |
 |---|---|---|
 | `tool.js` | 1015 | **唯一接触 `ctx` 的文件**：装配、参数解析、编排（分批 / 三档 depth / 内部扫描）、输出五键与渲染接线 |
 | `validate.js` | 539 | 校验层：`LIMITS`、两模式互斥、material 归一、depth 解析、逐题校验、`analyzeBody` 体积归因 |
 | `client.js` | 328 | HTTP 层：`callSystemOne`、错误分类（含溢出与 **fetch blocked port** 分支）、`SystemOneError` |
-| `source.js` | 355 | 引用式材料：描述符校验、行范围切片、`chunk` 分块、glob 匹配器 |
+| `source.js` | 361 | 引用式材料：描述符校验、行范围切片、`chunk` 分块、glob 匹配器 |
 | `escalate.js` | 286 | 阶梯、选档、单飞、容量分派 `selectByCapacity`、终态 `describeExhausted` |
 | `render.js` | 193 | 把结果渲染成给模型看的文本（**零 import** 的纯函数） |
 | `parameters.js` | 163 | 模型可见参数契约（八键）+ 常驻 `TOOL_DESCRIPTION` |
