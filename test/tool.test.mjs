@@ -976,3 +976,10 @@ test('deep 自适应重切共用一份墙钟预算（注入确定性时钟，不
     await fake.close();
   }
 });
+test('apply 注册两个工具，且 decision 在前、monitor 在后（注册顺序是既有事实）', () => {
+  // 这条守卫来自一次真实回归：把 monitor 的注册插在 decision 之前时，按「第一个注册的工具即 decision」
+  // 取用的 42 个用例连锁失败（monitor 的参数校验把它们全拒了）。顺序因此是契约的一部分。
+  const { registered, ctx } = fakeCtx();
+  apply(ctx, Config({ baseUrl: 'http://127.0.0.1:1' }));
+  assert.deepEqual(registered.map((definition) => definition.name), ['decision', 'monitor']);
+});
