@@ -237,6 +237,52 @@ test('strategy:scan 真的分块：返回 chunks、无顶层 answers，且**不�
   await fake.close();
 });
 
+test('aggregate 只在 scan 下有意义：非 scan 传它必须报结构化错误，不得静默忽略（r7 P0）', async () => {
+  // 旧实现：aggregate 参数被完整忽略 —— 非 scan 调用传了它既不改行为也不报错，
+  // 调用方会以为「跨块聚合」生效了。
+  const fake = await startFakeOllama(() => ({ status: 200, body: ANSWERS }));
+  try {
+    const { registered, ctx } = fakeCtx({ fs: treeFs({}) });
+    apply(ctx, Config({ baseUrl: fake.baseUrl }));
+    const error = await registered[0]
+      .execute({ state: 'x', questions: [{ name: 'q1', type: 'noul', instructions: 'x' }], aggregate: 'any' },
+        { preview: false, signal: undefined })
+      .then(() => null, (e) => e);
+    assert.equal(error?.name, 'DecisionValidationError');
+    assert.equal(error?.kind, 'aggregate_requires_scan');
+    assert.match(error?.message, /strategy: scan/, '消息必须给出可行做法');
+    assert.equal(fake.requests.length, 0, '本地校验失败不得发出网络请求');
+  } finally {
+    await fake.close();
+  }
+});
+
+test('aggregate: any 在 scan 下真的接线：产出 aggregateNoul 的暂定聚合块（r7 P0）', async () => {
+  const body = { model: 'tev1:0.8b', answers: { q1: { type: 'noul', noul: 0.7 } } };
+  const fake = await startFakeOllama(() => ({ status: 200, body }));
+  try {
+    const { registered, ctx } = fakeCtx({ fs: treeFs({}) });
+    apply(ctx, Config({ baseUrl: fake.baseUrl, scanFirstChunkBytes: 8 }));
+    const text = Array.from({ length: 12 }, (_, i) => `line-${i}`).join('\n');
+    const value = await registered[0].execute(
+      { state: text, strategy: 'scan', aggregate: 'any', questions: [{ name: 'q1', type: 'noul', instructions: 'x' }] },
+      { preview: false, signal: undefined },
+    );
+    // 聚合块只可能由 aggregateNoul 产出：provisional 标记 + perQuestion 的逐块最大值。
+    assert.equal(value.scan.aggregate?.provisional, true, 'aggregate: any 必须真的产出聚合块');
+    assert.equal(value.scan.aggregate.perQuestion.q1.max, 0.7);
+    assert.ok(value.chunks.length >= 2, `需要多块才谈得上跨块聚合，实际 ${value.chunks?.length}`);
+    // 不传 aggregate（且配置未设 scanAggregate）时该键整个缺席 —— 「any 才聚合」的对照。
+    const plain = await registered[0].execute(
+      { state: text, strategy: 'scan', questions: [{ name: 'q1', type: 'noul', instructions: 'x' }] },
+      { preview: false, signal: undefined },
+    );
+    assert.equal('aggregate' in plain.scan, false, '默认不得产出聚合块');
+  } finally {
+    await fake.close();
+  }
+});
+
 test('glob：** 吃零层必须命中 a/b/file.md（r2 P0：旧实现只消耗一段）', async () => {
   const fs = treeFs({ 'a/b/file.md': 'AB', 'a/b/b/file.md': 'ABB', 'a/x/b/file.md': 'AXB' });
   const { registered, ctx } = fakeCtx({ fs });

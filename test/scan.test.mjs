@@ -106,3 +106,11 @@ test('aggregateNoul：取逐块最大概率并标暂定；非 noul 不聚合', (
   assert.equal(agg.perQuestion.pick, undefined, 'choice/score 没有跨块标量，不聚合');
   assert.deepEqual(aggregateNoul([]).perQuestion, {});
 });
+
+test('runScan：aggregate 为 any 时才产出聚合块，默认（none）缺席', async () => {
+  const any = await runScan({ text: DOC, budgetBytes: BUDGET, callModel: echoModel([]), aggregate: 'any' });
+  assert.equal(any.aggregate?.provisional, true, 'any 必须真的调用 aggregateNoul');
+  assert.equal(any.aggregate.perQuestion.c1.max, 0.5, '聚合块来自逐块 noul 概率的最大值');
+  const none = await runScan({ text: DOC, budgetBytes: BUDGET, callModel: echoModel([]) });
+  assert.equal('aggregate' in none, false, '默认不得产出聚合块（暂定产物宁可缺席）');
+});
