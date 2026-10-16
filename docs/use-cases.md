@@ -1,7 +1,7 @@
 # `decision` 工具：使用场景（use cases）
 
 > 与 `docs/architecture-current.md` 配套：那篇讲**是什么**，这篇讲**什么场景该用、怎么调、成本与边界在哪**。
-> 事实基线：HEAD `7a3c104`（2026-10-17 采样）· 套件 344/344 绿 · 本包注册**两个**模型可见工具：`decision`（八键：`material`/`rubric`/`items`/`questions`/`type`/`criteria`/`depth`/`model`）与 `monitor`（探测式等待原语，见 §7）。
+> 事实基线：HEAD `b55b942`（2026-10-17 采样）· 套件 345/345 绿 · 本包注册**两个**模型可见工具：`decision`（八键：`material`/`rubric`/`items`/`questions`/`type`/`criteria`/`depth`/`model`）与 `monitor`（探测式等待原语，见 §7）。
 
 ## 0. 判定形状（决定它适配哪些场景）
 

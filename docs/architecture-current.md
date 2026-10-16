@@ -1,6 +1,6 @@
 # dsh-decision-tools — 现状盘点（架构 / 功能 / 接口）
 
-> 快照时点：HEAD `7a3c104`（2026-10-17）· 套件 **344/344 绿** · 工作树除 Lead 的 task-31（`test/tool.test.mjs` 多一条守卫 ⇒ 实跑 345）外干净。已过一轮三人交叉对抗复审（task-12/13/14）与 Lead 终检、四轮修复（`3475758` / `588015d` / `5dba57d`+`2540e30` / `a0ad872`）；其后新增 Monitor 与上游委托管道（`b1485e6`→`fcc1d86`），并修掉一条真机 P0（`7a3c104`，见 §6 #22），本文已回填。
+> 快照时点：代码 HEAD `b55b942`（2026-10-17）· 套件 **345/345 绿** · 工作树干净（本轮文档提交在其上）。已过一轮三人交叉对抗复审（task-12/13/14）与 Lead 终检、四轮修复（`3475758` / `588015d` / `5dba57d`+`2540e30` / `a0ad872`）；其后新增 Monitor 与上游委托管道（`b1485e6`→`fcc1d86`），修掉一条真机 P0（`7a3c104`，见 §6 #22），并由 task-31 给 `decision` 补了同类宿主校验守卫（`b55b942`），本文已回填。
 > 本文描述 **v3 现状**（as-is）：`decision` 工具面为 material/rubric/items/questions/type/criteria/depth/model 八键，输出统一五键；同时注册第二个模型可见工具 `monitor`。
 
 ## 0. 一句话
@@ -65,7 +65,7 @@
 - **工具侧**接触 `ctx` 的不止 `tool.js`（还有 `monitor.js` 的采样源适配、`pipe.js` 的委托执行、`monitor-tool.js` 的转交）；`skill.js` 是**独立入口**、只用 `ctx.skills.registerProvider` 注册随包 skill（不碰 fs/tools）；其余模块是纯函数（可独立单测，`wire.js`/`render.js` 零 import）。
 - 不注册 prompt 段（ADR-5）；使用指引住在「工具描述 + 随包 skill」两处（前者常驻、后者按需）。
 - **两模式互斥**（取代 v2 的「state 与 stateSource 恰有其一」）；`results` 与批次解耦；结果五键的 own value 一律是无损 JSON（宿主会强校验）。
-- **工具返回值必须与自己的 `output.schema` 逐键一致（宿主运行时硬校验）**：宿主 `createSuccessResult` 会 `validateJsonSchemaValue(output.schema, value, 'value')`，**有 violation 就 `throw ToolOutputError`** —— 顶层 `additionalProperties:false` 下**少声明一个真会返回的键**就等于**每次成功都失败**。⚠️ **本地测试直呼 `definition.execute` 会绕过这条 dispatch 校验**，所以「返回值键集 == schema 键集」必须由守卫钉住，不能靠「套件全绿」判断。2026-10-17 的真实事故与修法：`monitor` 前台分支返回 `probability` 而 `OUTPUT_SCHEMA` 未声明它 ⇒ 真机每次前台成功返回都会被判失败（当时 343/343 全绿也看不见）；`7a3c104` **补 schema 而不删字段**（render 一直在打印它，且它是与 `hitThreshold` 直接比较的第一性量），并在 monitor 侧加「用宿主 `validateJsonSchemaValue` 钉住两边键集」的守卫；decision 侧同类守卫由 Lead 的 task-31 补。**边界**：真机 `createSuccessResult` 的**整条 dispatch 尚未跑过**（只跑了同一校验函数、同一入参）⇒ 「修后真机前台可用」是**推断**，真机验收归 task-26。
+- **工具返回值必须与自己的 `output.schema` 逐键一致（宿主运行时硬校验）**：宿主 `createSuccessResult` 会 `validateJsonSchemaValue(output.schema, value, 'value')`，**有 violation 就 `throw ToolOutputError`** —— 顶层 `additionalProperties:false` 下**少声明一个真会返回的键**就等于**每次成功都失败**。⚠️ **本地测试直呼 `definition.execute` 会绕过这条 dispatch 校验**，所以「返回值键集 == schema 键集」必须由守卫钉住，不能靠「套件全绿」判断。2026-10-17 的真实事故与修法：`monitor` 前台分支返回 `probability` 而 `OUTPUT_SCHEMA` 未声明它 ⇒ 真机每次前台成功返回都会被判失败（当时 343/343 全绿也看不见）；`7a3c104` **补 schema 而不删字段**（render 一直在打印它，且它是与 `hitThreshold` 直接比较的第一性量），并在 monitor 侧加「用宿主 `validateJsonSchemaValue` 钉住两边键集」的守卫；decision 侧的同类守卫随 `b55b942`（task-31）落地。**边界**：真机 `createSuccessResult` 的**整条 dispatch 尚未跑过**（只跑了同一校验函数、同一入参）⇒ 「修后真机前台可用」是**推断**，真机验收归 task-26。
 - **Monitor 只记录、不阻断、不持久化**：计数只在内存（每次运行从 0 起算，故**没有重置通道**），`at`/`atIso`/`firstAt`/`lastAt` 毫秒只作记录、不参与命中判定；命中只**通知**，插件绝不 kill/cancel/retry/派发。被设计性删除的参数（`minGapMs` / `countMode` / `persistCount` / `resetCount`）**显式报错**而不是静默忽略 —— 静默忽略会让调用方以为冷却生效了。
 - 安全边界不变量：工作区内、读取上限、「单文件报错 / glob 截断」两种语义不可混同、截断的材料不得当完整材料用。
 
@@ -229,9 +229,9 @@ JSON Schema 的 `required` **只有 `material`**；模式内部必填由校验�
 
 ## 5. 测试与门禁
 
-- 套件 `node --test test/*.test.mjs` = **344 例**（`7a3c104` 提交态）= 顶层 `test(` 声明 **320** 条（`grep -c '^test('` 逐文件相加）+ 循环内生成的表驱动用例 **24** 条（§4.9 锚点 10 + skill 锚点 14）；共 **19** 个测试文件（`test/*.test.mjs`，另 `test/fake-ollama.mjs` 是装置、不算例）。**写作时** Lead 的 task-31 已在工作树里给 `test/tool.test.mjs` 加了一条守卫 ⇒ 那一刻实跑为 **345**；本行按提交态记。
+- 套件 `node --test test/*.test.mjs` = **345 例**（`b55b942` 代码态，本文档提交时实跑核对）= 顶层 `test(` 声明 **321** 条（`grep -c '^test('` 逐文件相加）+ 循环内生成的表驱动用例 **24** 条（§4.9 锚点 10 + skill 锚点 14）；共 **19** 个测试文件（`test/*.test.mjs`，另 `test/fake-ollama.mjs` 是装置、不算例）。
 - **墙钟纪律（精确版）**：**不得用真实计时派生判定**（如按 deadline 计数、按耗时决定分支）。deep 的多轮重切预算用可注入时钟 + 纯函数 `scanRoundBudget` 断言（曾有一条用服务端忙等 60 ms 的用例在并行负载下抖红，已重写）。**已登记的例外**：`test/client.test.mjs` 用 `Date.now()` 做 `elapsed < 2000 ms` 的粗上限兜底、`test/escalate.test.mjs` 有一处 10 ms 等待用于让承诺沉降 —— 这两处不派生判定结果，保留并登记（见 §6 #21）。
-- 守卫：§4.9 判别性锚点、skill 锚点（十四条 v3 读法 + 词表负例）、README 配置表与 `Config` 投影一致（**21 键**，两份 README 的键集与顺序 == `Config.dict`）、注入预算上限（`decision` description ≤1900 / 参数 schema ≤3600 / skill ≤4000；`monitor` description ≤1900 / 参数 schema ≤3600）、`COMPANION_SKILL === SKILL_NAME`、缺 skill 拒服务、首次交付 skill 正文；Monitor/管道新增：**零真实墙钟**（clock/sleep/decide/deliver 全注入）、通知三件套（合并 + 限频 + 唤醒预算）、`material.tool` 双形状对齐（模型面 `{name,arguments}` ↔ 校验层 `{tool,arguments}`）、禁自递归（名单含生效的 `toolName` 与 `monitorToolName`）、模型可见文案词表（v2 参数名负例，含 `stateSource`）、**output schema 与返回值键集一致**（monitor 侧用宿主 `valueSchemaSpecToJsonSchema` + `validateJsonSchemaValue` 钉住，`7a3c104`；decision 侧同类守卫由 Lead 的 task-31 补）。
+- 守卫：§4.9 判别性锚点、skill 锚点（十四条 v3 读法 + 词表负例）、README 配置表与 `Config` 投影一致（**21 键**，两份 README 的键集与顺序 == `Config.dict`）、注入预算上限（`decision` description ≤1900 / 参数 schema ≤3600 / skill ≤4000；`monitor` description ≤1900 / 参数 schema ≤3600）、`COMPANION_SKILL === SKILL_NAME`、缺 skill 拒服务、首次交付 skill 正文；Monitor/管道新增：**零真实墙钟**（clock/sleep/decide/deliver 全注入）、通知三件套（合并 + 限频 + 唤醒预算）、`material.tool` 双形状对齐（模型面 `{name,arguments}` ↔ 校验层 `{tool,arguments}`）、禁自递归（名单含生效的 `toolName` 与 `monitorToolName`）、模型可见文案词表（v2 参数名负例，含 `stateSource`）、**output schema 与返回值键集一致**（monitor 侧 `7a3c104`、decision 侧 `b55b942`，两边都用宿主的 `valueSchemaSpecToJsonSchema` + `validateJsonSchemaValue` 钉住）。
 - 另有：`node --check lib/*.js`、CR 字节 = 0、变异自检（累计 30+ 定点变异全杀）、隔离实例真机冒烟。
 - **装置不变量**（`cee0baa` 之后）：假服务永不交出 fetch 禁用端口；并发负载下错误分类不退化为 `unreachable`。
 - **冒烟必须真断言**（`fca5d2f`）：`smoke/live.mjs` 必须按**工具的五键形状**组装 value 再渲染，并断言「有 answers / 有 `usage.input_tokens` / 渲染文本非空占位 / 无 `undefined|NaN`」，任一不成立即**非 0 退出**并打印拿到了什么。历史教训：该脚本曾把原始回包（`{model,answers,usage}`）当五键喂 `renderAnswers` ⇒ 永远打印 `(no results returned)` 且 exit 0（假绿，见 §6 #21）。
