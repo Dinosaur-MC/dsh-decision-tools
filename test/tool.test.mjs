@@ -6,7 +6,8 @@ import { SKILL_NAME } from '../lib/skill.js';
 import { TOOL_DESCRIPTION } from '../lib/parameters.js';
 import { LIMITS } from '../lib/validate.js';
 import { toWireRequest } from '../lib/wire.js';
-import { startFakeOllama } from './fake-ollama.mjs';
+import { overflowReply, startFakeOllama } from './fake-ollama.mjs';
+import { selectEscalation } from '../lib/escalate.js';
 
 /**
  * 够用的假 ctx：刻意只给 tools（+ 用例可选的 fs/skills）。
@@ -80,7 +81,7 @@ const echoNoul = (p = 0.7) => (req) => ({
 });
 
 const ANSWERS = { model: 'tev1:0.8b', answers: { q1: { type: 'noul', noul: 0.7 } }, usage: { input_tokens: 12, output_tokens: 1 } };
-const OVERFLOW = { status: 400, body: { error: 'prompt 0 has 2100 tokens; expected 1\u20132050 (input is never truncated)' } };
+const OVERFLOW = overflowReply();
 const Q = (n = 'q1') => ({ name: n, type: 'noul', instructions: 'x' });
 const ITEMS = (n, text = '甲') => Array.from({ length: n }, (_, i) => `${text}${i}`);
 /** 一遍真实注册（无 fs）。 */
@@ -337,6 +338,41 @@ test('升档耗尽：三档全溢出 ⇒ 统一终态 escalation_exhausted，附
   }
 });
 
+test('容量未知 ⇒ 不得「升档」到更小的档（defaultModel ∉ ladder；字节常量不是 token 窗口）', async () => {
+  // `currentNumCtx` 曾写成 `numCtxOf(cursor) ?? LIMITS.softBodyBytes` —— defaultModel 一旦不在
+  // Config.ladder 里（两键无交叉校验，实测可达），4096（**字节**）就冒充了当前档的 token 窗口：
+  // `8192 > 4096` 成立 ⇒ 一个更大的模型溢出后会被「升档」到阶梯里**更小**的一档。方向是错的。
+  const fake = await startFakeOllama((req) => (req.json?.model === 'big:latest'
+    ? overflowReply({ actual: 4500, limit: 4096 })
+    : echoNoul()(req)));
+  try {
+    const { registered, ctx } = fakeCtx();
+    apply(ctx, Config({
+      baseUrl: fake.baseUrl, defaultModel: 'big:latest', ladder: [{ model: 'mid:latest', numCtx: 8192 }],
+    }));
+    const error = await registered[0]
+      .execute({ material: 'x'.repeat(300), questions: [Q('q1')] }, EXEC)
+      .then(() => null, (e) => e);
+    assert.deepEqual(fake.requests.map((req) => req.json?.model), ['big:latest'],
+      '★ 容量未知 ⇒ 阶梯里哪一档更大无从比较，不得向 mid:latest（8192）发请求');
+    // ① 纯策略层的判据码（只在「当前档容量未知」时出现）—— 先钉它，再钉模型可见文案。
+    assert.equal(selectEscalation({
+      ladder: [{ model: 'mid:latest', numCtx: 8192 }], from: 'big:latest',
+      failure: { actual: 4500, limit: 4096 }, currentNumCtx: undefined,
+    }).reason, 'current-capacity-unknown', '容量未知必须是独立判据码，不是靠副作用不升档');
+    // ② 判据仍是服务端那条溢出：不得凭空造新终态，actual/limit/原文都原样保留。
+    assert.equal(error?.kind, 'context_overflow');
+    assert.equal(error?.actual, 4500, 'actual / limit 必须原样保留');
+    assert.equal(error?.limit, 4096);
+    assert.match(error?.message ?? '', /4500 token/, '服务端原文与数字不得被改写');
+    // ③ 模型可见文案：必须解释「为什么没升档」并给出可行动项。
+    assert.match(error?.hint ?? '', /容量未知/, '必须告诉调用方「为什么没升档」');
+    assert.match(error?.hint ?? '', /Config\.ladder/, '必须给出可行动项（把该模型写进阶梯）');
+  } finally {
+    await fake.close();
+  }
+});
+
 test('提升失败不得粘滞：坏档一次失败后，下一次调用必须回到默认模型（r1 审查 P0）', async () => {
   const seen = [];
   const fake = await startFakeOllama((req) => {
@@ -344,7 +380,7 @@ test('提升失败不得粘滞：坏档一次失败后，下一次调用必须�
     seen.push(model);
     if (model === 'big:latest') return { status: 404, body: { error: 'model not found' } };
     const len = req.json?.state?.length ?? 0;
-    if (len > 5000) return { status: 400, body: { error: 'prompt 0 has 2100 tokens; expected 1\u20132050 (input is never truncated)' } };
+    if (len > 5000) return overflowReply();
     return { status: 200, body: ANSWERS };
   });
   try {
@@ -540,7 +576,7 @@ test('depth deep：35 项在大窗口模型下只发 1 次请求', async () => {
 test('depth deep：材料连大档都装不下 ⇒ 转内部分块扫描（只有 deep 允许）', async () => {
   const fake = await startFakeOllama((req) => {
     const text = String(req.json?.state ?? '');
-    if (text.length > 1200) return { status: 400, body: { error: 'prompt 0 has 2100 tokens; expected 1\u20132050 (input is never truncated)' } };
+    if (text.length > 1200) return overflowReply();
     return echoNoul()(req);
   });
   try {
@@ -861,7 +897,7 @@ test('deep 分块扫描的流量必须进 cost：inputTokens=服务端自报合�
   let serverTokens = 0;
   const fake = await startFakeOllama((req) => {
     const body = String(req.json?.state ?? '');
-    if (body.length > 1200) return { status: 400, body: { error: 'prompt 0 has 2100 tokens; expected 1\u20132050 (input is never truncated)' } };
+    if (body.length > 1200) return overflowReply();
     serverTokens += 100;
     return {
       status: 200,
@@ -905,7 +941,7 @@ test('deep 自适应重切共用一份墙钟预算（注入确定性时钟，不
   let clock = 0;
   const fake = await startFakeOllama(() => {
     clock += 30;
-    return { status: 400, body: { error: 'prompt 0 has 2100 tokens; expected 1\u20132050 (input is never truncated)' } };
+    return overflowReply();
   });
   try {
     const { registered, ctx } = fakeCtx();

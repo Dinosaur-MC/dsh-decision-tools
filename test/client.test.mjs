@@ -26,6 +26,7 @@ async function withServer(handler, run) {
   try { await run(fake); } finally { await fake.close(); }
 }
 
+
 /** 调用并返回 error（而非抛）。 */
 async function failure(options) {
   return callSystemOne(options).then(() => null, (error) => error);
@@ -196,24 +197,34 @@ test('超时 → timeout，提示首次调用含模型加载', async () => {
   });
 });
 
-test('调用方取消 → aborted，且立即生效（不被 timeoutMs 兜住）', async () => {
-  await withServer(() => ({ hang: true }), async (fake) => {
-    const controller = new AbortController();
-    const started = Date.now();
-    const pending = callSystemOne({
-      baseUrl: fake.baseUrl, body: BODY, timeoutMs: 30000, signal: controller.signal,
-    });
-    setTimeout(() => controller.abort(), 50);
-    const error = await pending.then(() => null, (e) => e);
-    assert.equal(error.kind, 'aborted');
-    // 关键：取消必须真正中止 fetch，而不是等 timeoutMs 到点。
-    // 若把 AbortSignal.any 换成只传 timeoutSignal，kind 仍是 'aborted'
-    // （toTransportError 里另有 signal?.aborted 检查保持分类正确），
-    // 但那时代价是 socket 一直挂到 timeoutMs（本任务 30s、Task 4 默认 120s）。
-    // 这条耗时断言就是为那个回归设的 —— 规格 §4.3 明写「工具被取消能真中断」。
-    const elapsed = Date.now() - started;
-    assert.ok(elapsed < 2000, `cancel 应立即生效，实际耗时 ${elapsed}ms（timeoutMs 是 30000）`);
+test('调用方取消 → aborted，且取消信号必须传到 fetch（机制判据，零墙钟）', async () => {
+  // 旧判据是 Date.now() + elapsed < 2000（真墙钟）—— 与本仓 2026-10-16 立下的「含墙钟的用例不得
+  // 使用真实计时」有张力。它要防的回归只有一种：**只把 timeoutSignal 交给 fetch**。实测该回归：
+  // kind 仍是 'aborted'（toTransportError 另有 signal?.aborted 检查），但 callSystemOne 要到
+  // 30016 ms 才结算、socket 到 30018 ms 才关 —— 正常路径是 71 ms / 72 ms（`.temp/task-20/probe-cancel.mjs`）。
+  //
+  // ⚠️ 判据**不能**写成「连接最终被关了」：那件事终会发生（fetch 自己超时也会关），先 await 结算
+  // 再等关闭事件就永远等得到 —— 实测那种写法在该回归下仍然绿（不承重，已废弃）。这里改钉**机制**：
+  // 真正发出去的那次 fetch 拿到的 signal，必须随手持 signal 的 abort 一起 abort。
+  const passed = [];
+  const fetchImpl = (url, init) => new Promise((resolve, reject) => {
+    passed.push(init.signal);
+    const fail = () => reject(new DOMException('The operation was aborted.', 'AbortError'));
+    if (init.signal?.aborted === true) fail();
+    else init.signal?.addEventListener('abort', fail, { once: true });
   });
+  const controller = new AbortController();
+  const settled = callSystemOne({
+    baseUrl: 'http://example.invalid:1', body: BODY, timeoutMs: 1000, signal: controller.signal, fetchImpl,
+  }).then(() => null, (error) => error);
+  // 等 fetch 真的被调用（一轮宏任务足够），然后取消，再让传播跑完。
+  await new Promise((resolve) => setImmediate(resolve));
+  controller.abort();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(passed[0]?.aborted, true,
+    '★ 取消信号必须传到真正发出的那次 fetch（只传 timeoutSignal 时这里恒 false，连接挂到 timeoutMs）');
+  const error = await settled;
+  assert.equal(error.kind, 'aborted', '取消必须分类成 aborted（不是 timeout / transport）');
 });
 
 test('body 读取中途断连 → SystemOneError，而不是没有 kind 的裸 TypeError', async () => {
