@@ -1,271 +1,189 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { renderAnswers } from '../lib/render.js';
-import { LIMITS } from '../lib/validate.js';
 
-/** 取出渲染出的纯文本。 */
-function textOf(value) {
-  const blocks = renderAnswers({}, value);
+/** 取出渲染出的纯文本（本层恒为单个 text 块）。 */
+function textOf(value, skill) {
+  const blocks = renderAnswers({}, value, skill);
   assert.equal(blocks.length, 1);
   assert.equal(blocks[0].type, 'text');
   assert.equal(typeof blocks[0].text, 'string');
   return blocks[0].text;
 }
 
-const USAGE = { input_tokens: 799, output_tokens: 4 };
+/** ADR-13 的规范返回值：三种题型 + 全套元信息（用于逐字全文断言）。 */
+const CANON = {
+  results: [
+    { id: 'label', type: 'choice', value: 'bug',
+      probabilities: { billing: 0.0063, bug: 0.9593, account: 0.0343 }, confidence: 0.8292 },
+    { id: 'refund', type: 'noul', value: false,
+      probabilities: { true: 0.47510873373302426, false: 0.5248912662669757 } },
+    { id: 'urgency', type: 'score', value: 'Soon',
+      probabilities: { 0: 0.0691, 1: 0.7075, 2: 0.2234 }, confidence: 0.3043 },
+  ],
+  coverage: { requested: 3, answered: 3, batches: 1, truncated: false, truncatedBy: null, failed: 0, aborted: false },
+  material: { source: 'file', bytes: 300,
+    descriptor: { kind: 'file', path: 'docs/spec.md', bytes: 300, startLine: 1, endLine: 20, lines: 20 } },
+  cost: { model: 'tev1:0.8b', inputTokens: 799, bodyBytes: 682, wallMs: 97, escalated: false,
+    attempts: [{ model: 'tev1:0.8b', failureKind: null }] },
+  notes: ['模型选择：tev1:0.8b（fits-default）。'],
+};
 
-test('choice：给出结论、降序概率与 confidence', () => {
-  const text = textOf({
-    model: 'tev1:0.8b',
-    answers: {
-      label: {
-        type: 'choice',
-        choice: 'bug',
-        probabilities: { billing: 0.0063, bug: 0.9593, account: 0.0343 },
-        confidence: 0.8292,
-      },
-    },
-    usage: USAGE,
-  });
-  assert.match(text, /^label\s+choice\s+bug\s+p=\{bug=0\.9593, account=0\.0343, billing=0\.0063\}\s+conf=0\.829$/m);
-  assert.match(text, /usage: input_tokens=799 output_tokens=4/);
-});
-
-test('noul：渲染成 P(true) 数值而不是布尔字面量', () => {
-  const text = textOf({
-    model: 'tev1:0.8b',
-    answers: { refund: { type: 'noul', noul: 0.47510873373302426 } },
-    usage: USAGE,
-  });
-  // 整行逐字比对：既能证明保留了 4 位小数，也能证明没有退化成 true/false。
-  assert.equal(text.split('\n')[0], 'refund  noul    P(true)=0.4751');
-});
-
-test('score：显示 x / (N-1)，概率按档位下标降序', () => {
-  const text = textOf({
-    model: 'tev1:0.8b',
-    answers: {
-      urgency: {
-        type: 'score',
-        score: 1.1542321654504228,
-        legend: { 0: 'Routine', 1: 'Soon', 2: 'Immediate' },
-        probabilities: { 0: 0.0691, 1: 0.7075, 2: 0.2234 },
-        confidence: 0.3043,
-      },
-    },
-    usage: USAGE,
-  });
-  assert.match(text, /^urgency\s+score\s+1\.1542 \/ 2\s+p=\{1=0\.7075, 2=0\.2234, 0=0\.0691\}\s+conf=0\.304$/m);
-});
-
-test('多题：每题一行，名字按最长者对齐', () => {
-  const text = textOf({
-    model: 'tev1:0.8b',
-    answers: {
-      a: { type: 'noul', noul: 0.5 },
-      longer: { type: 'noul', noul: 0.25 },
-    },
-    usage: USAGE,
-  });
-  const lines = text.split('\n');
-  assert.equal(lines[0], 'a       noul    P(true)=0.5000');
-  assert.equal(lines[1], 'longer  noul    P(true)=0.2500');
-});
-
-test('没有 usage 时不渲染 usage 行', () => {
-  const text = textOf({ model: 'tev1:0.8b', answers: { q: { type: 'noul', noul: 1 } } });
-  assert.equal(text, 'q  noul    P(true)=1.0000');
-});
-
-test('未知答案类型不炸，退化为 JSON', () => {
-  const text = textOf({ model: 'm', answers: { q: { type: 'mystery', value: 1 } } });
-  assert.match(text, /q\s+mystery/);
-  assert.match(text, /"value":1/);
-});
-
-test('体积口径：value 带 state_bytes/body_bytes 时追加一行', () => {
-  const value = {
-    model: 'tev1:0.8b',
-    answers: { q: { type: 'noul', noul: 0.4751 } },
-    usage: { input_tokens: 799, output_tokens: 1 },
-    state_bytes: 101,
-    body_bytes: 634,
-  };
-  const [block] = renderAnswers({}, value);
-  assert.match(block.text, /^体积: state=101B body=634B$/m);
-});
-
-test('体积告警：body_warning 原样追加；无字段时不得凭空产生告警（即使已超阈值）', () => {
-  const warned = renderAnswers({}, {
-    model: 'tev1:0.8b',
-    answers: { q: { type: 'noul', noul: 0.4751 } },
-    state_bytes: 20000,
-    body_bytes: 20480,
-    body_warning: '请求体 20480 字节，已超过建议的 16384 字节：可考虑拆成多次调用，或缩小 state。',
-  })[0];
-  assert.match(warned.text, /^体积: state=20000B body=20480B$/m);
-  assert.match(warned.text, /已超过建议的 16384 字节/);
-
-  // 关键：body_bytes **高于**软阈值却**不带** body_warning ⇒ 必须没有任何告警。
-  // 若 render 自己内联了 16384 这个阈值，这一条会红 —— 它钉住的正是
-  // 「策略属于工具层，render 只呈现」这条 §4.8 约束。
-  const plain = renderAnswers({}, {
-    model: 'tev1:0.8b',
-    answers: { q: { type: 'noul', noul: 0.4751 } },
-    state_bytes: 20000,
-    body_bytes: 20480,
-  })[0];
-  assert.doesNotMatch(plain.text, /超过建议/);
-  assert.match(plain.text, /^体积: state=20000B body=20480B$/m);
-  // 逐字全文相等：不依赖任何措辞。凡是在 render 里自行判断阈值、自行拼一句告警的
-  // 实现，无论它把话怎么说，都会在这里打红 —— 这才是 §4.8 那条约束的承重断言。
-  assert.equal(plain.text, 'q  noul    P(true)=0.4751\n体积: state=20000B body=20480B');
-
-  // 任何「在 render 里比较某个有限阈值」的实现都会在这里多打一行 ⇒ 逐字相等打红。
-  // 该值远高于 maxBodyBytes(65536)，故连「内联硬上限」那一族变体也一并关掉。
-  // render 是纯函数，这个值在单测里完全合法（它不可能来自生产路径，那由 V8 挡住）。
-  const huge = renderAnswers({}, {
-    model: 'tev1:0.8b',
-    answers: { q: { type: 'noul', noul: 0.4751 } },
-    state_bytes: 20000,
-    body_bytes: 1e15,
-  })[0];
-  assert.equal(huge.text, 'q  noul    P(true)=0.4751\n体积: state=20000B body=1000000000000000B');
-
-  // 这条负例的全部意义在于 body_bytes **高于**软阈值；常量一旦被调高越过它，
-  // 该用例会静默退化成恒真 —— 这行把那种退化变成红灯。（同理，上面的 1e15 不受影响。）
-  assert.ok(20480 > LIMITS.softBodyBytes, '负例 fixture 必须高于 softBodyBytes，否则本条恒真');
-
-  // 空字符串与「没有该键」必须同义：不得打印空行（否则模型会读到一行空白）。
-  const empty = renderAnswers({}, {
-    model: 'tev1:0.8b',
-    answers: { q: { type: 'noul', noul: 0.4751 } },
-    state_bytes: 20000,
-    body_bytes: 20480,
-    body_warning: '',
-  })[0];
-  assert.doesNotMatch(empty.text, /\n\s*$/);
-  // 直接断言「空串」与「缺键」的输出逐字相同（比拼接期望串更强，也不写死任何列宽）。
-  assert.equal(empty.text, plain.text);
-});
-
-test('体积口径：字段缺失时不打印该行（向后兼容）', () => {
-  const [block] = renderAnswers({}, {
-    model: 'tev1:0.8b',
-    answers: { q: { type: 'noul', noul: 0.4751 } },
-  });
-  assert.doesNotMatch(block.text, /体积:/);
-});
-
-// ---------------------------------------------------------------------------
-// F1c/F1d（2026-10-04 缺陷审查轮）：OUTPUT_SCHEMA 的 answers 是
-// additionalProperties:true，形状残缺的值能通过宿主的无损 JSON 与 schema 两段，
-// 最后由 render 兜底 —— 这里抛异常会被宿主包成
-// "output.render failed: …"，把一次**成功**调用变成工具失败。
-// ---------------------------------------------------------------------------
-
-test('F1c：已知 type 但字段缺失时退化渲染，不得抛异常', () => {
-  const text = textOf({
-    model: 'tev1:0.8b',
-    answers: {
-      a: { type: 'choice', choice: 'bug' },
-      b: { type: 'noul' },
-      c: { type: 'score' },
-    },
-  });
-  // 逐字全文：缺失的数值一律渲染成 —，而不是让 JSON.stringify(undefined) 漏成
-  // 字面 undefined，更不是抛 TypeError。
-  assert.equal(text, [
-    'a  choice  bug  p={—}  conf=—',
-    'b  noul    P(true)=—',
-    'c  score   — / —  p={—}  conf=—',
+test('五键齐全时逐字全文：results 逐项 + coverage/material/cost + notes 原样', () => {
+  assert.equal(textOf(CANON), [
+    'label    choice  bug  p={bug=0.9593, account=0.0343, billing=0.0063}  conf=0.829',
+    'refund   noul    P(true)=0.4751',
+    'urgency  score   Soon  p={1=0.7075, 2=0.2234, 0=0.0691}  conf=0.304',
+    '覆盖: requested=3 answered=3 batches=1 truncated=false failed=0 aborted=false',
+    '材料: file docs/spec.md L1-20（300B，不进上下文）',
+    'cost: model=tev1:0.8b input_tokens=799 body=682B wall=97ms escalated=false attempts=1',
+    '模型选择：tev1:0.8b（fits-default）。',
   ].join('\n'));
 });
 
-test('F1c：概率值不是数值时逐个退化，且不得因排序比较器返回 NaN 而乱序', () => {
+test('choice：所选标签 + 降序概率 + confidence', () => {
+  const [row] = textOf({ results: [CANON.results[0]] }).split('\n');
+  assert.equal(row, 'label  choice  bug  p={bug=0.9593, account=0.0343, billing=0.0063}  conf=0.829');
+});
+
+test('noul：只打 P(true)（取自 probabilities.true），不打布尔 value', () => {
+  const [row] = textOf({ results: [CANON.results[1]] }).split('\n');
+  assert.equal(row, 'refund  noul    P(true)=0.4751');
+  assert.equal(row.includes(' false'), false, '布尔 value 不得出现在渲染里（它会让模型把概率读成判定）');
+  assert.equal(row.includes('value='), false, '不得回显 value 字段本身');
+});
+
+test('score：value 是档位标签；概率键是 0..N-1 下标（不折算均值）', () => {
+  const [row] = textOf({ results: [CANON.results[2]] }).split('\n');
+  assert.equal(row, 'urgency  score   Soon  p={1=0.7075, 2=0.2234, 0=0.0691}  conf=0.304');
+});
+
+test('多结果：id 按最长者对齐', () => {
+  const text = textOf({ results: [
+    { id: 'a', type: 'noul', value: true, probabilities: { true: 0.5, false: 0.5 } },
+    { id: 'longer', type: 'noul', value: false, probabilities: { true: 0.25, false: 0.75 } },
+  ] });
+  assert.equal(text, ['a       noul    P(true)=0.5000', 'longer  noul    P(true)=0.2500'].join('\n'));
+});
+
+test('未答项（value:null、无 probabilities）逐项占位，且严格保持 results 顺序', () => {
   const text = textOf({
-    model: 'tev1:0.8b',
-    answers: {
-      q: { type: 'choice', choice: 'a', probabilities: { a: 0.9, b: 'oops', c: 0.1 }, confidence: 0.5 },
-    },
-  });
-  assert.equal(text, 'q  choice  a  p={a=0.9000, c=0.1000, b=—}  conf=0.500');
-});
-
-test('F1d：answers 为空对象时给出明确占位行，而不是空字符串', () => {
-  // 空串等于「模型读到一个没有任何内容的工具结果」，无法与「真的没有答案」区分。
-  assert.equal(textOf({ model: 'tev1:0.8b', answers: {} }), '(no answers returned)');
-});
-
-// ---------------------------------------------------------------------------
-// §4.11（2026-10-06 delta · 置信度门限）：告警与体积告警受**同一条 §4.8 约束** ——
-// 门限是策略、住在工具层，render 只原样呈现一行。故这里刻意给一个 confidence 极低的
-// 答案：任何「在 render 里比较阈值」的实现都会为此多打一行，逐字相等会打红。
-// ---------------------------------------------------------------------------
-
-/** 同一份「置信度极低」的答案，用于对比「带告警键」与「不带」两种输入。 */
-const LOW_CONF_VALUE = {
-  model: 'tev1:0.8b',
-  answers: {
-    q: { type: 'choice', choice: 'bug', probabilities: { bug: 0.5, x: 0.5 }, confidence: 0.01 },
-  },
-};
-
-test('§4.11：无 confidence_warning 键时绝不自行判断置信度（逐字全文）', () => {
-  const plain = textOf(LOW_CONF_VALUE);
-  assert.doesNotMatch(plain, /confidence 告警/);
-  assert.equal(plain, 'q  choice  bug  p={bug=0.5000, x=0.5000}  conf=0.010');
-});
-
-test('§4.11：confidence_warning 原样追加为最后一行；空串与缺键同义', () => {
-  const plain = textOf(LOW_CONF_VALUE);
-  const warned = textOf({ ...LOW_CONF_VALUE, confidence_warning: 'confidence 告警：以下 1 题……' });
-  // 逐字：既证明它原样打印（render 不改写措辞），也证明它与体积行无关地独立出现。
-  assert.equal(warned, `${plain}\nconfidence 告警：以下 1 题……`);
-  // 空串必须与缺键逐字相同 —— 否则模型会读到一行空白。
-  assert.equal(textOf({ ...LOW_CONF_VALUE, confidence_warning: '' }), plain);
-});
-
-test('§4.11：告警行排在体积口径与体积告警之后（模型读到的是最后一行）', () => {
-  assert.equal(textOf({
-    model: 'tev1:0.8b',
-    answers: { q: { type: 'noul', noul: 0.4 } },
-    state_bytes: 20000,
-    body_bytes: 20480,
-    body_warning: '体积告警行',
-    confidence_warning: '置信度告警行',
-  }), 'q  noul    P(true)=0.4000\n体积: state=20000B body=20480B\n体积告警行\n置信度告警行');
-});
-
-test('v2：扫描模式逐块呈现，并回显 plan / escalated / source / scan 元信息', () => {
-  const out = renderAnswers({}, {
-    model: 'clef-flash:latest',
-    plan: { strategy: 'scan', action: 'scan', model: 'clef-flash:latest', reason: 'scan-explicit' },
-    escalated: { from: 'tev1:0.8b', to: 'nimble:latest', sticky: true },
-    source: { kind: 'glob', pattern: 'assets/xx', bytes: 5123, files: ['assets/a.md'], truncated: true, remaining: 2 },
-    chunks: [
-      { name: 'c1', startLine: 1, endLine: 20, answers: { q1: { type: 'noul', noul: 0.8 } } },
-      { name: 'c2', startLine: 21, endLine: 40, answers: { q1: { type: 'noul', noul: 0.2 } } },
+    results: [
+      { id: 'ok', type: 'noul', value: true, probabilities: { true: 0.9, false: 0.1 } },
+      { id: 'missing', type: 'noul', value: null },
+      { id: 'gone', type: 'choice', value: null },
     ],
-    scan: {
-      failed: [{ chunk: 'c3', kind: 'context_overflow', message: 'too big' }],
-      truncated: true, truncatedBy: 'chunks', aborted: false, remaining: 3, bytesPerChunk: 4096,
-      aggregate: { provisional: true, perQuestion: { q1: { max: 0.8, chunks: ['c1'] } } },
-    },
+    coverage: { requested: 3, answered: 1, batches: 1, truncated: false, truncatedBy: null, failed: 2, aborted: false },
   });
-  const text = out[0].text;
-  assert.match(text, /\[c1 L1-20\]/, '逐块呈现块名与行区间');
-  assert.match(text, /\[c2 L21-40\]/);
-  assert.match(text, /\[c3\] FAILED context_overflow: too big/, '失败块必须单独一行并带 kind');
-  assert.match(text, /计划: strategy=scan action=scan model=clef-flash:latest reason=scan-explicit/);
-  assert.match(text, /已提升: tev1:0\.8b → nimble:latest/, '提升必须回显，且提示换模型即换基座');
-  assert.match(text, /材料: glob assets\/xx（1 个文件，已截断）/, '★ glob 来源不得按 file 形状渲染（无 path/startLine）');
-  assert.match(text, /扫描: 块=2 失败=1 截断=true\(chunks\)/);
-  assert.match(text, /聚合（暂定，不得作为判定依据）/, '聚合必须标明不得作为判定依据');
-  assert.equal(text.includes('(no answers returned)'), false, '有 chunks 时不得出现空答案占位');
+  assert.equal(text.split('\n').slice(0, 3).join('\n'), [
+    'ok       noul    P(true)=0.9000',
+    'missing  noul    (no answer)',
+    'gone     choice  (no answer)',
+  ].join('\n'));
+  assert.match(text, /^覆盖: requested=3 answered=1 .*failed=2 aborted=false$/m);
 });
 
-test('v2：file 来源仍按 path + 行区间渲染（形状分派不得把两支弄反）', () => {
-  const out = renderAnswers({}, { model: 'tev1:0.8b', source: { kind: 'file', path: 'README.md', startLine: 1, endLine: 20, bytes: 300 } });
-  assert.match(out[0].text, /材料: file README\.md L1-20（300B，不进上下文）/);
+test('coverage：truncatedBy 只在截断时出现；缺失字段退化成 —', () => {
+  const cut = textOf({ coverage: { requested: 5, answered: 4, batches: 2, truncated: true, truncatedBy: 'chunks', failed: 1, aborted: false } });
+  assert.match(cut, /^覆盖: requested=5 answered=4 batches=2 truncated=true\(by=chunks\) failed=1 aborted=false$/m);
+  const bare = textOf({ coverage: {} });
+  assert.match(bare, /^覆盖: requested=— answered=— batches=— truncated=— failed=— aborted=—$/m);
+});
+
+test('material：inline / file / glob 三种形状各自渲染，glob 不得按 file 形状渲染', () => {
+  assert.match(textOf({ material: { source: 'inline', bytes: 113 } }), /^材料: inline（113B，不进上下文）$/m);
+  assert.match(textOf({ material: CANON.material }), /^材料: file docs\/spec\.md L1-20（300B，不进上下文）$/m);
+  assert.match(textOf({ material: { source: 'glob', bytes: 5123, descriptor: { kind: 'glob', pattern: 'docs/**/*.md', files: ['a.md', 'b.md'], bytes: 5123, truncated: true, remaining: 2 } } }),
+    /^材料: glob docs\/\*\*\/\*\.md（2 个文件，已截断）（5123B，不进上下文）$/m);
+  assert.match(textOf({ material: { source: 'glob', bytes: 10, descriptor: { kind: 'glob', pattern: 'p', files: [], bytes: 10, truncated: false, remaining: 0 } } }),
+    /^材料: glob p（0 个文件）（10B，不进上下文）$/m);
+});
+
+test('cost：升档时附「尝试」一行（成功项 failureKind=null 渲染成 ok）', () => {
+  const one = textOf({ cost: { model: 'tev1:0.8b', inputTokens: 10, bodyBytes: 20, wallMs: 5, escalated: false, attempts: [{ model: 'tev1:0.8b', failureKind: null }] } });
+  assert.match(one, /^cost: model=tev1:0\.8b input_tokens=10 body=20B wall=5ms escalated=false attempts=1$/m);
+  assert.doesNotMatch(one, /尝试:/);
+  const two = textOf({ cost: { model: 'nimble-v3:latest', inputTokens: 30, bodyBytes: 40, wallMs: 9, escalated: true,
+    attempts: [{ model: 'tev1:0.8b', failureKind: 'context_overflow' }, { model: 'nimble-v3:latest', failureKind: null }] } });
+  assert.equal(two, [
+    '(no results returned)',
+    'cost: model=nimble-v3:latest input_tokens=30 body=40B wall=9ms escalated=true attempts=2',
+    '尝试: tev1:0.8b(context_overflow) → nimble-v3:latest(ok)',
+  ].join('\n'));
+});
+
+test('notes 原样逐行输出、保持顺序，排在元信息之后、配套 skill 之前', () => {
+  const text = textOf({
+    results: [{ id: 'q', type: 'noul', value: true, probabilities: { true: 1, false: 0 } }],
+    cost: { model: 'm', inputTokens: 1, bodyBytes: 2, wallMs: 3, escalated: false, attempts: [] },
+    notes: ['模型选择：m（fits-default）。', '体积归因：…', 'confidence 告警：以下 1 题…'],
+  }, 'SKILL BODY');
+  const lines = text.split('\n');
+  assert.deepEqual(lines.slice(1, 4), ['cost: model=m input_tokens=1 body=2B wall=3ms escalated=false attempts=0', '模型选择：m（fits-default）。', '体积归因：…']);
+  assert.equal(lines[4], 'confidence 告警：以下 1 题…');
+  assert.deepEqual(lines.slice(5), ['', '=== companion skill: how to read these values ===', 'SKILL BODY']);
+});
+
+test('notes 里的空串与缺键同义：不得打出空行', () => {
+  const withEmpty = textOf({ notes: ['a', '', 'b'] });
+  const without = textOf({ notes: ['a', 'b'] });
+  assert.equal(withEmpty, without);
+  assert.equal(withEmpty, '(no results returned)\na\nb');
+});
+
+test('零结果给明确占位行，而不是空文本；占位后仍照常输出元信息', () => {
+  assert.equal(textOf({ results: [] }), '(no results returned)');
+  assert.equal(textOf({}), '(no results returned)');
+  assert.equal(textOf({ results: [], coverage: { requested: 0, answered: 0, batches: 0 } }),
+    ['(no results returned)', '覆盖: requested=0 answered=0 batches=0 truncated=— failed=— aborted=—'].join('\n'));
+});
+
+test('全函数：残缺 / 异形 value 一律不抛（宿主会把异常变成工具失败）', () => {
+  const odd = [
+    { results: [null, 42, 'x'] },
+    { results: [{ id: 7, type: 'mystery', value: { a: 1 } }] },
+    { results: [{ type: 'choice' }] },
+    { results: [{ id: 'q', type: 'choice', value: 'a', probabilities: { a: 0.9, b: 'oops', c: 0.1 }, confidence: 0.5 }] },
+    { results: [{ id: 'q', type: 'score', value: 2, probabilities: null }] },
+    { coverage: 'nope', material: 5, cost: [], notes: 'x' },
+    { results: [{ id: 'q', type: 'choice', value: 'a', probabilities: { a: null } }] },
+  ];
+  for (const value of odd) assert.equal(typeof textOf(value), 'string');
+  assert.match(textOf({ results: [{ id: 'q', type: 'choice', value: 'a', probabilities: { a: 0.9, b: 'oops', c: 0.1 } }] }),
+    /^q  choice  a  p=\{a=0\.9000, c=0\.1000, b=—\}  conf=—$/m);
+  assert.equal(textOf({ results: [{ id: 'q', type: 'mystery', value: { a: 1 } }] }), 'q  mystery  {"id":"q","type":"mystery","value":{"a":1}}');
+  assert.match(textOf({ results: [42] }), /^—  unknown  42$/m);
+  assert.match(textOf({ results: [{ id: 'q', type: 'score', value: 2, probabilities: null }] }), /^q  score   2  p=\{—\}  conf=—$/m);
+});
+
+test('缺失数值退化占位符而不是字面 undefined/NaN', () => {
+  const text = textOf({ results: [
+    { id: 'a', type: 'choice', value: 'bug' },
+    { id: 'b', type: 'noul', value: true },
+    { id: 'c', type: 'score', value: 'high' },
+  ] });
+  assert.equal(text, [
+    'a  choice  bug  p={—}  conf=—',
+    'b  noul    P(true)=—',
+    'c  score   high  p={—}  conf=—',
+  ].join('\n'));
+  assert.equal(/undefined|NaN/.test(text), false);
+});
+
+test('§4.8 承重断言：render 不自行判断阈值 —— 低 confidence 且 notes 为空时逐字全文里没有告警', () => {
+  const value = {
+    results: [{ id: 'q', type: 'choice', value: 'bug', probabilities: { bug: 0.5, x: 0.5 }, confidence: 0.01 }],
+    notes: [],
+  };
+  assert.equal(textOf(value), 'q  choice  bug  p={bug=0.5000, x=0.5000}  conf=0.010');
+  const huge = { ...value, material: { source: 'inline', bytes: 1e9 },
+    cost: { model: 'm', inputTokens: 1, bodyBytes: 1e15, wallMs: 1, escalated: false, attempts: [] } };
+  assert.doesNotMatch(textOf(huge), /超过建议|告警/);
+});
+
+test('companion skill：给了正文才附，且附在最后；没给/空白时不得出现标题行', () => {
+  assert.equal(textOf({ results: [] }, 'BODY'), '(no results returned)\n\n=== companion skill: how to read these values ===\nBODY');
+  assert.doesNotMatch(textOf({ results: [] }), /companion skill/);
+  assert.doesNotMatch(textOf({ results: [] }, '   '), /companion skill/);
+  assert.doesNotMatch(textOf({ results: [] }, ''), /companion skill/);
 });
