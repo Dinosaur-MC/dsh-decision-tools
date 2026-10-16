@@ -490,6 +490,21 @@ test('A 方案：中等材料只升到「够用的最小档」（clef-flash 是�
   await fake.close();
 });
 
+test('容量按语言密度算：同样 12000 字节，中文材料被判为更吃容量（r6 的 2.32 B/token）', async () => {
+  // ASCII：8192 × 0.6 × 3.33 ≈ 16360 B ⇒ 12000 B 装得下默认档。
+  // 中文：8192 × 0.6 × 2.32 ≈ 11401 B ⇒ 同样的字节数必须往上换档。
+  const fake = await startFakeOllama(() => ({ status: 200, body: ANSWERS }));
+  const { registered, ctx } = fakeCtx({ fs: treeFs({}) });
+  apply(ctx, Config({ baseUrl: fake.baseUrl }));
+  const exec = { preview: false, signal: undefined, agent: { session: { header: { cwd: 'F:/ws' } } } };
+  const questions = [{ name: 'q1', type: 'noul', instructions: 'x' }];
+  await registered[0].execute({ state: 'a'.repeat(12000), questions }, exec);
+  assert.equal(fake.requests[0].json.model, 'tev1:0.8b', '英文/ASCII 材料仍在默认档');
+  await registered[0].execute({ state: '中'.repeat(4000), questions }, exec);
+  assert.equal(fake.requests[1].json.model, 'clef-flash:latest', '中文材料按 2.32 B/token 估算，必须升档');
+  await fake.close();
+});
+
 test('A 方案：估算偏乐观而实际溢出时，仍走既有的溢出提升兜底', async () => {
   const fake = await startFakeOllama((req) => (req.json?.model === 'nimble-v3:latest'
     ? { status: 400, body: { error: 'prompt 0 has 3000 tokens; expected 1\u201332768 (input is never truncated)' } }

@@ -11,6 +11,7 @@ import {
   describeExhausted,
   selectByCapacity,
 } from '../lib/escalate.js';
+import { softBytesFor } from '../lib/density.js';
 
 /**
  * 测试夹具阶梯（**不是** DEFAULT_LADDER）。用本机 2026-10-15 实测的容量，
@@ -235,44 +236,62 @@ const LADDER3 = [
 ];
 
 test('selectByCapacity：显式指定优先（R1）', () => {
-  const out = selectByCapacity({ explicitModel: 'x:latest', defaultModel: 'tev1:0.8b', ladder: LADDER3, stateBytes: 10, defaultFitBytes: 4096 });
+  const out = selectByCapacity({ explicitModel: 'x:latest', defaultModel: 'tev1:0.8b', ladder: LADDER3, stateBytes: 10, softBytes: 4096 });
   assert.deepEqual(out, { model: 'x:latest', reason: 'explicit', capacityBytes: null });
 });
 
 test('selectByCapacity：小材料走默认档（每次省 0.77–1.12 s 的那一支）', () => {
-  const out = selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: LADDER3, stateBytes: 400, defaultFitBytes: 4096 });
+  const out = selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: LADDER3, stateBytes: 400, softBytes: 4096 });
   assert.equal(out.model, 'tev1:0.8b');
   assert.equal(out.reason, 'fits-default');
-  assert.equal(selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: LADDER3, stateBytes: 4096, defaultFitBytes: 4096 }).reason, 'fits-default', '边界含等号');
+  assert.equal(selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: LADDER3, stateBytes: 4096, softBytes: 4096 }).reason, 'fits-default', '边界含等号');
 });
 
 test('selectByCapacity：大材料直发容量足够的最小档（省掉先吃 400 那一轮）', () => {
   // 可用字节上限 = numCtx × BYTES_PER_TOKEN × margin：
   //   tev1(8192) → 16368 B · clef-flash(16384) → 32735 B · nimble-v3(32768) → 65470 B
-  const flash = selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: LADDER3, stateBytes: 20000, defaultFitBytes: 4096 });
+  const flash = selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: LADDER3, stateBytes: 20000, softBytes: 4096 });
   assert.equal(flash.model, 'clef-flash:latest');
   assert.equal(flash.reason, 'fits-ladder');
   // 20000 已越过 tev1 的 16368 B ⇒ 落到 clef-flash；再往上越过 32735 B 才到 nimble-v3
-  const v3 = selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: LADDER3, stateBytes: 40000, defaultFitBytes: 4096 });
+  const v3 = selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: LADDER3, stateBytes: 40000, softBytes: 4096 });
   assert.equal(v3.model, 'nimble-v3:latest');
   assert.equal(v3.reason, 'fits-ladder');
 });
 
 test('selectByCapacity：谁都不够就走最大档；阶梯为空才用粘滞兜底', () => {
-  const huge = selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: LADDER3, stateBytes: 10_000_000, defaultFitBytes: 4096 });
+  const huge = selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: LADDER3, stateBytes: 10_000_000, softBytes: 4096 });
   assert.equal(huge.model, 'nimble-v3:latest');
   assert.equal(huge.reason, 'largest');
-  const empty = selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: [], stateBytes: 5000, defaultFitBytes: 4096, stickyModel: 'nimble:latest' });
+  const empty = selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: [], stateBytes: 5000, softBytes: 4096, stickyModel: 'nimble:latest' });
   assert.equal(empty.model, 'nimble:latest');
   assert.equal(empty.reason, 'sticky-fallback');
-  const noSticky = selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: [], stateBytes: 5000, defaultFitBytes: 4096 });
+  const noSticky = selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: [], stateBytes: 5000, softBytes: 4096 });
   assert.equal(noSticky.model, 'tev1:0.8b');
   assert.equal(noSticky.reason, 'default-fallback');
 });
 
+test('selectByCapacity：softBytes 由语言密度算出，阶梯各档也用同一密度（ADR-16 / D7）', () => {
+  // 中文材料：8192 × 0.6 × 2.32 = 11401 B ⇒ 12000 B 的同类材料越过默认档。
+  const softBytes = softBytesFor({ numCtx: 8192, text: '中' });
+  assert.equal(softBytes, Math.floor(8192 * 0.6 * 2.32));
+  const out = selectByCapacity({
+    defaultModel: 'tev1:0.8b', ladder: LADDER3, stateBytes: 12000, softBytes, bytesPerToken: 2.32,
+  });
+  assert.equal(out.reason, 'fits-ladder');
+  assert.equal(out.model, 'clef-flash:latest', 'tev1 档按 2.32 只有 11401 B，装不下 12000 B');
+  // 同一字节数按英文口径（3.33）默认档就装得下 ⇒ 密度确实改变了判决。
+  assert.equal(selectByCapacity({
+    defaultModel: 'tev1:0.8b', ladder: LADDER3, stateBytes: 12000,
+    softBytes: Math.floor(8192 * 0.6 * 3.33), bytesPerToken: 3.33,
+  }).model, 'tev1:0.8b');
+  // 窗口未知（softBytes 非有限）时不得崩，也不得把「没有阈值信息」当成别的东西。
+  assert.equal(selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: LADDER3, stateBytes: 10, softBytes: undefined }).model, 'tev1:0.8b');
+});
+
 test('selectByCapacity：容量未知的阶梯条目被忽略；字节数未知按无穷处理', () => {
-  const odd = selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: [{ model: 'a:latest' }, { model: 'nimble:latest', numCtx: 8194 }], stateBytes: 5000, defaultFitBytes: 4096 });
+  const odd = selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: [{ model: 'a:latest' }, { model: 'nimble:latest', numCtx: 8194 }], stateBytes: 5000, softBytes: 4096 });
   assert.equal(odd.model, 'nimble:latest', '缺 numCtx 的条目不得被当成候选');
-  const nan = selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: LADDER3, stateBytes: Number.NaN, defaultFitBytes: 4096 });
+  const nan = selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: LADDER3, stateBytes: Number.NaN, softBytes: 4096 });
   assert.equal(nan.reason, 'largest', '字节数未知时保守地走最大档');
 });
