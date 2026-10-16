@@ -105,7 +105,7 @@
 
 | 口径 | 实现位置 |
 |---|---|
-| 粘滞三层优先级 / 兜底 | `lib/escalate.js` 的 `selectByCapacity`（`sticky-fallback`）与 `resolveSticky`（策略函数，当前无生产调用者，见 `docs/architecture-current.md` §6 已知偏差 #7）；粘滞**写入点**在 `lib/tool.js`（每次选档后、升档**成功**后） |
+| 粘滞三层优先级 / 兜底 | `lib/escalate.js` 的 `selectByCapacity`（`sticky-fallback`）；粘滞**写入点**在 `lib/tool.js`（每次选档后、升档**成功**后）。`resolveSticky` 已于 `6b740cc` 删除（原为无生产调用者的策略函数） |
 | 容量余量 `ESCALATION_MARGIN = 0.6` | `lib/escalate.js` |
 | 静态阶梯快照 | `lib/escalate.js` 的 `DEFAULT_LADDER`（`Config.ladder` 覆盖） |
 | 语言密度容量估算 | `lib/density.js` |
