@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { name, inject, Config, apply } from '../lib/index.js';
-import { resolveSoftBodyBytes, resolveMinConfidence, collectLowConfidence, OUTPUT_SCHEMA, COMPANION_SKILL } from '../lib/tool.js';
+import { resolveSoftBodyBytes, resolveMinConfidence, collectLowConfidence, scanRoundBudget, OUTPUT_SCHEMA, COMPANION_SKILL } from '../lib/tool.js';
 import { SKILL_NAME } from '../lib/skill.js';
 import { TOOL_DESCRIPTION } from '../lib/parameters.js';
 import { LIMITS } from '../lib/validate.js';
@@ -819,19 +819,37 @@ test('deep 分块扫描的流量必须进 cost：inputTokens=服务端自报合�
   }
 });
 
-test('deep 自适应重切共用一份墙钟预算：预算耗尽后不得再开新一轮（task-13 复审 P2）', async () => {
-  // 旧实现每轮各自 runScan(deadlineMs=配置值) ⇒ 每轮重新计时，总墙钟可达约 3×（1 + scanMaxAdaptRounds）。
-  // 每一块都在服务端**同步忙等 60 ms** 再回 400：保证第 1 块就吃掉 2 倍于预算的墙钟（不依赖亚毫秒计时）。
+test('scanRoundBudget：第 1 轮拿全额、之后只拿剩余、耗尽即 null（纯函数，零时钟依赖）', () => {
+  const totalMs = 180;
+  const deadlineAt = 1180; // 起点 nowMs = 1000 ⇒ 总预算 180 ms
+  assert.equal(scanRoundBudget({ totalMs, deadlineAt, nowMs: 1000, round: 0 }), totalMs, '第 1 轮必须 = 传入的总预算');
+  assert.equal(scanRoundBudget({ totalMs, deadlineAt, nowMs: 1000, round: 1 }), totalMs, '尚未耗时 ⇒ 剩余 = 全额');
+  assert.equal(scanRoundBudget({ totalMs, deadlineAt, nowMs: 1060, round: 1 }), 120, '已耗 60 ⇒ 只剩 120');
+  assert.equal(scanRoundBudget({ totalMs, deadlineAt, nowMs: 1180, round: 1 }), null, '恰好耗尽 ⇒ null');
+  assert.equal(scanRoundBudget({ totalMs, deadlineAt, nowMs: 1200, round: 2 }), null, '超支 ⇒ null');
+  const seq = [1000, 1020, 1060, 1100].map((nowMs) => scanRoundBudget({ totalMs, deadlineAt: 1180, nowMs, round: 1 }));
+  assert.deepEqual(seq, [180, 160, 120, 80]);
+  for (let i = 1; i < seq.length; i += 1) assert.ok(seq[i] <= seq[i - 1], '剩余预算必须单调不增');
+});
+
+test('deep 自适应重切共用一份墙钟预算（注入确定性时钟，不用任何真实计时）', async () => {
+  // 旧实现每轮各自以配置值重取 runScan 的 t0 ⇒ 每轮重新计时，总墙钟上限约 3×。判据不许用真实墙钟：
+  // 这里注入假时钟「每收到一次请求推进 30 ms」，时序可复算 ⇒ 负载不会让本用例抖红。
+  let clock = 0;
   const fake = await startFakeOllama(() => {
-    const until = Date.now() + 60;
-    while (Date.now() < until);
+    clock += 30;
     return { status: 400, body: { error: 'prompt 0 has 2100 tokens; expected 1\u20132050 (input is never truncated)' } };
   });
   try {
     const { registered, ctx } = fakeCtx();
-    apply(ctx, Config({ baseUrl: fake.baseUrl, ladder: [{ model: 'tev1:0.8b', numCtx: 8192 }], scanFirstChunkBytes: 1000, scanDeadlineMs: 20 }));
+    apply(
+      ctx,
+      Config({ baseUrl: fake.baseUrl, ladder: [{ model: 'tev1:0.8b', numCtx: 8192 }], scanFirstChunkBytes: 1000, scanDeadlineMs: 20 }),
+      { now: () => clock },
+    );
     const value = await registered[0].execute({ material: 'x'.repeat(5000), questions: [Q('q1')], depth: 'deep' }, EXEC);
-    // 1 次原始批请求 + 1 次分块请求：第 2 轮起剩余预算已 ≤ 0，不得再发。
+    // 推演：原始批请求后 clock=30 ⇒ deadlineAt=50；第 1 轮拿全额 20；分块请求后 clock=60 ⇒ 单块墙钟 30 > 20
+    // ⇒ 首轮按 deadline 截断；第 2 轮剩余 = 50 - 60 = -10 ⇒ 不得再发。恰好 2 次请求。
     assert.equal(fake.requests.length, 2, `共用预算 ⇒ 只允许 1 轮分块，实际 ${fake.requests.length} 次请求`);
     assert.equal(value.coverage.truncatedBy, 'deadline', '首轮因墙钟用尽而截断');
   } finally {

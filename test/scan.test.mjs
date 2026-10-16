@@ -116,6 +116,24 @@ test('runScan：aggregate 为 any 时才产出聚合块，默认（none）缺席
   assert.equal('aggregate' in none, false, '默认不得产出聚合块（暂定产物宁可缺席）');
 });
 
+test('硬切：同一行被切成多块时 remaining 按**行**去重（不得逐块相加高估）', async () => {
+  const oneLine = 'x'.repeat(100); // 只有一行 ⇒ 必然硬切
+  const plan = chunk(oneLine, { budgetBytes: 10 });
+  assert.ok(plan.chunks.length > 1, `必须真的硬切（实际 ${plan.chunks.length} 块）`);
+  assert.equal(plan.chunks.every((c) => c.startLine === 1 && c.endLine === 1), true, '硬切碎片共享同一行区间');
+  const controller = new AbortController();
+  let calls = 0;
+  const r = await runScan({
+    text: oneLine,
+    budgetBytes: 10,
+    signal: controller.signal,
+    callModel: async () => { calls += 1; controller.abort(); return { ok: calls }; },
+  });
+  assert.equal(calls, 1, '取消后不得再发起调用');
+  assert.equal(r.aborted, true);
+  assert.equal(r.remaining, 1, `同一行硬切成 ${plan.chunks.length} 块，remaining 仍必须是 1（旧实现按碎片相加得 ${plan.chunks.length - 1}）`);
+});
+
 test('中断：取消落在**最后一块**时也必须如实置 aborted（task-13 复审 P2）', async () => {
   // 现状只在循环顶部检查 signal.aborted ⇒ 取消发生在最后一块的飞行途中时，那个检查再也跑不到，
   // 结果是 aborted=false + failed 里躺着一个 kind=aborted 的块（调用方无从区分取消与出错）。
