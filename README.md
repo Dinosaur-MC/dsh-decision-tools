@@ -23,9 +23,27 @@ slow and expensive. A System One decision model answers in one forward pass.
 Then confirm the tool is visible with
 `cordis_inspect_query(platform="host", provider="Tool", method="listTools")`.
 
+## Tools
+
+This bundle registers **two** model-visible tools:
+
+| Tool | What it is |
+|---|---|
+| `decision` | One shared `material` + one shared `rubric`, judged in a single request: 1–64 items (batch) or a handful of distinct questions (mixed). Answers are probabilities, not prose. |
+| `monitor` | A **probing wait primitive**: sample a `source` on an interval, ask the same decision model "has the event happened yet" against your `rubric`, count the probes that count as hits, and return once the count reaches `countThreshold` (or the deadline expires). It never kills, retries or dispatches anything — see [Monitor](#monitor). |
+
 ## Usage
 
 One call, one `material`, and **one of two mutually exclusive modes** (giving both, or neither, is an error).
+
+`material` has **four forms**; the last three are references that never enter your context:
+
+| Form | Use when |
+|---|---|
+| a plain string | the text is small and already in your context |
+| `{ file: { path, startLine?, endLine? } }` | the material is a workspace file (1-based inclusive range). A single file over the cap is an **error**, never truncated |
+| `{ glob: { pattern, limit? } }` | a set of files. Total over the cap is **truncated**, reported in `coverage.truncated` / `coverage.truncatedBy` — a truncated material must never be used as if it were complete |
+| `{ tool: { name, arguments? } }` | run **another** tool and judge its **raw output** without pulling it into your context. The plugin delegates it in-process (**always** with `agent` and `parent`), spills the raw output to a file **unconditionally**, and returns `material.spillPath` / `bytes` / `fullBytes` / `truncated` (plus `exitCode` for process-style tools). Delegating to this plugin's own tools (`decision`, `monitor`) is rejected — the host has no recursion guard of its own |
 
 **Batch** — one shared rubric judging N items independently; the rubric is written **once**:
 
@@ -93,6 +111,29 @@ a flag, not a filter: nothing is dropped, rewritten or rejected.
 
 When rendered, `noul` prints `P(true)` only, while `choice` / `score` print the label plus the probabilities in
 descending order.
+
+## Monitor
+
+`monitor` is a **probing wait primitive, not a scheduler**. You give it a `source` and one `rubric` ("what counts as the event having happened"); it samples on an interval, asks the decision model each time, and counts every probe that answers a hit.
+
+```json
+{
+  "source": { "kind": "file", "path": "build.log" },
+  "rubric": "Does the log already contain the line BUILD SUCCEEDED?",
+  "intervalMs": 5000,
+  "timeoutMs": 120000
+}
+```
+
+- **Counting is level-based**: every probe that answers a hit increments the counter. **There is no debounce and no cooldown window** — `countThreshold: 3` means roughly "hit on three probes" (order of `3 × intervalMs`). `minGapMs`, `countMode`, `persistCount` and `resetCount` do not exist and are **rejected explicitly** rather than silently ignored.
+- **Timestamps are recorded only** (`at`, `atIso`, `firstAt`, `lastAt`) — they never take part in the hit decision.
+- `intervalMs` is raised to the deployment floor (`Config.minProbeIntervalMs`); `timeoutMs` is a **self-managed** deadline (the host does not preempt a blocking call), raised to at least `intervalMs`. Both clamps are written into `notes`.
+- `background: true` registers a host job and returns a `jobId` immediately (read it later with `job_output`). `notify: "inbox"` sends a notice when the threshold is reached, with coalescing + a per-minute cap + a wake budget — the inbox has no backpressure of its own.
+- `source.kind` is one of `job` / `file` / `glob` / `command` / `events`. `file` and `glob` go through the **same reader as `decision`** (workspace-relative, same containment gate); `command` and `events` need deployment support.
+- **On a hit the plugin NOTIFIES only.** It never kills, retries, dispatches or cancels anything — that stays your call. The counter lives in memory only: it starts at 0 on every call and is lost when the host restarts.
+- **Not for** goals that need multi-turn reasoning or candidates discovered while thinking — it only answers a bounded question you can already state.
+
+A foreground call returns `hit` / `count` / `countThreshold`, the timestamps, a bounded tail of the hitting sample (`evidence`, cap 1024 B), and `cost` / `coverage` / `notes`.
 
 ## Configuration
 

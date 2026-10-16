@@ -22,9 +22,27 @@
 然后用 `cordis_inspect_query(platform="host", provider="Tool", method="listTools")`
 确认工具已可见。
 
+## 工具
+
+本包注册**两个**模型可见工具：
+
+| 工具 | 是什么 |
+|---|---|
+| `decision` | 一份共享 `material` + 一条共享 `rubric`，一次请求判定：1–64 项（批量）或几个互不相同的问题（异质）。给的是概率，不是文字。 |
+| `monitor` | **探测式等待原语**：按间隔采样一个 `source`，用同一个判定模型按你的 `rubric` 反复问「事件是否已发生」，累加命中次数，达到 `countThreshold`（或到 deadline）即返回。它绝不 kill、重试或派发任何东西 —— 见 [Monitor](#monitor)。 |
+
 ## Usage
 
 一次调用、一份 `material`，两种**互斥**模式择一（同时给或都不给都报错）。
+
+`material` 有**四种形态**；后三种是引用式，**永不进你的上下文**：
+
+| 形态 | 何时用 |
+|---|---|
+| 纯字符串 | 材料小且本就在上下文里 |
+| `{ file: { path, startLine?, endLine? } }` | 材料是工作区文件（1-based 闭区间）。单文件超上限是**报错**，绝不截断 |
+| `{ glob: { pattern, limit? } }` | 一批文件。总量超上限是**截断**，由 `coverage.truncated` / `coverage.truncatedBy` 如实报告 —— 截断的材料绝不当完整材料用 |
+| `{ tool: { name, arguments? } }` | 跑**另一个**工具并判它的**原始输出**，且不把输出拉进你的上下文。插件在进程内委托（**始终**带 `agent` 与 `parent`）、把原始输出**无条件**转储成文件，并回传 `material.spillPath` / `bytes` / `fullBytes` / `truncated`（进程型工具另带 `exitCode`）。委托给本插件自己的工具（`decision`、`monitor`）会被拒 —— 宿主自己没有递归护栏 |
 
 **批量（batch）** —— 一条共享判据判 N 项，判据**只写一次**：
 
@@ -89,6 +107,29 @@
 （或缺失）的项会被列进 `notes[]` 的一行 —— 这是**旗，不是过滤器**：没有任何答案被删除、改写或拒绝。
 
 渲染时 `noul` 只打 `P(true)`，`choice` / `score` 打标签 + 降序概率。
+
+## Monitor
+
+`monitor` 是**探测式等待原语，不是调度器**。你给它一个 `source` 和一条 `rubric`（「什么算事件已发生」）；它按间隔采样、每次问一次判定模型，并把每次命中都计入计数。
+
+```json
+{
+  "source": { "kind": "file", "path": "build.log" },
+  "rubric": "日志里是否已出现 BUILD SUCCEEDED 这一行？",
+  "intervalMs": 5000,
+  "timeoutMs": 120000
+}
+```
+
+- **按探测结果计数（电平口径）**：每次判定命中就 +1。**没有去抖、没有冷却窗** —— `countThreshold: 3` 大致等于「连续三次探测都命中」（量级 `3 × intervalMs`）。`minGapMs`、`countMode`、`persistCount`、`resetCount` **不存在**，传了会被**显式拒绝**而不是静默忽略。
+- **时间戳只作记录**（`at`、`atIso`、`firstAt`、`lastAt`）—— 不参与命中判定。
+- `intervalMs` 会被抬到部署下限（`Config.minProbeIntervalMs`）；`timeoutMs` 是**自管** deadline（宿主不抢占阻塞调用），被抬到不小于 `intervalMs`。两处钳制都写进 `notes`。
+- `background: true` 注册宿主作业并立刻返回 `jobId`（之后用 `job_output` 读）。`notify: "inbox"` 在达到门槛时发通知，带合并 + 每分钟上限 + 唤醒预算 —— inbox 自身没有任何背压。
+- `source.kind` 取 `job` / `file` / `glob` / `command` / `events` 之一。`file` 与 `glob` 走**与 `decision` 同一个 reader**（工作区相对、同一道 containment 闸）；`command` 与 `events` 需要部署支持。
+- **命中只通知**。它绝不 kill、重试、派发或取消任何东西 —— 那由你决定。计数只在内存：每次调用从 0 起算，宿主重启即丢。
+- **不适合**需要多轮推理、或候选要边想边发现的复杂目标 —— 它只回答你**现在就能写清**的有界问题。
+
+前台调用返回 `hit` / `count` / `countThreshold`、各时间戳、命中那次采样的**有界尾部**（`evidence`，上限 1024 B），以及 `cost` / `coverage` / `notes`。
 
 ## Configuration
 
