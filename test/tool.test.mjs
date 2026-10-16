@@ -536,9 +536,32 @@ test('A 方案：显式 model 优先于容量选择，并被记进粘滞（R1 �
   assert.equal(fake.requests[0].json.model, 'tev1:latest', '显式指定必须被尊重');
   assert.equal(first.model, 'tev1:latest');
   assert.equal(first.plan.model, 'tev1:latest', 'plan 里回显的也必须是显式选中的档');
-  // 注：plan.reason 描述的是**策略**（inline/scan/escalate），不反映选档原因 ——
-  // 「选档原因可观测」已登记为待办（r3 审查 P2：成功提升时 plan 回显 reason=inline）。
+  // 注：plan.reason 自 Task 7 起反映**选档原因**（r3 P2 已修）；策略看 plan.strategy 与 plan.action。
+  assert.equal(first.plan.reason, 'explicit');
   await fake.close();
+});
+
+test('plan.reason 反映选档原因：小材料 fits-default、显式 explicit、容量逼迫 fits-ladder（r3 P2）', async () => {
+  const fake = await startFakeOllama(() => ({ status: 200, body: ANSWERS }));
+  try {
+    const { registered, ctx } = fakeCtx({ fs: treeFs({}) });
+    apply(ctx, Config({ baseUrl: fake.baseUrl }));
+    const exec = { preview: false, signal: undefined, agent: { session: { header: { cwd: 'F:/ws' } } } };
+    const questions = [{ name: 'q1', type: 'noul', instructions: 'x' }];
+    // 旧实现把 `action.reason`（策略码 inline/scan/escalate）写进 plan.reason ⇒ 选档原因不可观测。
+    const small = await registered[0].execute({ state: 'A'.repeat(300), questions }, exec);
+    assert.equal(small.plan.reason, 'fits-default', '小材料走默认档');
+    assert.equal(small.plan.model, 'tev1:0.8b');
+    assert.equal(small.plan.action, 'send', '策略码仍在 plan.action 上');
+    const explicit = await registered[0].execute({ state: 'A'.repeat(300), questions, model: 'tev1:latest' }, exec);
+    assert.equal(explicit.plan.reason, 'explicit');
+    assert.equal(explicit.plan.model, 'tev1:latest');
+    const big = await registered[0].execute({ state: 'A'.repeat(20000), questions }, exec);
+    assert.equal(big.plan.reason, 'fits-ladder', '容量逼迫跳档必须能看出来');
+    assert.equal(big.plan.model, 'clef-flash:latest');
+  } finally {
+    await fake.close();
+  }
 });
 
 test('配套 skill 的跨文件不变量：工具声明必须指名同一个 skill 名', () => {
