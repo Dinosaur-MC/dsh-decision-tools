@@ -6,6 +6,13 @@ import { prepareRequest,
   LIMITS,
   analyzeBody,
   resolveStrategy,
+  validateQuestions,
+  DEPTHS,
+  resolveDepth,
+  normalizeMaterial,
+  resolveMaterial,
+  assertModeExclusive,
+  assertBatchCriteria,
 } from '../lib/validate.js';
 
 const TICKET = 'Our checkout has returned 500 errors since 9am.';
@@ -193,6 +200,8 @@ test('LIMITS 冻结：服务端硬限 + 本地阈值（体积/置信度/引用�
   // on the model"）、score `maxItems: 10`。修正前是单个 `maxOptions: 26`，两个方向都错。
   assert.deepEqual(LIMITS, {
     maxQuestions: 64,
+    // 批量模式的上限与 maxQuestions 同值（两种模式最终都编码成同样多个问题）。
+    maxItems: 64,
     minOptions: 2,
     maxChoiceOptions: 255,
     maxScoreLevels: 10,
@@ -249,4 +258,89 @@ test('resolveStrategy：scan 要求字符串 state，否则给结构化错误（
   assert.equal(resolveStrategy({}, undefined), 'auto', '缺省策略仍是 auto');
   assert.throws(() => resolveStrategy({ strategy: 'chunk' }, 'text'),
     (error) => error.kind === 'invalid_request');
+});
+
+test('assertModeExclusive：两模式互斥（同给 mode_conflict、都不给 mode_missing）', () => {
+  const items = ['甲'];
+  const questions = [{ name: 'q', type: 'noul', instructions: 'x' }];
+  assert.throws(() => assertModeExclusive({ items, questions, rubric: 'r', type: 'noul' }), (error) => {
+    assert.equal(error.name, 'DecisionValidationError');
+    assert.equal(error.kind, 'mode_conflict');
+    return true;
+  });
+  assert.throws(() => assertModeExclusive({}), (error) => {
+    assert.equal(error.kind, 'mode_missing');
+    assert.match(error.message, /items/, '消息必须给出两种可行写法');
+    assert.match(error.message, /questions/);
+    return true;
+  });
+  assert.equal(assertModeExclusive({ items, rubric: '共享判据', type: 'noul' }), 'items');
+  assert.equal(assertModeExclusive({ questions }), 'questions');
+  // batch 模式的必给字段（schema 里不写模式分支，故这里是唯一把关点）。
+  assert.throws(() => assertModeExclusive({ items }), (error) => error.kind === 'mode_invalid');
+  assert.throws(() => assertModeExclusive({ items, rubric: '   ', type: 'noul' }),
+    (error) => error.kind === 'mode_invalid');
+  assert.throws(() => assertModeExclusive({ items, rubric: 'r', type: 'boolean' }),
+    (error) => error.kind === 'mode_invalid' && /合法值只有/.test(error.message));
+  // items 超过上限（= 64）报错，边界 64 放行。
+  const many = (n) => Array.from({ length: n }, (_, i) => 'i' + i);
+  assert.equal(assertModeExclusive({ items: many(64), rubric: 'r', type: 'noul' }), 'items');
+  assert.throws(() => assertModeExclusive({ items: many(65), rubric: 'r', type: 'noul' }),
+    (error) => error.kind === 'mode_invalid' && /65 项/.test(error.message));
+});
+
+test('resolveDepth：缺省 normal，非法值报错并给出合法清单', () => {
+  assert.equal(resolveDepth(undefined), 'normal');
+  assert.equal(resolveDepth(null), 'normal');
+  assert.equal(resolveDepth('quick'), 'quick');
+  assert.equal(resolveDepth('deep'), 'deep');
+  assert.throws(() => resolveDepth('scan'), (error) => {
+    assert.equal(error.kind, 'invalid_request');
+    assert.match(error.message, /quick \/ normal \/ deep/, '必须给出合法值清单');
+    return true;
+  });
+});
+
+test('normalizeMaterial：内联 / file / glob 三形态归一，形状错误给结构化拒绝', () => {
+  assert.deepEqual(normalizeMaterial('材料'), { kind: 'inline', text: '材料' });
+  assert.deepEqual(normalizeMaterial({ file: { path: 'docs/a.md', startLine: 2, endLine: 3 } }),
+    { kind: 'file', fields: { path: 'docs/a.md', startLine: 2, endLine: 3 } });
+  assert.deepEqual(normalizeMaterial({ glob: { pattern: 'docs/*.md', limit: 5 } }),
+    { kind: 'glob', fields: { pattern: 'docs/*.md', limit: 5 } });
+  assert.throws(() => normalizeMaterial(''), (error) => error.kind === 'material_invalid');
+  assert.throws(() => normalizeMaterial(42), (error) => error.kind === 'material_invalid');
+  assert.throws(() => normalizeMaterial({}), (error) => error.kind === 'material_invalid');
+  assert.throws(() => normalizeMaterial({ file: { path: 'a' }, glob: { pattern: 'b' } }),
+    (error) => error.kind === 'material_conflict');
+  assert.throws(() => normalizeMaterial({ file: { path: '' } }),
+    (error) => error.kind === 'material_invalid' && /path/.test(error.message));
+  assert.throws(() => normalizeMaterial({ glob: { pattern: 'a', kind: 'file' } }),
+    (error) => error.kind === 'material_invalid' && /只接受 pattern \/ limit/.test(error.message));
+});
+
+test('resolveMaterial：内联不读盘；引用形态交给注入的读取器（本模块零 I/O）', async () => {
+  const inline = await resolveMaterial('内联', { read: () => { throw new Error('不该被调用'); } });
+  assert.deepEqual(inline, { text: '内联', source: undefined });
+
+  const calls = [];
+  const read = async (descriptor, options) => {
+    calls.push({ descriptor, options });
+    return { state: '读到的正文', source: { kind: 'file', path: descriptor.path, bytes: 15 } };
+  };
+  const loaded = await resolveMaterial({ file: { path: 'docs/a.md' } }, { read, cwd: 'F:/ws', signal: undefined });
+  assert.equal(loaded.text, '读到的正文');
+  assert.equal(loaded.source.path, 'docs/a.md');
+  assert.deepEqual(calls[0].descriptor, { kind: 'file', path: 'docs/a.md', startLine: undefined, endLine: undefined });
+  assert.equal(calls[0].options.cwd, 'F:/ws');
+  await assert.rejects(() => resolveMaterial({ glob: { pattern: '*.md' } }, {}),
+    (error) => error.kind === 'invalid_request');
+});
+
+test('assertBatchCriteria：批量模式的共享 criteria 复用逐题校验器', () => {
+  assert.doesNotThrow(() => assertBatchCriteria({ type: 'choice', criteria: { a: 'A', b: 'B' } }));
+  assert.doesNotThrow(() => assertBatchCriteria({ type: 'score', criteria: ['低', '高'] }));
+  assert.doesNotThrow(() => assertBatchCriteria({ type: 'noul', criteria: { false: '否', true: '是' } }));
+  assert.throws(() => assertBatchCriteria({ type: 'choice', criteria: { a: 'A' } }), /合法范围 2–255/);
+  assert.throws(() => assertBatchCriteria({ type: 'score', criteria: ['低'] }), /合法范围 2–10/);
+  assert.throws(() => assertBatchCriteria({ type: 'noul', criteria: { no: '否' } }), /只接受 "false" 和 "true"/);
 });
