@@ -5,36 +5,43 @@
  *
  * 用法：node smoke/live.mjs [模型名]   （默认 tev1:0.8b）
  * 退出码：0 成功；1 失败（附 Ollama 侧的 kind 与 hint）。
+ *
+ * v3 起组装口径与工具一致：**校验层**（validateQuestions）与**线格式层**（toWireRequest）分开调用，
+ * 不再经 v2 那个把两者合一的单体入口（ADR-15：线格式只有一个产地）。
  */
 import { callSystemOne, SystemOneError } from '../lib/client.js';
-import { prepareRequest } from '../lib/validate.js';
+import { validateQuestions } from '../lib/validate.js';
+import { toWireRequest } from '../lib/wire.js';
 import { renderAnswers } from '../lib/render.js';
 
 const model = process.argv[2] ?? 'tev1:0.8b';
 const baseUrl = process.env.OLLAMA_BASE_URL ?? 'http://localhost:11434';
 
-const body = prepareRequest({
-  defaultModel: model,
-  state: 'Our checkout has returned 500 errors since 9am. The payments page shows a generic error and no orders go through.',
-  questions: [
-    {
-      name: 'label',
-      type: 'choice',
-      instructions: 'Which label fits this ticket?',
-      criteria: { billing: 'Payments and refunds', bug: 'Software errors', account: 'Login and account access' },
-    },
-    { name: 'refund', type: 'noul', instructions: 'Is the customer requesting a refund?' },
-    {
-      name: 'urgency',
-      type: 'score',
-      instructions: 'How urgently does this ticket need a response?',
-      criteria: [
-        'Routine: no time pressure',
-        'Soon: a customer is inconvenienced',
-        'Immediate: a critical service is unavailable',
-      ],
-    },
-  ],
+const questions = [
+  {
+    name: 'label',
+    type: 'choice',
+    instructions: 'Which label fits this ticket?',
+    criteria: { billing: 'Payments and refunds', bug: 'Software errors', account: 'Login and account access' },
+  },
+  { name: 'refund', type: 'noul', instructions: 'Is the customer requesting a refund?' },
+  {
+    name: 'urgency',
+    type: 'score',
+    instructions: 'How urgently does this ticket need a response?',
+    criteria: [
+      'Routine: no time pressure',
+      'Soon: a customer is inconvenienced',
+      'Immediate: a critical service is unavailable',
+    ],
+  },
+];
+
+validateQuestions(questions);
+const body = toWireRequest({
+  material: 'Our checkout has returned 500 errors since 9am. The payments page shows a generic error and no orders go through.',
+  questions,
+  model,
 });
 
 console.log(`model   : ${model}`);

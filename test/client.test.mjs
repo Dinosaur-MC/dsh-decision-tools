@@ -5,8 +5,8 @@ import { startFakeOllama } from './fake-ollama.mjs';
 import { isFetchBlockedPort } from './helpers/fetch-ports.mjs';
 import { firstFreeBlockedPort, startHttpServerOnPort } from './helpers/http.mjs';
 
-// 这是**线格式**的 body：Task 3 的 client 层直接收 body、不经过 prepareRequest，
-// 所以 questions 必须是对象映射 —— 假服务现在会像真服务一样拒绝数组（ADR-6）。
+// 这是**线格式**的 body：client 层直接收 body、不经过校验层，
+// 所以 questions 必须是对象映射 —— 假服务现在会像真服务一样拒绝数组（ADR-6 / ADR-15）。
 const BODY = {
   model: 'tev1:0.8b',
   state: 'Our checkout has returned 500 errors since 9am.',
@@ -81,8 +81,8 @@ test('400 → invalid_request，带出服务端原文与合法类型清单；上
       // （2026-10-15：旧文案写「选项数与等级数需在 2–26」，两个方向都错）。
       assert.match(error.hint, /choice 选项数需在 2[-–]255/, 'hint 必须给出 choice 的真实上限');
       assert.match(error.hint, /score 等级数需在 2[-–]10/, 'hint 必须给出 score 的真实上限');
-      // ADR-6 之后 callSystemOne 只收 prepareRequest 产出的线格式（questions 恒为对象映射），
-      // 而工具对**模型**公布的参数契约是数组、validate.js 的 V1 还会拒绝模型直接给对象，
+      // ADR-15 之后 callSystemOne 只收线格式层（lib/wire.js）组装的 body（questions 恒为对象映射），
+      // 而工具对**模型**公布的参数契约是 items / questions 数组、本地校验还会拒绝模型直接给对象，
       // 所以 400 不可能是 questions 的形状问题。hint 里再出现「对象映射」就是在教模型做
       // 一次注定失败的重试 —— 这条断言钉住它不得回潮。
       assert.doesNotMatch(error.hint, /对象映射|数组/);

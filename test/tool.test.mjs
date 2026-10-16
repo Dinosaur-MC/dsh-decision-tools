@@ -5,6 +5,7 @@ import { resolveSoftBodyBytes, resolveMinConfidence, collectLowConfidence, OUTPU
 import { SKILL_NAME } from '../lib/skill.js';
 import { TOOL_DESCRIPTION } from '../lib/parameters.js';
 import { LIMITS } from '../lib/validate.js';
+import { toWireRequest } from '../lib/wire.js';
 import { startFakeOllama } from './fake-ollama.mjs';
 
 /**
@@ -644,6 +645,63 @@ test('execute 把服务端错误映射成 SystemOneError', async () => {
     const error = await registered[0].execute({ material: 'm', questions: [Q('q1')] }, EXEC).then(() => null, (e) => e);
     assert.equal(error.name, 'SystemOneError');
     assert.equal(error.kind, 'model_missing');
+  } finally {
+    await fake.close();
+  }
+});
+
+test('V8（搬迁到此）：64 KiB 硬上限的两侧 —— 正好通过、多 1 字节被本地拒绝且不发请求', async () => {
+  // 这条用例原住 test/validate.test.mjs：v2 时 64 KiB 守卫住在校验层，v3 起 body 由
+  // 编排层（lib/tool.js 的 guardBody）组装，故守卫的边界测试也搬到家门口。
+  // 二分用的 overhead 必须与 execute 真实发出的 body 逐字段一致 —— 故**显式钉住 model**，
+  // 否则容量分派会换成另一档（模型名的长度不同），边界值就漂了。
+  const question = Q('q1');
+  const overhead = (n) => Buffer.byteLength(JSON.stringify(toWireRequest({
+    material: 'x'.repeat(n),
+    model: 'tev1:0.8b',
+    questions: [question],
+  })), 'utf8');
+
+  let lo = 0;
+  let hi = 70000;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (overhead(mid) <= LIMITS.maxBodyBytes) lo = mid;
+    else hi = mid - 1;
+  }
+  assert.ok(overhead(lo) <= LIMITS.maxBodyBytes);
+  assert.ok(overhead(lo + 1) > LIMITS.maxBodyBytes);
+
+  const fake = await startFakeOllama(echoNoul());
+  try {
+    const { registered, ctx } = fakeCtx();
+    apply(ctx, Config({ baseUrl: fake.baseUrl }));
+    const value = await registered[0].execute(
+      { material: 'x'.repeat(lo), questions: [question], model: 'tev1:0.8b' }, EXEC,
+    );
+    assert.equal(value.results.length, 1, '正好落在上限内 ⇒ 照常成功');
+
+    const before = fake.requests.length;
+    const error = await registered[0]
+      .execute({ material: 'x'.repeat(lo + 1), questions: [question], model: 'tev1:0.8b' }, EXEC)
+      .then(() => null, (e) => e);
+    assert.equal(error?.name, 'DecisionValidationError');
+    assert.equal(error?.kind, 'invalid_request');
+    assert.match(error.message, /超过服务端上限 65536 字节（64 KiB）/);
+    assert.equal(fake.requests.length, before, '本地守卫必须在发请求之前拦下');
+  } finally {
+    await fake.close();
+  }
+});
+
+test('V9（搬迁到此）：model 传空串视作未传（逃生口只在给出非空字符串时才算指定）', async () => {
+  const fake = await startFakeOllama(echoNoul());
+  try {
+    const { registered, ctx } = fakeCtx();
+    apply(ctx, Config({ baseUrl: fake.baseUrl }));
+    const value = await registered[0].execute({ material: 'm', questions: [Q('q1')], model: '' }, EXEC);
+    assert.equal(fake.requests[0].json.model, 'tev1:0.8b', '空串不算指定 ⇒ 仍走容量分派（默认档）');
+    assert.equal(value.cost.model, 'tev1:0.8b');
   } finally {
     await fake.close();
   }

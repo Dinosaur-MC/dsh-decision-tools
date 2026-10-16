@@ -6,7 +6,6 @@ import {
   DEFAULT_LADDER,
   demandOf,
   selectEscalation,
-  resolveSticky,
   createSingleFlight,
   describeExhausted,
   selectByCapacity,
@@ -128,34 +127,6 @@ test('selectEscalation：阶梯里更小的档即便余量够也不得被选中'
     failure: { actual: 50000 }, currentNumCtx: 32768 });
   assert.equal(none.ok, false, '65536×0.6=39321 < 50000，应当失败');
   assert.deepEqual(none.considered.map((e) => e.model), ['synthetic-wide:latest']);
-});
-
-test('resolveSticky：显式 model 一律赢（含向下降级），且不产出 escalated 回显', () => {
-  const r = resolveSticky({ model: 'nimble:latest', reason: 'escalated' },
-    { explicitModel: 'tev1:0.8b', defaultModel: 'tev1:latest' });
-  assert.equal(r.switchTo, 'tev1:0.8b');
-  assert.deepEqual(r.next, { model: 'tev1:0.8b', reason: 'explicit' });
-  assert.equal(r.escalated, undefined);
-});
-
-test('resolveSticky：粘滞状态不因 defaultModel 变化而回退', () => {
-  const r = resolveSticky({ model: 'clef-flash:latest', reason: 'escalated' }, { defaultModel: 'tev1:0.8b' });
-  assert.equal(r.switchTo, 'clef-flash:latest');
-  assert.equal(r.escalated, undefined, '沿用既有粘滞不算一次新的提升');
-});
-
-test('resolveSticky：无显式、无粘滞 → 回落 defaultModel', () => {
-  const r = resolveSticky(null, { defaultModel: 'tev1:0.8b' });
-  assert.equal(r.switchTo, 'tev1:0.8b');
-  assert.deepEqual(r.next, { model: 'tev1:0.8b', reason: 'default' });
-});
-
-test('resolveSticky：escalatedTo 建立粘滞并回显 sticky=true（且压过已有粘滞）', () => {
-  const r = resolveSticky({ model: 'nimble:latest', reason: 'escalated' },
-    { escalatedTo: 'clef-flash:latest', defaultModel: 'tev1:0.8b' });
-  assert.equal(r.switchTo, 'clef-flash:latest');
-  assert.equal(r.next.reason, 'escalated');
-  assert.deepEqual(r.escalated, { to: 'clef-flash:latest', sticky: true });
 });
 
 test('createSingleFlight：并发调用各自执行，但同一时刻只有一个在跑', async () => {
