@@ -156,6 +156,7 @@ JSON Schema 的 `required` **只有 `material`**；模式内部必填由校验�
 
 - **模型窗口**（`num_ctx`，2026-10-15 重拉后实测）：`tev1:0.8b` 8192 · `tev1:latest` 8192 · `nimble:latest` 8194 · `clef-flash:latest` 16384 · `clef:latest` 16384 · `nimble-v3:latest` 32768。⚠️ 这是**快照**，权威读法是 `/api/show` 的 `parameters`（旧值 2050/2050/8194/16384 已随重拉失效）。
   - 补充（2026-10-16 实测）：`nimble:latest` 的 `modified_at = 2026-10-15T16:10`，其**服务端在 400 里报的可用窗口是 8448 token**（与 `/api/show` 的 num_ctx 8194 略有差异，以服务端报错为准）。
+- **溢出判据必须两种文案都认（2026-10-16 真机实测，`fca5d2f`）**：Ollama **0.40.5** 起上游 400 文案为 `request (N tokens) exceeds the available context size (M tokens), try increasing it`；此前是 `prompt 0 has N tokens; expected 1–M … (input is never truncated)`。`lib/client.js` 的 `classifyOverflow` 用「旧 ?? 新」两次匹配，两处都产出同形状 `{numbered, actual, limit}` 直接供 `selectEscalation` 选档，**不打印数字**的分支语义不变。**缺失任一种文案的代价**：自动升档与 `depth: deep` 内部分块在真机**整体失效**，且判据会降级成 `invalid_request`、hint 指向题型/选项数（误导重试）—— 真实发生过，见 §6 #20。
 - **模型可用性**：6 个 decision 模型现均可用；但 Ollama 会拒收未重拉的旧格式模型，而**该状态随重拉瞬变** ⇒ 「可用/不可用」必须现测，不得据一次瞬态改配置。
 - **测试装置的并发 flake（已定位并修复）**：真根因是 **WHATWG Fetch 的 blocked port** —— 装置曾从临时端口区间抽到规范禁用端口（5060/5061/4190/6666-6669/6679/6697 等），`fetch` 在本地直接拒绝、请求从未发出（服务端 `requests.length = 0`），旧码把它误判为 `unreachable` 并给出误导提示。**证伪了早先的 undici 全局池假设**（规定复现形状 200/200 绿、600 轮翻腾 0 失败、27833 条端口事件 0 条「在听却 ECONNREFUSED」）。修法：装置永不交出禁用端口（`cee0baa`）+ `lib/client.js` 单列 `bad_port` 判据（`4fb1d7a`）。
 - **服务端 criteria 硬限**：`choice` **2–255** · `score` **2–10**（两者独立约束）。口径注：2–255 是**本机实测值**、非跨版本契约（官方文档自身不一致：决策指南写 2–26、API 参考写 maxProperties 255 且注明取决于模型）⇒ **运行时能力优先于静态常量**，`Config.maxChoiceOptions` 是覆盖点，权威是服务端 400（本机无机器可读规格：`/openapi.json` 等一律 404）。
@@ -172,6 +173,7 @@ JSON Schema 的 `required` **只有 `material`**；模式内部必填由校验�
 - 守卫：§4.9 判别性锚点、skill 锚点（十四条 v3 读法 + 词表负例）、README 配置表与 `Config` 投影一致、注入预算上限（description ≤1900 / schema ≤3600 / skill ≤4000）、`COMPANION_SKILL === SKILL_NAME`、缺 skill 拒服务、首次交付 skill 正文。
 - 另有：`node --check lib/*.js`、CR 字节 = 0、变异自检（累计 30+ 定点变异全杀）、隔离实例真机冒烟。
 - **装置不变量**（`cee0baa` 之后）：假服务永不交出 fetch 禁用端口；并发负载下错误分类不退化为 `unreachable`。
+- **冒烟必须真断言**（`fca5d2f`）：`smoke/live.mjs` 必须按**工具的五键形状**组装 value 再渲染，并断言「有 answers / 有 `usage.input_tokens` / 渲染文本非空占位 / 无 `undefined|NaN`」，任一不成立即**非 0 退出**并打印拿到了什么。历史教训：该脚本曾把原始回包（`{model,answers,usage}`）当五键喂 `renderAnswers` ⇒ 永远打印 `(no results returned)` 且 exit 0（假绿，见 §6 #21）。
 
 ## 6. 已知偏差 / 遗留 / 待定
 
@@ -196,6 +198,8 @@ JSON Schema 的 `required` **只有 `material`**；模式内部必填由校验�
 | 17 | `scan.js` 硬切时 `remaining` 按行差高估 | **已修** `2540e30`（按行区间展开去重） |
 | 18 | `lib/source.js` 的模型可见报错仍称 `stateSource`（照报错改参只会再失败） | **已修** `a0ad872`（13 处改 v3 参数路径 + 2 条回归守卫，含反空转自检） |
 | 19 | 一条新守卫用真实墙钟判据（负载下抖红） | **已修** `2540e30`：改为可注入时钟 + 纯函数 `scanRoundBudget`；纪律见 §5「墙钟纪律（精确版）」 |
+| 20 | 上游 0.40.5 换了溢出文案 ⇒ **自动升档与 `depth: deep` 分块在真机整体失效**，判据降级为 `invalid_request` 且 hint 误导 | **已修** `fca5d2f`：判据认两种文案（`旧 ?? 新`，同形状）+ 端到端守门「不得降级为 invalid_request」 |
+| 21 | 仓库自带冒烟**假绿**（原始回包当五键喂 render ⇒ 永远空占位 + exit 0 + 不打 usage） | **已修** `fca5d2f`：组装五键 + 真断言；真机成功 exit 0、坏端口/坏模型实测 exit 1 |
 
 ## 7. 上游词汇与形状的「账」已收
 
