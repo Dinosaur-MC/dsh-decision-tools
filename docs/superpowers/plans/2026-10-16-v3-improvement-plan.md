@@ -1,5 +1,7 @@
 # dsh-decision-tools v3 与正确性改进 实施计划
 
+> ⚠️ 历史档：本文是当时的计划/规格。其中引用的 `.temp/` 探测产物已于 2026-10-16 随 v3 交付清理；**当前 as-is 事实以 `docs/architecture-current.md` 为准**。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 先把已知正确性缺陷修完（错误分类、`aggregate`、扫描状态形状、终态、容量估算），再把 `decision` 工具面重建为领域接口（`material` + `rubric` + `items` / `questions` 两模式互斥），配一个独立的线格式适配层，并以真机 `usage.input_tokens` 验收收益。

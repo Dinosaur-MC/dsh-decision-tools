@@ -1,5 +1,7 @@
 # dsh-decision-tools Implementation Plan
 
+> ⚠️ 历史档：本文是当时的计划/规格。其中引用的 `.temp/` 探测产物已于 2026-10-16 随 v3 交付清理；**当前 as-is 事实以 `docs/architecture-current.md` 为准**。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 把本机 Ollama 的 System One 决策能力（`POST /v1/systemone`）注册成 DSH 的一个模型可见工具 `decision`，一次调用可问 1–64 道 `choice`/`noul`/`score` 混合题并共享同一 `state`。
