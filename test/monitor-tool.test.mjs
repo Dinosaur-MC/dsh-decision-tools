@@ -524,6 +524,27 @@ test('Q5：file/glob 的每一次读取都走注入的 deps.read（绕开它改�
   for (const descriptor of descriptors) assert.equal(descriptor.kind, 'file');
 });
 
+test('probe-safe：events 源在 ctx.monitorEventLog 读取即抛时，预检给可行动的 invalid_request', async () => {
+  const t = fakeTime();
+  const ctx = { tools: { register: () => () => {} } };
+  Object.defineProperty(ctx, 'monitorEventLog', {
+    get() { throw new Error('cannot get property "monitorEventLog" without inject'); },
+    enumerable: true,
+  });
+  const out = registerMonitorTool(ctx, {
+    deps: { decide: async () => ({ probability: 0.9 }), clock: t.clock, sleep: t.sleep },
+  });
+  await assert.rejects(
+    () => out.definition.execute({ rubric: 'x', source: { kind: 'events', types: [] } }, EXEC),
+    (error) => {
+      assert.ok(error instanceof DecisionSourceError);
+      assert.equal(error.kind, 'invalid_request');
+      return true;
+    },
+  );
+  assert.equal(t.sleeps.length, 0, '预检当场失败，不进探测循环');
+});
+
 test('render 是全函数：异形 value 退化占位、绝不抛、绝不漏 undefined / NaN', () => {
   const foreground = renderMonitor({}, {
     background: false, mode: 'once', source: { kind: 'job' },

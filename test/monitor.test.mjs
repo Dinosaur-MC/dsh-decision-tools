@@ -249,6 +249,60 @@ test('createSources：command 与 events 在装配层注入后可用（本模块
   assert.equal(evt.events, 1);
 });
 
+test('probe-safe：ctx.sessions 读取即抛（没写进 inject 的 Cordis 代理）时 job 源仍可用', async () => {
+  const calls = [];
+  const views = [{ id: 'pwsh-1', kind: 'pwsh', owner: 'session-1', status: 'running', output: { total: 4 } }];
+  const jobs = {
+    list(...args) { calls.push(args); return views; },
+    readAt() { return { chunks: [{ at: 1, text: 'tail' }], next: 4, lossy: false }; },
+  };
+  const ctx = { jobs };
+  Object.defineProperty(ctx, 'sessions', {
+    get() { throw new Error('cannot get property "sessions" without inject'); },
+    enumerable: true,
+  });
+  const read = await createSources(ctx).read({ kind: 'job' }, { tailBytes: 4 });
+  assert.equal(read.text, 'tail');
+  assert.deepEqual(calls, [[undefined]], '拿不到会话服务就退到「不带 caller」的枚举，绝不把代理异常透出去');
+});
+
+test('probe-safe：ctx.monitorEventLog 读取即抛时 events 源给可行动报错，而不是代理异常', async () => {
+  const ctx = {};
+  Object.defineProperty(ctx, 'monitorEventLog', {
+    get() { throw new Error('cannot get property "monitorEventLog" without inject'); },
+    enumerable: true,
+  });
+  await assert.rejects(
+    () => createSources(ctx).read({ kind: 'events', types: [] }, { tailBytes: 8 }),
+    (error) => {
+      assert.ok(error instanceof DecisionSourceError);
+      assert.equal(error.kind, 'invalid_request');
+      assert.ok(error.message.includes('monitorEventLog'));
+      return true;
+    },
+  );
+});
+
+test('probe-safe：ctx.agents 读取即抛时 resolveAgent 安全降级（通知退回不唤醒，且不抛）', async () => {
+  const { jobs } = backgroundJobs();
+  const t = fakeTime();
+  const ctx = { jobs };
+  Object.defineProperty(ctx, 'agents', {
+    get() { throw new Error('cannot get property "agents" without inject'); },
+    enumerable: true,
+  });
+  const deliveries = [];
+  const result = startBackgroundMonitor(ctx, {
+    source: { kind: 'file', path: 'a' }, intervalMs: 1000, timeoutMs: 5000, countThreshold: 1, notify: 'inbox',
+  }, {
+    sources: stubSources(['hit']), decide: async () => 0.9, clock: t.clock, sleep: t.sleep,
+    sessionId: 'session-1', deliver: (mode, payload) => { deliveries.push({ mode, payload }); },
+  });
+  await result.done;
+  assert.equal(deliveries.length, 1);
+  assert.equal(deliveries[0].mode, 'inject', '取不到 agent ⇒ 保守不唤醒');
+});
+
 test('runMonitor：按探测结果计数（电平）——countThreshold=3 时第 3 次命中才返回，命中即 +1 无去抖', async () => {
   const t = fakeTime();
   const progress = [];
