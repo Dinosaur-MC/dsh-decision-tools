@@ -613,6 +613,8 @@ test('task-34（续）：deps.runCommand 收到第三个实参 {agent, sessionId
   assert.ok(seen[0].info, 'runCommand 必须收到第三个实参');
   assert.equal(seen[0].info.agent.id, 'session-11', '委托上游工具要用调用者 agent，否则 pwsh 这类解析不到');
   assert.equal(seen[0].info.sessionId, 'session-11');
+  assert.equal(seen[0].info.exec, exec,
+    '必须交出**整份 exec**（同一对象引用）：管道要 agent **与** parent(token)，只给 agent 会被宿主拒收 —— 半个上下文比没有更糟');
 });
 
 test('probe-safe：events 源在 ctx.monitorEventLog 读取即抛时，预检给可行动的 invalid_request', async () => {
