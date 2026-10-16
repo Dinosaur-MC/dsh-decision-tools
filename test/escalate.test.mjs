@@ -10,7 +10,9 @@ import {
   describeExhausted,
   selectByCapacity,
 } from '../lib/escalate.js';
-import { softBytesFor } from '../lib/density.js';
+// 绑定断言用：与 density 的 ASCII 口径必须逐字相等（复审 P2-4）。
+import { BYTES_PER_TOKEN } from '../lib/escalate.js';
+import { ASCII_BYTES_PER_TOKEN, softBytesFor } from '../lib/density.js';
 
 /**
  * 测试夹具阶梯（**不是** DEFAULT_LADDER）。用本机 2026-10-15 实测的容量，
@@ -265,4 +267,68 @@ test('selectByCapacity：容量未知的阶梯条目被忽略；字节数未知�
   assert.equal(odd.model, 'nimble:latest', '缺 numCtx 的条目不得被当成候选');
   const nan = selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: LADDER3, stateBytes: Number.NaN, softBytes: 4096 });
   assert.equal(nan.reason, 'largest', '字节数未知时保守地走最大档');
+});
+
+// ---- task-14 复审 P2 修复的守卫（2026-10-16）----
+
+test('BYTES_PER_TOKEN 只有一个来源：它就是 density 的 ASCII 口径（两处不等即红）', () => {
+  // 复审 P2-4：density.js 自称「数值只有这一处来源」，而 escalate 里曾另写一个 3.33。
+  // 现在 escalate 直接转发 density 的常量 ⇒ 这条断言就是那条绑定。
+  assert.equal(BYTES_PER_TOKEN, ASCII_BYTES_PER_TOKEN);
+  assert.equal(BYTES_PER_TOKEN, 3.33);
+});
+
+test('selectEscalation：阶梯乱序也必须取**能容纳需求的最小档**（契约：最小可用档）', () => {
+  // 复审 P2-5：旧实现用原序 find ⇒ 乱序 [big, mid] 会白跳到大档。
+  const big = { model: 'big:latest', numCtx: 16000 };
+  const mid = { model: 'mid:latest', numCtx: 4000 };
+  const picked = selectEscalation({ ladder: [big, mid], from: 'small:latest',
+    failure: { actual: 2000 }, currentNumCtx: 1000, margin: 1 });
+  assert.equal(picked.ok, true);
+  assert.equal(picked.entry.model, 'mid:latest', '两种顺序必须给同一个答案');
+  const flipped = selectEscalation({ ladder: [mid, big], from: 'small:latest',
+    failure: { actual: 2000 }, currentNumCtx: 1000, margin: 1 });
+  assert.equal(flipped.entry.model, picked.entry.model);
+});
+
+test('selectByCapacity：softBytes 非有限 = 没有阈值信息 ⇒ 留在默认档（而不是被 NaN 推进阶梯）', () => {
+  // 复审 P2-6：旧实现里 `bytes <= NaN` 恒假 ⇒ 小材料被推进阶梯；注释却说要当「没有阈值信息」。
+  // 阶梯里最小的档也**大于**默认档名：旧实现在这里会返回 mid:latest，从而与断言不符。
+  const ladder = [{ model: 'mid:latest', numCtx: 4000 }, { model: 'big:latest', numCtx: 16000 }];
+  const out = selectByCapacity({ defaultModel: 'small:latest', ladder, stateBytes: 10, softBytes: Number.NaN });
+  assert.equal(out.model, 'small:latest');
+  assert.equal(out.reason, 'no-threshold-default');
+  assert.equal(selectByCapacity({ defaultModel: 'small:latest', ladder, stateBytes: 10, softBytes: undefined }).model, 'small:latest');
+});
+
+test('selectByCapacity：换算比非有限 ⇒ 阶梯容量不可比，不得产出 NaN，走粘滞/默认兜底', () => {
+  // 复审 P2-6 的另一半：旧实现返回 {reason:'largest', capacityBytes: NaN}（排序也失去意义）。
+  const ladder = [{ model: 'mid:latest', numCtx: 4000 }, { model: 'big:latest', numCtx: 16000 }];
+  const noSticky = selectByCapacity({ defaultModel: 'small:latest', ladder, stateBytes: 999999, softBytes: 1, bytesPerToken: Number.NaN });
+  assert.equal(noSticky.reason, 'default-fallback');
+  assert.equal(noSticky.model, 'small:latest');
+  assert.ok(noSticky.capacityBytes === null || Number.isFinite(noSticky.capacityBytes), 'NaN 不得泄进 capacityBytes（允许 null 或默认档阈值）');
+  const sticky = selectByCapacity({ defaultModel: 'small:latest', ladder, stateBytes: 999999, softBytes: 1, bytesPerToken: Number.NaN, stickyModel: 'sticky:latest' });
+  assert.equal(sticky.model, 'sticky:latest');
+  assert.equal(sticky.reason, 'sticky-fallback');
+});
+
+test('selectByCapacity：字节数未知仍走最大档，但 capacityBytes 必须是有限数（不再是 NaN）', () => {
+  const nan = selectByCapacity({ defaultModel: 'tev1:0.8b', ladder: LADDER3, stateBytes: Number.NaN, softBytes: 4096 });
+  assert.equal(nan.reason, 'largest');
+  assert.ok(Number.isFinite(nan.capacityBytes), 'NaN 不得泄进 capacityBytes');
+});
+
+test('createSingleFlight 的公开 JSDoc 必须是「互斥、不共享结果」语义（防止照旧注释复活 r3 P0）', async () => {
+  // 复审 P1/任务 task-16 必修 1：注释曾经写「后来者搭同一趟」「fn 同步调用、不丢进微任务」，
+  // 与实现（微任务串行互斥）和真源 architecture-current.md §1.3 第 6 步相反。照那种注释去「修」
+  // 就会把并发调用者拿到**别人的 answers** 的 r3 P0 复活 ⇒ 这条守卫读源码把话说死。
+  const { readFile } = await import('node:fs/promises');
+  const src = await readFile(new URL('../lib/escalate.js', import.meta.url), 'utf8');
+  const head = src.slice(0, src.indexOf('export function createSingleFlight'));
+  const doc = head.slice(head.lastIndexOf('/**'));
+  assert.match(doc, /互斥，不共享结果/);
+  assert.match(doc, /不要.*改回「后来者搭同一趟」/);
+  assert.doesNotMatch(doc, /后来的调用搭同一趟/);
+  assert.doesNotMatch(doc, /`fn` 是\*\*同步调用\*\*的/);
 });

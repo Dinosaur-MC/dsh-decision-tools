@@ -293,3 +293,43 @@ test('assertBatchCriteria：批量模式的共享 criteria 复用逐题校验器
   assert.throws(() => assertBatchCriteria({ type: 'score', criteria: ['低'] }), /合法范围 2–10/);
   assert.throws(() => assertBatchCriteria({ type: 'noul', criteria: { no: '否' } }), /只接受 "false" 和 "true"/);
 });
+
+// ---- task-14 复审 P2-1 / P2-7 的守卫（2026-10-16）----
+
+test('批量 criteria 的报错定位是 criteria（…），不得再拼成 criteria.criteria', () => {
+  const cases = [
+    [() => assertBatchCriteria({ type: 'choice', criteria: { a: 'A' } }), /^criteria（choice）有 1 个选项，合法范围 2–255。/],
+    [() => assertBatchCriteria({ type: 'score', criteria: ['低'] }), /^criteria（score）有 1 档，合法范围 2–10。/],
+    [() => assertBatchCriteria({ type: 'noul', criteria: { no: '否' } }), /^criteria（noul）只接受 "false" 和 "true"/],
+  ];
+  for (const [fn, re] of cases) {
+    let error = null;
+    try { fn(); } catch (caught) { error = caught; }
+    assert.ok(error !== null, '必须报错');
+    assert.match(error.message, re);
+    assert.doesNotMatch(error.message, /criteria\.criteria/, '顶层 criteria 不得被报成 criteria.criteria');
+  }
+  // 逐题（mixed）模式的定位保持不变：questions[0].criteria（choice）…
+  // 逐题（mixed）模式的定位保持不变：questions[0].criteria（choice）…（用谓词，避免 assert.throws
+  // 把正则作用在 `String(error)` 的类名前缀上）。
+  assert.throws(
+    () => validateQuestions([{ name: 'q1', type: 'choice', instructions: 'x', criteria: { a: 'A' } }]),
+    (error) => {
+      assert.match(error.message, /^questions\[0\]\.criteria（choice）有 1 个选项/);
+      return true;
+    },
+  );
+});
+
+test('normalizeMaterial：顶层未知键 fail-closed（不再静默丢弃），合法形状不受影响', () => {
+  assert.throws(() => normalizeMaterial({ file: { path: 'a.txt' }, extra: 1 }), (error) => {
+    assert.equal(error.kind, 'material_invalid');
+    assert.match(error.message, /只接受 file 或 glob/);
+    assert.match(error.message, /"extra"/);
+    return true;
+  });
+  assert.throws(() => normalizeMaterial({ glob: { pattern: 'a/*' }, stateSource: {} }), /只接受 file 或 glob/);
+  assert.deepEqual(normalizeMaterial({ file: { path: 'a.txt', startLine: 1, endLine: 3 } }),
+    { kind: 'file', fields: { path: 'a.txt', startLine: 1, endLine: 3 } });
+  assert.deepEqual(normalizeMaterial('材料'), { kind: 'inline', text: '材料' });
+});

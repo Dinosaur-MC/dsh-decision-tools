@@ -185,3 +185,33 @@ test('chunk：hardSplit 分支也必须遵守 maxChunks（r3 审查 P0#2）', ()
   assert.equal(tight.chunks.length, 5);
   assert.equal(tight.truncatedBy, 'chunks');
 });
+
+// ---- task-14 复审 P2-2 的守卫（2026-10-16）----
+
+test('chunk：hardSplit 碎片靠字节区间区分（行区间相同），remaining 按行计、不按碎片计', () => {
+  const text = 'x'.repeat(200 * 1024);
+  const r = chunk(text, { budgetBytes: 4096, maxChunks: 32, maxTotalBytes: 4194304 });
+  assert.equal(r.chunks.length, 32);
+  assert.equal(r.truncatedBy, 'chunks');
+  // 整行只算 1 行「未完整发出」（不是 50 个碎片）——旧口径下消费方按行差累加会高估。
+  assert.equal(r.remaining, 1);
+  // 行区间本来就是同一行（文档已如实写明「此时按行区间无法区分」），可区分性靠 byteStart/byteEnd。
+  assert.deepEqual([...new Set(r.chunks.map((c) => `${c.startLine}-${c.endLine}`))], ['1-1']);
+  const ranges = r.chunks.map((c) => [c.byteStart, c.byteEnd]);
+  assert.ok(ranges.every(([b, e]) => Number.isInteger(b) && Number.isInteger(e) && e > b));
+  assert.ok(ranges.every(([b], i) => (i === 0 ? b === 0 : b === ranges[i - 1][1])), '碎片字节区间必须不重叠、无空隙');
+  assert.equal(ranges[ranges.length - 1][1], r.totalBytes);
+  assert.ok(r.chunks.every((c) => text.slice(c.byteStart, c.byteEnd) === c.text), '字节区间必须能精确切回碎片文本');
+  assert.deepEqual(r.chunks[0].part, { index: 1, total: 50 });
+  assert.deepEqual(r.chunks[31].part, { index: 32, total: 50 });
+});
+
+test('chunk：正常路径行区间互不重叠，且每块都带可切回的字节区间', () => {
+  const text = Array.from({ length: 40 }, (_, i) => `line ${i} ${'y'.repeat(20)}`).join('\n');
+  const r = chunk(text, { budgetBytes: 200, maxChunks: 32, maxTotalBytes: 1048576 });
+  assert.equal(r.truncated, false);
+  assert.ok(r.chunks.length > 1);
+  assert.ok(r.chunks.every((c, i) => i === 0 || c.startLine > r.chunks[i - 1].endLine), '正常路径行区间不得重叠');
+  assert.ok(r.chunks.every((c) => text.slice(c.byteStart, c.byteEnd) === c.text));
+  assert.equal(r.remaining, 0);
+});
