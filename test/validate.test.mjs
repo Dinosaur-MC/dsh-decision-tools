@@ -342,3 +342,77 @@ test('normalizeMaterial：顶层未知键 fail-closed（不再静默丢弃），
     { kind: 'file', fields: { path: 'a.txt', startLine: 1, endLine: 3 } });
   assert.deepEqual(normalizeMaterial('材料'), { kind: 'inline', text: '材料' });
 });
+// ——— Monitor 与上游委托管道（规格 2026-10-17）———
+import { validateMonitorArgs, validateUpstream, MONITOR_LIMITS } from '../lib/validate.js';
+
+const M_SRC = { kind: 'file', path: 'notes.txt' };
+
+test('monitor：intervalMs 被抬到配置下限并给出钳制说明', () => {
+  const r = validateMonitorArgs(
+    { rubric: '材料里是否出现了目标事件', source: M_SRC, intervalMs: 10 },
+    { config: { minProbeIntervalMs: 1000 } },
+  );
+  assert.equal(r.intervalMs, 1000);
+  assert.ok(r.clampNotes.some((n) => n.includes('intervalMs')), '必须说明发生了钳制');
+});
+
+test('monitor：timeoutMs 小于 intervalMs 时被抬到 intervalMs 并说明', () => {
+  const r = validateMonitorArgs({ rubric: 'x', source: M_SRC, intervalMs: 5000, timeoutMs: 1000 });
+  assert.equal(r.intervalMs, 5000);
+  assert.equal(r.timeoutMs, 5000);
+  assert.ok(r.clampNotes.some((n) => n.includes('timeoutMs')));
+});
+
+test('monitor：未知 source.kind 报错并列合法值', () => {
+  assert.throws(
+    () => validateMonitorArgs({ rubric: 'x', source: { kind: 'nope' } }),
+    (e) => e.kind === 'source_invalid' && /job/.test(e.message) && /glob/.test(e.message),
+  );
+});
+
+test('monitor：已删除的四个参数被显式拒绝（无 CD / 电平计数 / 不持久化）', () => {
+  for (const k of ['minGapMs', 'countMode', 'persistCount', 'resetCount']) {
+    assert.throws(
+      () => validateMonitorArgs({ rubric: 'x', source: M_SRC, [k]: 1 }),
+      (e) => e.kind === 'monitor_invalid' && e.message.includes(k),
+      '参数 ' + k + ' 必须被拒绝而不是静默忽略',
+    );
+  }
+});
+
+test('monitor：默认值符合规格（5s 间隔 / 120s 超时 / 计数阈值 1 / 不通知）', () => {
+  const r = validateMonitorArgs({ rubric: 'x', source: { kind: 'job', id: 'job-1' } });
+  assert.equal(r.intervalMs, MONITOR_LIMITS.defaultProbeIntervalMs);
+  assert.equal(r.timeoutMs, MONITOR_LIMITS.defaultTimeoutMs);
+  assert.equal(r.countThreshold, 1);
+  assert.equal(r.notify, 'none');
+  assert.equal(r.mode, 'once');
+  assert.equal(r.tailBytes, MONITOR_LIMITS.defaultTailBytes);
+});
+
+test('monitor：countThreshold 必须是不小于 1 的整数', () => {
+  for (const bad of [0, -1, 1.5, '3']) {
+    assert.throws(() => validateMonitorArgs({ rubric: 'x', source: M_SRC, countThreshold: bad }), (e) => e.kind === 'monitor_invalid');
+  }
+});
+
+test('upstream：缺 tool 或 tool 为空白时报错', () => {
+  for (const bad of [undefined, {}, { tool: '  ' }, { tool: 7 }]) {
+    assert.throws(() => validateUpstream(bad), (e) => e.kind === 'upstream_invalid');
+  }
+});
+
+test('upstream：自递归被拒（上游工具名是本插件工具）', () => {
+  assert.throws(
+    () => validateUpstream({ tool: 'decision' }),
+    (e) => e.kind === 'upstream_self_recursion' && e.message.includes('decision'),
+  );
+  assert.throws(() => validateUpstream({ tool: 'monitor' }), (e) => e.kind === 'upstream_self_recursion');
+});
+
+test('upstream：静态二层嵌套被拒，正常调用被归一', () => {
+  assert.throws(() => validateUpstream({ tool: 'pwsh', arguments: { upstream: { tool: 'pwsh' } } }), (e) => e.kind === 'upstream_invalid');
+  const r = validateUpstream({ tool: ' pwsh ', arguments: { command: 'echo hi' } });
+  assert.equal(r.tool, 'pwsh');
+  assert.deepEqual(r.arguments, { command: 'echo hi' });
+});
