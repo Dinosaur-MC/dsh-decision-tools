@@ -560,6 +560,34 @@ test('task-34：sessionId 与 exec.agent 随每次调用注入 monitor deps（ex
   assert.equal(working.deliveries[0].mode, 'inject', '忙就不唤醒（同一份注入代码的反向守卫）');
 });
 
+test('task-34（续）：deps.deliver 收到第三个实参 {agent, sessionId}（装配层靠它把通知送到触发它的会话）', async () => {
+  const { jobs, state } = fakeJobs();
+  const t = fakeTime();
+  const { ctx } = fakeCtx({ jobs });
+  const read = fakeReader({ 'logs/a.txt': 'hit' });
+  const seen = [];
+  const out = registerMonitorTool(ctx, {
+    deps: {
+      decide: async () => ({ probability: 0.9 }),
+      read, clock: t.clock, sleep: t.sleep,
+      deliver: (mode, payload, info) => { seen.push({ mode, info, payload }); },
+    },
+  });
+  const exec = { signal: undefined, agent: { id: 'session-9', status: 'idle', session: { header: { cwd: 'F:/ws' } } } };
+  await out.definition.execute({
+    rubric: 'x', source: { kind: 'file', path: 'logs/a.txt' }, background: true, notify: 'inbox',
+    intervalMs: 1000, timeoutMs: 5000, countThreshold: 1,
+  }, exec);
+  await state.handles[0].done;
+
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].mode, 'followup');
+  assert.ok(seen[0].info, 'deliver 必须收到第三个实参：装配期闭包靠它才知道该投递给谁');
+  assert.equal(seen[0].info.sessionId, 'session-9');
+  assert.equal(seen[0].info.agent.id, 'session-9', 'agent 要随调用交出去，否则装配层只能靠 sessionId 反查');
+  assert.equal(seen[0].payload.message.source.form, 'notice', 'payload 仍是 notify.js 的两参契约形状');
+});
+
 test('probe-safe：events 源在 ctx.monitorEventLog 读取即抛时，预检给可行动的 invalid_request', async () => {
   const t = fakeTime();
   const ctx = { tools: { register: () => () => {} } };
