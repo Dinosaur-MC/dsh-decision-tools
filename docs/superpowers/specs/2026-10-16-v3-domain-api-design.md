@@ -74,6 +74,10 @@ material: string                          // 内联材料
 
 - **`confidence` 保留**（上游每题都回，成本为零）；低于 `minConfidence` 的项**在 `notes[]` 里点名**，不再有独立的 `confidence_warning` 键。ADR-5 十点锚点中围绕置信度的两条据此改写，语义不变（**旗，不过滤**）。
 - **`coverage` 是对内部路径的如实报告**（分批 / 截断 / 失败 / 取消），不是调用方旋钮的回执。
+- **逐题细节（实现冻结，供渲染与文档对齐）**：`noul` → `value` 为布尔且 `probabilities{true,false}`；上游对 `noul` **不回 `confidence`**（`choice`/`score` 有），缺失即视为低置信；`choice`/`score` → `value` 为所选标签，`score` 的加权均值可由 `probabilities` 的 `0..N-1` 键复算。
+- **缺位表示**：`coverage.failed = requested − answered`；未答项在 `results` 里以 `value: null` **占位**（保持 `results.length === requested`，调用方不必靠下标对齐）。
+- **`cost` 的两项语义**：`escalated` 为布尔（本次是否发生升档）；`attempts[]` 为 `{ model, failureKind }` 列表（诊断用，正常路径长度为 1）。
+
 - **模型选择的可观测性走 `notes[]`**：`plan` 已被本 ADR 硬切，选档结论以 `notes[]` 的首行呈现（形如 `模型选择：<model>（<选档原因>）`）——否则调用方无法从结果解释「为什么用了这个模型」。
 
 **依据**：外部评审 §5.3（输出要能区分完成/部分完成/失败/取消）；当前 `answers`/`chunks` 互斥的读法对调用方是额外负担。
