@@ -190,6 +190,20 @@ test('deliver 抛错时不算已投递、不记合并时刻，因此可以重试
   assert.equal(attempted.length, 2);
 });
 
+test('notify：窗口按注入的 at 走（evt.at 参与合并窗与限频窗，不只是记录）', () => {
+  const { calls, deliver } = recorder();
+  const t = fakeClock();
+  const notifier = createNotifier({ deliver, clock: t.clock, coalesceWindowMs: 5000, maxPerMinute: 100 });
+
+  notifier.notify({ key: 'k', text: '1' });
+  const sameClock = notifier.notify({ key: 'k', text: '2' });
+  assert.equal(sameClock.reason, 'coalesced', '同一个 at ⇒ 落在合并窗内');
+
+  const jumped = notifier.notify({ key: 'k', text: '3', at: t.clock() + 5001 });
+  assert.equal(jumped.delivered, true, '用 at 跳过合并窗（clock() 本身没动）⇒ at 确实参与窗口计算');
+  assert.equal(calls.length, 2);
+});
+
 test('通知器只有 notify/stats 两个出入口：从不持有 agent，也绝不调用 agent.cancel', () => {
   const { calls, deliver } = recorder();
   const t = fakeClock();

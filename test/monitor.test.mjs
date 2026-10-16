@@ -502,6 +502,23 @@ test('runMonitor：evidence 只保留命中那次的有限尾部（硬上限）�
   assert.ok(result.evidence.length > 0);
 });
 
+test('runMonitor：decide 返回无法识别的形状 ⇒ 记进 errors（与「判定为否」可区分），方向仍 fail-safe', async () => {
+  const t = fakeTime();
+  const result = await runMonitor({
+    sources: stubSources(['a']),
+    decide: stubDecide([true, false, { probability: 0.1 }, 'yes', null]),
+    clock: t.clock,
+    sleep: t.sleep,
+    args: { source: { kind: 'file', path: 'x' }, intervalMs: 1000, timeoutMs: 3000, countThreshold: 1 },
+  });
+  assert.equal(result.hit, false);
+  assert.equal(result.count, 0, '形状不识别一律按未命中（fail-safe）');
+  assert.equal(result.samples, 3);
+  // 裸 boolean（true **与** false）、字符串、null 都算形状不识别；{probability:0.1} 是「判据说否」，不算错误。
+  assert.equal(result.errors, 2);
+  assert.equal(result.level, false, '最后一次探测是「判据说否」，level 取那一次');
+});
+
 test('runMonitor：mode=continuous 达成门槛后继续跑到 deadline，命中持续触发 onHit', async () => {
   const t = fakeTime();
   const hits = [];
@@ -643,6 +660,44 @@ test('startBackgroundMonitor：start 抛别的错时原样透传，绝不私自 
     () => startBackgroundMonitor({ jobs }, { source: { kind: 'file', path: 'a' } }, { decide: async () => 0.9 }),
     (error) => error.message.includes('disabled by policy'),
   );
+});
+
+test('startBackgroundMonitor：agent.status 的 idle 推导（idle⇒followup / 忙⇒inject / 未知⇒inject）', async () => {
+  const run = async (status) => {
+    const { jobs } = backgroundJobs();
+    const t = fakeTime();
+    const deliveries = [];
+    const agent = { status, cancel: () => { throw new Error('must not cancel'); } };
+    const result = startBackgroundMonitor({ jobs }, {
+      source: { kind: 'file', path: 'a' },
+      intervalMs: 1000,
+      timeoutMs: 5000,
+      countThreshold: 1,
+      notify: 'inbox',
+    }, {
+      sources: stubSources(['hit']),
+      decide: async () => 0.9,
+      clock: t.clock,
+      sleep: t.sleep,
+      agent,
+      sessionId: 'session-1',
+      deliver: (mode, payload) => { deliveries.push({ mode, payload }); },
+    });
+    await result.done;
+    return deliveries;
+  };
+
+  const idle = await run('idle');
+  assert.equal(idle.length, 1);
+  assert.equal(idle[0].mode, 'followup', '目标空闲 ⇒ 唤醒（followup）');
+
+  const working = await run('working');
+  assert.equal(working.length, 1);
+  assert.equal(working[0].mode, 'inject', '目标忙 ⇒ 静默 inject，绝不强唤醒');
+
+  const unknown = await run(undefined);
+  assert.equal(unknown.length, 1);
+  assert.equal(unknown[0].mode, 'inject', 'status 不是字符串 ⇒ 保守不唤醒');
 });
 
 test('startBackgroundMonitor：run 被重复调用时第二次是空操作（start 只该成功一次）', async () => {
