@@ -324,17 +324,26 @@ test('判据写在材料之后，且只出现一次', () => {
 
 ## Phase 5 — 可靠性与可观测性
 
-### Task 16: 并发测试隔离（消除 undici 全局池 flake）
+### Task 16: 并发 flake 的真根因（blocked port）与装置修复
 
-**Files:** Modify: `test/client.test.mjs`（或新增 `test/helpers/http.js`）；Test: 自身
+> **2026-10-16 更正**：本节原先假设「undici 进程级全局池」是成因、修法为「按用例注入独立 `Agent`/`Pool`」。该假设**已被实测证伪**：
+> ① 规定形状（20 次立刻 500、并发 8）在现装置 **200/200 全绿**，不复现；600 轮「起服务→请求→关」（并发 8）0 失败；
+> ② 4 路后台负载下约 191 次 `client.test.mjs`，用请求时间 × 服务端 listen/close 事件（27833 条）关联：**0 条**「端口在听却 ECONNREFUSED/RESET」；
+> ③ Windows 上同端口二次绑定被拒（EADDRINUSE）⇒ 无跨进程端口劫持；
+> ④ `undici` 在本仓库**不可 import**（ERR_MODULE_NOT_FOUND），加依赖违反 Global Constraints ⇒ 原修法**无实现路径**。
+>
+> **真根因**：**WHATWG Fetch 的 blocked port**。测试装置从临时端口区间抽号，会抽到规范禁用的约 60 个端口（5060/5061/4190/6666-6669/6679/6697 …）；`fetch` 在本地直接拒绝（`TypeError: fetch failed`，`cause.message = bad port`），**请求从未发出**（服务端 `requests.length = 0`），`lib/client.js` 把它归成 `unreachable` 并给出「确认 Ollama 已在运行」的误导提示。概率吻合：约 60 个禁用端口 / 临时端口区间，每轮约 15 个假服务 ⇒ 1%/轮量级，与历史 1/11~1/36 同量级。
 
-**Interfaces:** 每个用例用自己的 `Agent`/`Pool` 实例（显式注入），不再共享进程级全局调度器。
+**Files:** Modify: `test/fake-ollama.mjs`（共享装置，**唯一改动者**）、`test/client.test.mjs`、`lib/client.js`；Create: `test/helpers/fetch-ports.mjs`
 
-- [ ] **Step 1: 写失败测试** — 连续 20 次「服务端立刻 500」在并发 8 下必须 20 次都归类为 `server_error`（当前装置会 flake）。
-- [ ] **Step 2: 跑它，确认失败（或先复现 flake）**。
-- [ ] **Step 3: 最小实现** — 每用例注入独立调度器；`client.js` 允许注入 `dispatcher`（默认不传，保持产品行为不变）。
-- [ ] **Step 4: 跑 20 轮** — `for i in $(seq 20); do npm test || break; done`，必须 20/20 绿。
-- [ ] **Step 5:** Commit — `git commit -m 'test: 按用例隔离 HTTP 调度器，消除并发 flake'`
+**Interfaces:** `fake-ollama` 在 `listen` 后若端口落在 blocked 列表则关闭重挑，并支持 `options.port` / `allocatePort` 以便测试注入；`fetch-ports.mjs` 导出端口列表与判定函数。
+
+- [ ] **Step 1: 写失败测试** — 注入一个 blocked 端口（如 5060）时必须能**确定性**复现：请求未达服务端且被归类为不可达/坏端口（当前装置会交出该端口）。
+- [ ] **Step 2: 跑它，确认失败**（红：装置交出 blocked 端口）。
+- [ ] **Step 3: 最小实现** — `test/helpers/fetch-ports.mjs`（列表 + 判定）；`test/fake-ollama.mjs` 重挑端口；**不新增依赖、不改产品默认行为**。
+- [ ] **Step 4: `lib/client.js` 的错误分类** — 为 `TypeError: fetch failed` 且 `cause.message === 'bad port'` 单列一个 kind（建议 `bad_port`）与可行动提示；既有 kind 判定不得回归。
+- [ ] **Step 5: 跑 20 轮** — `for i in $(seq 20); do npm test || break; done`，必须 20/20 绿（命令与输出摘要写进报告）。
+- [ ] **Step 6:** Commit — `git commit -m 'test: 装置永不交出 fetch blocked port；client 单列 bad_port 判据'`
 
 ### Task 17: 阈值标定 + 粘滞边界 + 运行时能力发现
 
