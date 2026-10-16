@@ -548,6 +548,30 @@ test('notes：低置信度的题被点名（不再有独立的 confidence_warnin
   }
 });
 
+test('notes[0] 必须是选档结论：体积归因与低置信点名同时触发时也不得被挤掉（契约 §1.3/§3.2/§6#8）', async () => {
+  // 旧实现把「模型选择：…」push 在最后 ⇒ 有告警时 notes[0] 是告警行。既有断言只做 notes.join(' ')
+  // + includes('模型选择')，与顺序无关，所以这条契约缺口一直没被抓住（task-12 复审 P1）。
+  const fake = await startFakeOllama(() => ({
+    status: 200,
+    body: { model: 'tev1:0.8b', answers: { q1: { type: 'choice', choice: 'a', probabilities: { a: 0.4, b: 0.3 }, confidence: 0.05 } } },
+  }));
+  try {
+    const { registered, ctx } = fakeCtx();
+    // 两个条件同时成立：softBodyBytes 200 < 请求体（体积告警）+ minConfidence 0.9 > 0.05（低置信点名）。
+    apply(ctx, Config({ baseUrl: fake.baseUrl, softBodyBytes: 200, minConfidence: 0.9 }));
+    const value = await registered[0].execute({
+      material: 'x'.repeat(3000),
+      questions: [{ name: 'q1', type: 'choice', instructions: 'x', criteria: { a: 'A', b: 'B' } }],
+    }, EXEC);
+    assert.match(value.notes[0], /^模型选择：/, 'notes[0] 必须是选档结论');
+    assert.ok(value.notes.length >= 3, `选档结论 + 体积归因 + 低置信点名 ⇒ 至少 3 条，实际 ${value.notes.length}`);
+    assert.match(value.notes.join('\n'), /已超过建议的 200 字节/, '体积归因仍须在（只是排到首行之后）');
+    assert.match(value.notes.join('\n'), /confidence 告警：以下 1 题/, '低置信点名仍须在（只是排到首行之后）');
+  } finally {
+    await fake.close();
+  }
+});
+
 test('notes：minConfidence 0 关闭门限（同一批低置信答案也不出告警行）', async () => {
   const body = { model: 'tev1:0.8b', answers: { weak: { type: 'choice', choice: 'a', probabilities: { a: 0.2 }, confidence: 0.05 } } };
   const fake = await startFakeOllama(() => ({ status: 200, body }));

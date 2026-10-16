@@ -131,6 +131,15 @@ test('notes 里的空串与缺键同义：不得打出空行', () => {
   assert.equal(withEmpty, '(no results returned)\na\nb');
 });
 
+test('notes 里的非字符串项按 String(note) 落进文本、null/undefined 跳过（该分支此前删掉也不红）', () => {
+  // task-12 复审的定点变异实证：删掉 lib/render.js:182-184 的 else-if 分支后 render 仍 16/16 绿。
+  // schema 已限 notes: string[]，故这是防御分支；但「没守卫」意味着它可以被静默删除 —— 本用例钉住它。
+  const text = textOf({ notes: [42, null, { a: 1 }, undefined, true, ''] });
+  assert.equal(text, ['(no results returned)', '42', '[object Object]', 'true'].join('\n'),
+    '{} 按 String() 落成 [object Object]；null/undefined/空串走跳过语义');
+  assert.doesNotThrow(() => textOf({ notes: [[1, 2], Symbol('s')] }));
+});
+
 test('零结果给明确占位行，而不是空文本；占位后仍照常输出元信息', () => {
   assert.equal(textOf({ results: [] }), '(no results returned)');
   assert.equal(textOf({}), '(no results returned)');

@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { cjkShare, bytesPerToken, softBytesFor } from '../lib/density.js';
+import { ESCALATION_MARGIN } from '../lib/escalate.js';
 
 test('cjkShare：按码点统计，空串 0、纯中文 1、混排按比例', () => {
   assert.equal(cjkShare(''), 0);
@@ -29,4 +30,13 @@ test('softBytesFor：窗口 × 0.6 × 密度；窗口未知返回 undefined（�
   assert.equal(softBytesFor({ numCtx: 0, text: 'x' }), undefined);
   assert.equal(softBytesFor({ numCtx: Number.NaN, text: 'x' }), undefined);
   assert.equal(softBytesFor({ numCtx: 1000, margin: 0.5, text: 'abc' }), Math.floor(1000 * 0.5 * 3.33));
+});
+
+test('默认 margin 必须与 escalate 的 ESCALATION_MARGIN 绑定（任一被改即红）', () => {
+  // density 是零 import 模块，故这条绑定只能由测试来钉：默认值 0.6 与 ESCALATION_MARGIN 是两处
+  // 字面量，改一处而忘另一处时，本用例会红（task-12 复审 P2-5）。
+  assert.equal(ESCALATION_MARGIN, 0.6, '本仓的策略余量');
+  assert.equal(softBytesFor({ numCtx: 4096, text: 'abc' }), Math.floor(4096 * ESCALATION_MARGIN * 3.33),
+    'softBytesFor 的默认 margin 必须等于 ESCALATION_MARGIN');
+  assert.equal(softBytesFor({ numCtx: 4096, text: '中' }), Math.floor(4096 * ESCALATION_MARGIN * 2.32));
 });
