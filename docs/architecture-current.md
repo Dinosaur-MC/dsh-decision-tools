@@ -1,6 +1,6 @@
 # dsh-decision-tools — 现状盘点（架构 / 功能 / 接口）
 
-> 快照时点：HEAD `6b740cc`（2026-10-16）· 套件 **192/192 绿** · 工作树干净。
+> 快照时点：HEAD `2540e30`（2026-10-16）· 套件 **211/211 绿** · 工作树干净。已过一轮三人交叉对抗复审（task-12/13/14）并在其后完成三轮修复（`3475758`/`588015d`/`5dba57d`+`2540e30`）。
 > 本文描述 **v3 现状**（as-is）：工具面已收敛为 material/rubric/items/questions/type/criteria/depth/model 八键，输出统一五键。
 
 ## 0. 一句话
@@ -23,22 +23,22 @@
 - 打包白名单：`lib/**/*.js`、`assets/**`、`cordis.patch.yml`、两份 README、`LICENSE`、`THIRD_PARTY_NOTICES`；`npm pack` 实测 **20 files / 78.0 kB**（`docs/`、`test/`、`smoke/` 在 git 里被跟踪但**不入包**）。
 - 运行态通过 profile 的 `link:` symlink 指向工作区 ⇒ 磁盘代码即运行代码，**改码后要重载宿主**才生效。
 
-### 1.2 模块图（13 个模块 / 3197 行）
+### 1.2 模块图（13 个模块 / 3358 行）
 
 | 模块 | 行 | 职责 |
 |---|---|---|
-| `tool.js` | 972 | **唯一接触 `ctx` 的文件**：装配、参数解析、编排（分批 / 三档 depth / 内部扫描）、输出五键与渲染接线 |
-| `validate.js` | 526 | 校验层：`LIMITS`、两模式互斥、material 归一、depth 解析、逐题校验、`analyzeBody` 体积归因 |
+| `tool.js` | 1015 | **唯一接触 `ctx` 的文件**：装配、参数解析、编排（分批 / 三档 depth / 内部扫描）、输出五键与渲染接线 |
+| `validate.js` | 539 | 校验层：`LIMITS`、两模式互斥、material 归一、depth 解析、逐题校验、`analyzeBody` 体积归因 |
 | `client.js` | 328 | HTTP 层：`callSystemOne`、错误分类（含溢出与 **fetch blocked port** 分支）、`SystemOneError` |
-| `source.js` | 323 | 引用式材料：描述符校验、行范围切片、`chunk` 分块、glob 匹配器 |
-| `escalate.js` | 242 | 阶梯、选档、单飞、容量分派 `selectByCapacity`、终态 `describeExhausted` |
+| `source.js` | 355 | 引用式材料：描述符校验、行范围切片、`chunk` 分块、glob 匹配器 |
+| `escalate.js` | 286 | 阶梯、选档、单飞、容量分派 `selectByCapacity`、终态 `describeExhausted` |
 | `render.js` | 193 | 把结果渲染成给模型看的文本（**零 import** 的纯函数） |
 | `parameters.js` | 163 | 模型可见参数契约（八键）+ 常驻 `TOOL_DESCRIPTION` |
-| `scan.js` | 129 | 分块扫描编排、`MAX_CONCURRENCY`、聚合 `aggregateNoul` |
+| `scan.js` | 151 | 分块扫描编排、`MAX_CONCURRENCY`、聚合 `aggregateNoul` |
 | `density.js` | 88 | **语言密度层**：CJK 占比 → 2.32 / 3.33 B per token，`softBytesFor(窗口 × 0.6 × 密度)` |
-| `skill.js` | 84 | 注册随包 skill（provider、frontmatter 解析、资产定位） |
+| `skill.js` | 85 | 注册随包 skill（provider、frontmatter 解析、资产定位） |
 | `wire.js` | 76 | **线格式唯一产地**：`WIRE_TYPES`、`toWireRequest`（判据写在材料之后） |
-| `plan.js` | 67 | 决策表：`planAction`（send/scan/escalate/fail）—— **depth=deep 分块的唯一入口** |
+| `plan.js` | 73 | 决策表：`planAction`（send/scan/escalate/fail）—— **depth=deep 分块的唯一入口** |
 | `index.js` | 6 | 入口再导出 |
 
 依赖方向：`tool.js` → 全部纯模块；纯模块之间无循环依赖，`wire.js`/`render.js` 零 import。
@@ -87,10 +87,10 @@
 |---|---|---|---|
 | `material` | **是** | `string` 或 `{file:{path,startLine?,endLine?}}` 或 `{glob:{pattern,limit?}}` | 共享材料；引用式形态**不进上下文** |
 | `rubric` | 批量模式必填 | `string` | 共享判据，**只写一次**；wire 层放在材料之后 |
-| `items` | 批量模式必填 | `string[]`（≤64） | 每项是**自带完整待判对象**的短文本或标识 |
+| `items` | 批量模式必填 | 数组（≤64） | 每项是**自带完整待判对象**的短文本或标识；schema 允许任意 JSON，非字符串项**原样透传**给上游 |
 | `questions` | 异质模式必填 | `[{name,type,instructions,criteria?}]`（1–64） | 与 `items` **互斥**；每题自己的判据/选项 |
 | `type` | 批量模式必填 | `choice`/`noul`/`score` | 批量模式的题型 |
-| `criteria` | 否 | 对象或数组 | **批量模式的顶层标签集**（只对 choice/score 有意义；noul 给即 `criteria_not_allowed`）；异质模式写在每题里 |
+| `criteria` | 批量 choice/score **必填** | 对象或数组 | **批量模式的顶层标签集**；`noul` 给即 `criteria_not_allowed`；异质模式写在每题里（schema 的 `required` 不含它，缺失由校验层给可行动报错） |
 | `depth` | 否 | `quick`/`normal`/`deep` | 缺省 `normal`；三档语义见 1.3 第 7 步 |
 | `model` | 否 | `string` | 显式指定；**同时关闭本次容量分派与自动提升**，并写进粘滞 |
 
@@ -101,9 +101,9 @@ JSON Schema 的 `required` **只有 `material`**；模式内部必填由校验�
 | 键 | 形状 |
 |---|---|
 | `results` | `[{id,type,value,probabilities?,confidence?}]`：`noul` 的 `value` 为布尔（上游不回 `confidence`），`choice`/`score` 为所选标签 |
-| `coverage` | `{requested,answered,batches,truncated,truncatedBy?,failed,aborted}`；未答项在 `results` 里以 `value:null` **占位**（保持 `results.length === requested`） |
+| `coverage` | `{requested,answered,batches,truncated,truncatedBy?,failed,aborted}`。`truncated` = **材料自身截断（glob 总量超 `maxSourceBytes`）或扫描截断**；`truncatedBy` 取值 `material` / `chunks` / `totalBytes` / `deadline`（未截断为 null）；`aborted` = 调用方取消（含最后一块因取消失败）；未答项在 `results` 里以 `value:null` **占位**（保持 `results.length === requested`） |
 | `material` | `{source:'inline'/'file'/'glob',bytes,descriptor?}` |
-| `cost` | `{model,inputTokens,bodyBytes,wallMs,escalated,attempts[]}`（`attempts` 逐条 `{model,failureKind}`） |
+| `cost` | `{model,inputTokens,bodyBytes,wallMs,escalated,attempts[]}`。`inputTokens`/`bodyBytes` = 本次调用**实际发出的全部请求**之和（含分批、deep 内部分块、失败尝试）；`attempts` 只记**选档/升档**尝试（`{model,failureKind}`，成功项 `failureKind=null`），同档内的分批/分块不逐条记 |
 | `notes` | `string[]`：**首行是选档结论**（模型选择：<model>（<原因>）），其后是体积归因、低置信点名、扫描提示 |
 
 硬切说明：v2 的 `answers`/`usage`/`state_bytes`/`body_bytes`/`body_warning`/`confidence_warning`/`source`/`escalated`/`plan`/`chunks`/`scan` 与 `strategy`/`aggregate` 参数**全部不再存在**（迁移见两份 README 的「旧→新」表）。
@@ -145,7 +145,7 @@ JSON Schema 的 `required` **只有 `material`**；模式内部必填由校验�
 - `validate`: `LIMITS` · `DEPTHS` · `DecisionValidationError` · `analyzeBody` · `validateQuestions` · `resolveDepth` · `normalizeMaterial` · `resolveMaterial` · `assertModeExclusive` · `assertBatchCriteria`
 - `source`: `validateSourceDescriptor` · `isUnsafePath` · `sliceByLines` · `chunk` · `splitGlobPattern` · `globSegmentToRegExp` · `matchGlobSegment` · `isRecursiveGlob` · `DecisionSourceError`
 - `escalate`: `DEFAULT_LADDER` · `ESCALATION_MARGIN` · `BYTES_PER_TOKEN` · `selectEscalation` · `demandOf` · `selectByCapacity` · `createSingleFlight` · `describeExhausted`
-- `plan`: `planAction` · `STRATEGIES`；`render`: `renderAnswers`；`scan`: `runScan` · `aggregateNoul` · `MAX_CONCURRENCY`
+- `plan`: `planAction` · `STRATEGIES`；`render`: `renderAnswers`；`scan`: `runScan` · `aggregateNoul` · `MAX_CONCURRENCY`；`skill`: `name` · `inject` · `SKILL_NAME` · `PROVIDER` · `BUNDLED_SKILL_RANK` · `skillFileUrl` · `parseSkill` · `apply`
 - `tool`: `name` · `inject` · `Config` · `COMPANION_SKILL` · `OUTPUT_SCHEMA` · `apply`（+ `resolveSoftBodyBytes` / `resolveMinConfidence` / `collectLowConfidence`）
 
 ### 3.7 常量与阈值（`LIMITS`，唯一来源）
@@ -167,7 +167,7 @@ JSON Schema 的 `required` **只有 `material`**；模式内部必填由校验�
 
 ## 5. 测试与门禁
 
-- 套件 `node --test test/*.test.mjs` = **192 例**（显式 `test(` **168** 条 + 表驱动 **24** 条 = §4.9 锚点 10 + skill 锚点 14）。
+- 套件 `node --test test/*.test.mjs` = **211 例**（显式 `test(` **187** 条 + 表驱动 **24** 条 = §4.9 锚点 10 + skill 锚点 14）。**含墙钟的用例一律不得使用真实计时**：deep 的多轮重切预算用可注入时钟 + 纯函数 `scanRoundBudget` 断言（曾有一条用服务端忙等 60 ms 的用例在并行负载下抖红，已重写）。
 - 守卫：§4.9 判别性锚点、skill 锚点（十四条 v3 读法 + 词表负例）、README 配置表与 `Config` 投影一致、注入预算上限（description ≤1900 / schema ≤3600 / skill ≤4000）、`COMPANION_SKILL === SKILL_NAME`、缺 skill 拒服务、首次交付 skill 正文。
 - 另有：`node --check lib/*.js`、CR 字节 = 0、变异自检（累计 30+ 定点变异全杀）、隔离实例真机冒烟。
 - **装置不变量**（`cee0baa` 之后）：假服务永不交出 fetch 禁用端口；并发负载下错误分类不退化为 `unreachable`。
@@ -188,6 +188,11 @@ JSON Schema 的 `required` **只有 `material`**；模式内部必填由校验�
 | 10 | 显式 `model` 永久改写进程级粘滞 | **用户已裁定保留（R1）** |
 | 11 | 墙钟**不可作卖点**（比值随模型状态漂移） | 口径纪律，见 §8 |
 | 12 | `A` 形状 64 项在 nimble 上**不可执行** | 实测结论（设计要求，非缺陷） |
+| 13 | `notes[0]` 契约未落地（选档结论曾被告警挤到末位） | **已修** `3475758` + 会红的守卫 |
+| 14 | 单飞闸 JSDoc 与实现相反（照注释改会复活 r3 的 P0） | **已修** `588015d`（含读源码的守卫用例） |
+| 15 | 材料截断未进 `coverage`（调用方会误认为材料完整） | **已修** `5dba57d`（新增契约值 `truncatedBy='material'`） |
+| 16 | deep 分块流量未计入 `cost`（notes 与 cost 自相矛盾） | **已修** `5dba57d` |
+| 17 | `scan.js` 硬切时 `remaining` 按行差高估 | **已修** `2540e30`（按行区间展开去重） |
 
 ## 7. 上游词汇与形状的「账」已收
 
