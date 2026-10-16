@@ -25,7 +25,7 @@
 - 打包白名单：`lib/**/*.js`、`assets/**`、`cordis.patch.yml`、两份 README、`LICENSE`、`THIRD_PARTY_NOTICES`；`npm pack --dry-run` 实测 **24 files / 120.3 kB**（unpacked 341.3 kB；`docs/`、`test/`、`smoke/` 在 git 里被跟踪但**不入包**）。
 - 运行态通过 profile 的 `link:` symlink 指向工作区 ⇒ 磁盘代码即运行代码，**改码后要重载宿主**才生效。
 
-### 1.2 模块图（17 个模块 / 5899 行）
+### 1.2 模块图（17 个模块 / 5906 行，`wc -l lib/*.js` 实测于 `8bddf05`）
 
 | 模块 | 行 | 职责 |
 |---|---|---|
@@ -33,7 +33,7 @@
 | `monitor.js` | 882 | Monitor 内核：五类采样源适配、探测循环、按探测结果计数、前台 deadline/取消、后台作业注册与进度 |
 | `validate.js` | 790 | 校验层：`LIMITS` / `MONITOR_LIMITS`、两模式互斥、material 归一、depth 解析、逐题校验、`analyzeBody` 体积归因、`validateMonitorArgs` / `validateUpstream` |
 | `pipe.js` | 494 | 上游委托管道：`runUpstream`（**同时带 agent 与 parent**）、原始输出提取、**无条件**转储 `spillWrite`、白名单读取器、委托深度上限 |
-| `monitor-tool.js` | 470 | `monitor` 的模型可见面：紧凑方言参数契约、**全函数** render（返回内容块数组）、注册 |
+| `monitor-tool.js` | 477 | `monitor` 的模型可见面：紧凑方言参数契约、**全函数** render（返回内容块数组）、注册 |
 | `source.js` | 361 | 引用式材料：描述符校验、行范围切片、`chunk` 分块、glob 匹配器 |
 | `client.js` | 346 | HTTP 层：`callSystemOne`、错误分类（含溢出与 **fetch blocked port** 分支）、`SystemOneError` |
 | `escalate.js` | 328 | 阶梯、选档、单飞、容量分派 `selectByCapacity`、终态 `describeExhausted` |
