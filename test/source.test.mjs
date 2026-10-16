@@ -45,9 +45,10 @@ test('validateSourceDescriptor：拒绝绝对路径与 .. 段（引用式不得�
 });
 
 test('validateSourceDescriptor：形状错误一律可行动报错', () => {
-  expectReject(() => validateSourceDescriptor(null), /必须是对象/);
-  expectReject(() => validateSourceDescriptor([]), /必须是对象/);
-  expectReject(() => validateSourceDescriptor({ kind: 'dir', path: 'a' }), /只允许 file 或 glob/);
+  // task-18：文案已从 v2 的 `stateSource.*` 改为 v3 的 `material.*`（模型照报错改参必须落在存在的参数上）。
+  expectReject(() => validateSourceDescriptor(null), /material 必须是字符串（内联材料），或 \{file:\{path/);
+  expectReject(() => validateSourceDescriptor([]), /\{glob:\{pattern/);
+  expectReject(() => validateSourceDescriptor({ kind: 'dir', path: 'a' }), /只能给 file 或 glob 之一/);
   expectReject(() => validateSourceDescriptor({ kind: 'file' }), /path 必须是非空字符串/);
   expectReject(() => validateSourceDescriptor({ kind: 'file', path: '' }), /path 必须是非空字符串/);
   expectReject(() => validateSourceDescriptor({ kind: 'file', path: 'a.md', extra: 1 }), /不认识键/);
@@ -214,4 +215,50 @@ test('chunk：正常路径行区间互不重叠，且每块都带可切回的字
   assert.ok(r.chunks.every((c, i) => i === 0 || c.startLine > r.chunks[i - 1].endLine), '正常路径行区间不得重叠');
   assert.ok(r.chunks.every((c) => text.slice(c.byteStart, c.byteEnd) === c.text));
   assert.equal(r.remaining, 0);
+});
+
+// ---- task-18 的守卫（2026-10-16）：模型可见文案必须只称 v3 参数路径 ----
+
+test('模型可见文案不得出现 stateSource（注释不算，字符串字面量算）', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const src = await readFile(new URL('../lib/source.js', import.meta.url), 'utf8');
+  // 只剥**整行**风格的注释（本仓风格：块注释以行首 /* 起、行注释以行首 // 起）——不会误伤
+  // 字符串字面量里的 `docs/*.md` 这类文本（它不在行首）。
+  const code = src
+    .replace(/^[^\S\n]*\/\*[\s\S]*?\*\/[^\S\n]*$/gm, '')
+    .replace(/^[^\S\n]*\/\/.*$/gm, '');
+  // **反空转自检**：剥注释若把实现也剥掉，下面的 doesNotMatch 会恒真 —— 先证明代码还在。
+  assert.ok(code.length > 3000, '剥离注释后仍应是完整实现（长度 ' + code.length + '）');
+  assert.match(code, /export function chunk/, '剥注释后必须还能看到实现函数');
+  assert.match(code, /material\.file\.path/, '剥注释后必须还能看到 v3 文案路径');
+  assert.match(code, /material\.glob\.pattern/, 'glob 分支的 v3 文案同样要在');
+  assert.doesNotMatch(code, /stateSource/, '模型可见的字符串里不得再出现 v2 参数名 stateSource');
+});
+
+test('引用式 material 的报错实测：逐条 message 只称 material.*（不出现 stateSource）', () => {
+  const cases = [
+    () => validateSourceDescriptor(null),
+    () => validateSourceDescriptor([]),
+    () => validateSourceDescriptor({ kind: 'nope' }),
+    () => validateSourceDescriptor({ kind: 'file', path: 'a.md', nope: 1 }),
+    () => validateSourceDescriptor({ kind: 'file', path: '' }),
+    () => validateSourceDescriptor({ kind: 'file', path: '../x.md' }),
+    () => validateSourceDescriptor({ kind: 'file', path: 'C:/x.md' }),
+    () => validateSourceDescriptor({ kind: 'file', path: 'a.md', startLine: 0 }),
+    () => validateSourceDescriptor({ kind: 'file', path: 'a.md', startLine: 5, endLine: 2 }),
+    () => validateSourceDescriptor({ kind: 'glob', pattern: '' }),
+    () => validateSourceDescriptor({ kind: 'glob', pattern: '../*' }),
+    () => validateSourceDescriptor({ kind: 'glob', pattern: 'a/*', limit: 0 }),
+    () => sliceByLines('a' + String.fromCharCode(10) + 'b', 5, 5),
+  ];
+  let checked = 0;
+  for (const fn of cases) {
+    let error = null;
+    try { fn(); } catch (caught) { error = caught; }
+    assert.ok(error !== null, '每种坏输入都必须给结构化报错');
+    assert.doesNotMatch(error.message, /stateSource/, '模型可见 message 不得出现 v2 参数名：' + error.message);
+    assert.match(error.message, /material|startLine|endLine|越界/, '报错仍须可行动（带参数路径或范围）：' + error.message);
+    checked += 1;
+  }
+  assert.equal(checked, cases.length);
 });
