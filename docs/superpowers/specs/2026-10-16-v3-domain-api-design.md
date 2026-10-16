@@ -89,6 +89,7 @@ material: string                          // 内联材料
 | `deep` | 从更大档起步 | 是（上限更高） | 是 | 是 | 分批 + 优先大窗口档 |
 
 - **`aggregate` 删除**：逐块聚合是扫描的内部策略，不构成调用方契约；空转的参数比没有参数更坏。
+- **`depth` 可选、缺省 `normal`**：JSON Schema 的 `required` **只有 `material`**。模式内部字段（`rubric`/`items`/`type`，或 `questions`）不写进 schema 的 required，也不写 `oneOf` 分支（会把注入预算翻倍）——由校验层把关：同给即 `mode_conflict`、都不给即 `mode_missing`。
 - **扫描（分块）在 v3 是内部行为，不是调用方可选模式**：只有 `depth='deep'` 允许插件在「材料装不下」或「问题本身可定位」时走分块；`normal` 只允许分批（同一份材料切成多次请求），不切块。`coverage` 如实报告是否走了分块（`truncated`/`truncatedBy`/`failed`/`aborted`）。**逐块最大聚合只是定位线索，不是文档级结论** —— 这条语义保留（技能文档必须继续写），但不再暴露成参数。
 - `model` 保留为**高级逃生口**：显式给出即关闭本次容量分派与升档（既有语义不变，R1 裁定保留）。
 
@@ -105,6 +106,7 @@ material: string                          // 内联材料
 ```text
 state      = <材料文本> + '\n\n' + '判据：' + <rubric>
 questions  = { '<i>': { type, instructions: items[i] } }        // 批量模式，键为 1-based 序号
+**题名只是映射的键**：`questions` 的**值不含 `name`**（`{ type, instructions, criteria? }`），避免同一信息出现两处。
            | { '<name>': { type, instructions, criteria? } }   // 异质模式
 keep_alive 只在此处透传；model 由 client 传入，不进 state
 ```
