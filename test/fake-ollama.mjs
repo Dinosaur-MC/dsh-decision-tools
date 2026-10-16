@@ -16,6 +16,32 @@
 import http from 'node:http';
 import { assertFetchUsablePort, isFetchBlockedPort } from './helpers/fetch-ports.mjs';
 
+/**
+ * 上游「上下文溢出」400 的**两种真实文案** —— 厂商换过措辞，判据必须两种都认。
+ *
+ * · `legacy`：2026-10-16 之前本机实测原文（`1–2050` 之间是 en dash U+2013）。
+ * · `current`：**Ollama 0.40.5 起**本机实测原文（43341 B 真实技术文档切片 → HTTP 400）：
+ *   `request (13900 tokens) exceeds the available context size (8192 tokens), try increasing it`。
+ *   可复跑：`node .temp/task-21/probe-overflow.mjs`。
+ *
+ * 换文案曾让 `classifyOverflow()` 返 null ⇒ 真机自动升档与 deep 内部分块**整体失效**（P0）。
+ */
+export const OVERFLOW_WORDS = Object.freeze({
+  legacy: ({ actual, limit }) => `prompt 0 has ${actual} tokens; expected 1\u2013${limit} (input is never truncated)`,
+  current: ({ actual, limit }) => `request (${actual} tokens) exceeds the available context size (${limit} tokens), try increasing it`,
+});
+
+/**
+ * 造一个溢出 400 回包。默认用**当前**（0.40.5+）文案；旧文案传 `{ wording: 'legacy' }`。
+ * @param {{ wording?: 'legacy'|'current', actual?: number, limit?: number }} [options]
+ * @returns {{ status: number, body: { error: string } }}
+ */
+export function overflowReply({ wording = 'current', actual = 2100, limit = 2050 } = {}) {
+  const word = OVERFLOW_WORDS[wording];
+  if (word === undefined) throw new Error(`未知的溢出文案 ${JSON.stringify(wording)}（只支持 legacy / current）。`);
+  return { status: 400, body: { error: word({ actual, limit }) } };
+}
+
 /** 绑定一次，成功 resolve，失败 reject（区分 EADDRINUSE 之类的绑定失败）。 */
 function listenOnce(server, port) {
   return new Promise((resolve, reject) => {

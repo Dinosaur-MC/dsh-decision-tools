@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { callSystemOne, SystemOneError } from '../lib/client.js';
-import { startFakeOllama } from './fake-ollama.mjs';
+import { callSystemOne, classifyOverflow, SystemOneError } from '../lib/client.js';
+import { apply, Config } from '../lib/index.js';
+import { overflowReply, startFakeOllama } from './fake-ollama.mjs';
 import { isFetchBlockedPort } from './helpers/fetch-ports.mjs';
 import { firstFreeBlockedPort, startHttpServerOnPort } from './helpers/http.mjs';
 
@@ -398,5 +399,68 @@ test('blocked port 单列判据：服务端在听却 0 命中时给 bad_port 与
     assert.doesNotMatch(error.hint, /ollama serve/, '这不是「Ollama 没在运行」，误导性提示不得回归');
   } finally {
     await raw.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Ollama 0.40.5 换了溢出文案（P0 回归）：本机实测原文见下，可复跑 `node .temp/task-21/probe-overflow.mjs`
+// （43341 B 真实技术文档切片 → HTTP 400；换文案后旧正则认不出 ⇒ 自动升档与 deep 分块真机失效）。
+const CONTEXT_OVERFLOW_BODY_CURRENT = '{"error":"request (13900 tokens) exceeds the available context size (8192 tokens), try increasing it"}';
+
+test('溢出分类：0.40.5 当前文案 → context_overflow 且 actual/limit 正确（旧实现返 null 的 P0）', async () => {
+  assert.deepEqual(
+    classifyOverflow('request (13900 tokens) exceeds the available context size (8192 tokens), try increasing it'),
+    { numbered: true, actual: 13900, limit: 8192 },
+    '★ 当前上游文案必须被判成「带数字的溢出」，否则自动升档永远不触发',
+  );
+  assert.equal(CONTEXT_OVERFLOW_BODY_CURRENT.includes('13900'), true);
+  await withServer(() => overflowReply({ actual: 13900, limit: 8192 }), async (fake) => {
+    const error = await failure({ baseUrl: fake.baseUrl, body: BODY, timeoutMs: 5000 });
+    assert.equal(error.kind, 'context_overflow', '当前文案不得退化成 invalid_request（否则 hint 会指向题型/选项数）');
+    assert.equal(error.actual, 13900);
+    assert.equal(error.limit, 8192);
+    assert.match(error.message, /请求超出模型上下文：13900 token，上限 8192。/);
+    assert.match(error.hint, /缩小 material/);
+    assert.doesNotMatch(error.hint, /choice|noul|score|对象映射/, '溢出与请求形状无关');
+  });
+});
+
+test('溢出分类：旧文案仍认（回归），非溢出文本仍返 null', () => {
+  assert.deepEqual(classifyOverflow('prompt 0 has 2359 tokens; expected 1\u20132050 (input is never truncated)'),
+    { numbered: true, actual: 2359, limit: 2050 }, 'en dash 的旧文案必须继续认');
+  assert.deepEqual(classifyOverflow('prompt 0 has 12 tokens; expected 1 -  88 (input is never truncated)'),
+    { numbered: true, actual: 12, limit: 88 }, 'ASCII 连字 + 空白容忍必须继续认');
+  assert.deepEqual(classifyOverflow('decision prompt exceeds the model context'),
+    { numbered: false }, '不打印数字的分支必须继续认');
+  assert.equal(classifyOverflow('question "urgent": type must be choice, noul, or score'), null,
+    '形状类 400 不得被误判成溢出');
+});
+
+test('端到端：假服务用**当前文案**回 400 ⇒ 工具层真的升档（而非当作 invalid_request 直接抛）', async () => {
+  // 首档 tev1:0.8b 用 0.40.5 新文案回 400；升档目标 wide:latest 回 200。
+  const fake = await startFakeOllama((req) => (req.json?.model === 'tev1:0.8b'
+    ? overflowReply({ actual: 9000, limit: 8192 })
+    : {
+      status: 200,
+      body: {
+        model: req.json?.model,
+        usage: { input_tokens: 42, output_tokens: 1 },
+        answers: Object.fromEntries(Object.keys(req.json?.questions ?? {}).map((k) => [k, { type: 'noul', noul: 0.7 }])),
+      },
+    }));
+  try {
+    const registered = [];
+    const ctx = {
+      tools: { register: (definition) => { registered.push(definition); return () => {}; } },
+      skills: { get: async (n) => ({ name: n, content: '# companion skill body' }) },
+    };
+    apply(ctx, Config({ baseUrl: fake.baseUrl, defaultModel: 'tev1:0.8b', ladder: [{ model: 'tev1:0.8b', numCtx: 8192 }, { model: 'wide:latest', numCtx: 32768 }] }));
+    const value = await registered[0].execute({ material: 'm', questions: [{ name: 'q1', type: 'noul', instructions: 'x' }] }, { signal: undefined, agent: { session: { header: { cwd: 'F:/ws' } } } });
+    assert.equal(value.cost.escalated, true, '★ 当前文案必须触发升档；旧实现会当 invalid_request 直接抛');
+    assert.equal(value.cost.model, 'wide:latest');
+    assert.deepEqual(fake.requests.map((request) => request.json?.model), ['tev1:0.8b', 'wide:latest']);
+    assert.match(value.notes.join(' '), /模型选择：.*wide:latest/);
+  } finally {
+    await fake.close();
   }
 });
