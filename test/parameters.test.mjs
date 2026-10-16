@@ -10,16 +10,30 @@ import { Config } from '../lib/tool.js';
 const SKILL_BODY = readFileSync(fileURLToPath(new URL('../assets/decision-usage/SKILL.md', import.meta.url)), 'utf8');
 
 test('参数契约的结构不变量（DSL 的硬性要求）', () => {
-  assert.deepEqual(Object.keys(PARAMETERS), ['state', 'questions', 'stateSource', 'model', 'strategy', 'aggregate']);
-  assert.equal(PARAMETERS.state.required, undefined, 'v2：state 与 stateSource 恰有其一，故都不标 required');
-  assert.equal(PARAMETERS.stateSource.required, undefined);
-  assert.equal(PARAMETERS.questions.required, true);
-  assert.equal(PARAMETERS.model.required, undefined);
+  // 顺序即注入顺序：材料 → 判据 → 两种模式 → 题型 → 深度 → 逃生口。
+  assert.deepEqual(Object.keys(PARAMETERS),
+    ['material', 'rubric', 'items', 'questions', 'type', 'criteria', 'depth', 'model']);
 
-  // state 必须是三选一联合，且 object 分支显式声明 openness。
-  assert.equal(PARAMETERS.state.oneOf.length, 3);
-  const objectBranch = PARAMETERS.state.oneOf.find((branch) => branch.type === 'object');
-  assert.equal(typeof objectBranch.additionalProperties, 'boolean');
+  // required 只有 material（两种模式共用的必给字段）。**模式内的必给性不写进 schema**：
+  // 用 oneOf 写 items/questions 两条分支会把常驻 schema 的注入预算翻倍（ADR-14），
+  // 故 rubric/items/type 与 questions 的必给性由 lib/validate.js 的 assertModeExclusive 把关。
+  assert.equal(PARAMETERS.material.required, true);
+  for (const key of ['rubric', 'items', 'questions', 'type', 'criteria', 'depth', 'model']) {
+    assert.equal(PARAMETERS[key].required, undefined, `${key} 的必给性按模式在校验层把关`);
+  }
+  // depth 缺省 normal（ADR-14），只有两档语义可选之外的枚举值在本地被拒。
+  assert.deepEqual(PARAMETERS.depth.enum, ['quick', 'normal', 'deep']);
+
+  // material：内联字符串 + 引用两种形态（file / glob 同在 object 分支里，恰有其一由校验层把关）。
+  assert.equal(PARAMETERS.material.oneOf.length, 2);
+  const reference = PARAMETERS.material.oneOf.find((branch) => branch.type === 'object');
+  assert.equal(typeof reference.additionalProperties, 'boolean');
+  assert.deepEqual(Object.keys(reference.properties), ['file', 'glob']);
+  assert.equal(reference.properties.file.properties.path.required, true);
+  assert.equal(reference.properties.glob.properties.pattern.required, true);
+  for (const branch of [reference.properties.file, reference.properties.glob]) {
+    assert.equal(typeof branch.additionalProperties, 'boolean', 'object 节点必须显式声明 openness');
+  }
 
   // questions 是对象数组，且对象是封闭的（防止模型塞进未声明字段）。
   assert.equal(PARAMETERS.questions.type, 'array');
@@ -30,11 +44,29 @@ test('参数契约的结构不变量（DSL 的硬性要求）', () => {
     ['name', 'type', 'instructions', 'criteria'],
   );
 
-  // 类型枚举里绝不能出现 boolean（服务端只认 noul）。
+  // 类型枚举里绝不能出现 boolean（服务端只认 noul）；批量模式的 type 与它同源。
   assert.deepEqual(PARAMETERS.questions.items.properties.type.enum, ['choice', 'noul', 'score']);
+  assert.deepEqual(PARAMETERS.type.enum, PARAMETERS.questions.items.properties.type.enum);
+
+  // items 是自由数组：每项自带完整待判对象（D2），定位由 material 决定。
+  assert.equal(PARAMETERS.items.type, 'array');
+
+  // 批量模式的共享 criteria（choice 选项集 / score 档位）：**只写一次**，wire 层复制到每题。
+  // 没有它，批量 choice/score 就没有选项集来源（ADR-15 的「调用方只写一次」）。
+  assert.equal(PARAMETERS.criteria.oneOf.length, 2);
+  assert.deepEqual(
+    PARAMETERS.criteria.oneOf.map((branch) => branch.type),
+    PARAMETERS.questions.items.properties.criteria.oneOf.map((branch) => branch.type),
+    '与逐题 criteria 同形（复用同一批校验器）',
+  );
 
   // criteria 用 oneOf 在本地挡住「对象还是数组」这一最常见误用。
   assert.equal(PARAMETERS.questions.items.properties.criteria.oneOf.length, 2);
+});
+
+test('描述里必须写明两模式互斥（items 与 questions 同时给出即报错）', () => {
+  assert.match(TOOL_DESCRIPTION, /mutually exclusive/i);
+  assert.match(TOOL_DESCRIPTION, /Giving both, or neither, is an error/);
 });
 
 test('描述里必须点明 noul 不是布尔、confidence 不是正确率', () => {
@@ -62,7 +94,8 @@ const POINT_ANCHORS = [
   [7, '不得决定路由、不得做 fail-open / fail-closed 判据', /must NOT decide routing[\s\S]*fail-open or fail-closed[\s\S]*deterministic rules/],
   [8, 'tev1 不产文本 ⇒ 需要可读判据时换生成类模型', /tev1 family returns only probabilities and never text[\s\S]*generative model/],
   [9, 'score 报在 0..N-1 尺度，不归一化', /0\.\.N-1 level scale, not normalised/],
-  [10, '置信度告警是「旗」不是过滤器：被点名的才升级，未被点名不等于可信', /A `confidence_warning` line names the questions[\s\S]*FLAG, not a\s+filter[\s\S]*NOT thereby endorsed/],
+  // 点 10 的锚点取「旗不过滤」的语义指纹（不带旧键名）：旧 SKILL 与新 SKILL（notes[] 措辞）都能命中。
+  [10, '置信度告警是「旗」不是过滤器：被点名的才升级，未被点名不等于可信', /FLAG, not a\s+filter[\s\S]*NOT thereby endorsed/],
 ];
 
 for (const [point, label, anchor] of POINT_ANCHORS) {
@@ -151,11 +184,12 @@ test('注入预算守卫：常驻 description 与 skill 正文各自有上限，
   assert.ok(skillBytes <= 4000, `skill 正文 ${skillBytes}B 超过 3800B：按需加载的内容也要简练`);
 });
 
-test('能投影成 JSON Schema，且 v2 的 required 只剩 questions', () => {
+test('能投影成 JSON Schema，且 required 只剩 material（模式必给性在校验层）', () => {
   const json = parameterSchemaSpecToJsonSchema(PARAMETERS);
   assert.equal(json.type, 'object');
-  for (const key of ['state', 'stateSource', 'questions', 'model', 'strategy', 'aggregate']) {
+  for (const key of ['material', 'rubric', 'items', 'questions', 'type', 'criteria', 'depth', 'model']) {
     assert.ok(json.properties[key], `缺少参数 ${key}`);
   }
-  assert.deepEqual(json.required, ['questions'], 'v2：state 与 stateSource 恰有其一，交叉约束由本地校验把关');
+  assert.deepEqual(json.required, ['material'],
+    'depth 可选（缺省 normal）；模式内的必给字段由 assertModeExclusive 把关');
 });

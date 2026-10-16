@@ -287,6 +287,14 @@ test('assertModeExclusive：两模式互斥（同给 mode_conflict、都不给 m
   assert.equal(assertModeExclusive({ items: many(64), rubric: 'r', type: 'noul' }), 'items');
   assert.throws(() => assertModeExclusive({ items: many(65), rubric: 'r', type: 'noul' }),
     (error) => error.kind === 'mode_invalid' && /65 项/.test(error.message));
+
+  // criteria 的模式归属（lead 2026-10-16 追认为契约）：batch 用**顶层** criteria（wire 层复制到每题）；
+  // mixed 模式的标签集只能写在每题自己的 criteria 里，出现顶层即报错；noul 没有标签集。
+  assert.equal(assertModeExclusive({ items, rubric: 'r', type: 'choice', criteria: { a: 'A', b: 'B' } }), 'items');
+  assert.throws(() => assertModeExclusive({ questions, criteria: { a: 'A', b: 'B' } }),
+    (error) => error.kind === 'criteria_requires_items_mode' && /每题自己的 questions\[\]\.criteria/.test(error.message));
+  assert.throws(() => assertModeExclusive({ items, rubric: 'r', type: 'noul', criteria: { false: '否', true: '是' } }),
+    (error) => error.kind === 'criteria_not_allowed');
 });
 
 test('resolveDepth：缺省 normal，非法值报错并给出合法清单', () => {

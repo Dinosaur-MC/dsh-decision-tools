@@ -41,6 +41,12 @@ test('异质模式：键为题名，值只有 type/instructions/criteria', () =>
   assert.equal(body.state, '材料' + LF2 + '判据：判据');
 });
 
+test('keyOffset：分批是内部细节，键仍是全局 1-based 序号（合并时无需重映射）', () => {
+  const body = toWireRequest({ material: 'm', rubric: 'r', items: ['甲', '乙'], type: 'noul', model: 'x', keyOffset: 2 });
+  assert.deepEqual(Object.keys(body.questions), ['3', '4']);
+  assert.equal(body.questions['3'].instructions, '甲');
+});
+
 test('没有 rubric 时不拼判据块（迁移期的 v2 路径逐字节不变）', () => {
   const body = toWireRequest({ material: 'material', model: 'm', questions: [{ name: 'q', type: 'noul', instructions: 'x' }] });
   assert.equal(body.state, 'material');
