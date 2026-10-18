@@ -177,6 +177,7 @@ JSON Schema 的 `required` **只有 `material`**；模式内部必填由校验�
 
 - **计数口径**：按**探测结果**累加（电平）—— 每次判定命中就 +1，**没有去抖、没有冷却窗**。⇒ `countThreshold` 等价于「以探测为单位的持续时间」（`countThreshold × intervalMs` 量级）。`minGapMs`/`countMode`/`persistCount`/`resetCount` **不存在**，传了会**显式报错**（静默忽略会让调用方以为冷却生效了）。
 - **只记录**：`at`/`atIso`/`firstAt`/`lastAt` 是 epoch 毫秒整数，**不参与任何命中判定**。
+- **空样本预检短路**：源返回空文本（或仅空白）⇒ **立即返回**（`samples=1`、`emptySource=true`、`hit=false`、`timedOut=false`），**不调用 Decision、也不进休眠**。「目标事件已发生」对空材料在任何判据下都不成立，空样本也不会自己变非空（file/glob/events 的空都是结构性空）。
 - **返回形状**：后台分支 `{background:true, mode, source, jobId, clampNotes, notes}`；前台分支另含 `{hit, count, countThreshold, at, atIso, firstAt, lastAt, elapsedMs, samples, hitSamples, level, probability, confidence, evidence, intervalMs, timeoutMs, aborted, timedOut, errors, cost, coverage}`。`evidence` 是命中那次采样的**有界尾部**（`EVIDENCE_MAX_BYTES` = 1024 B）；采样正文不落盘。
 - **通知（仅 `background:true`；前台传 `notify:'inbox'` 会当场报错，不再静默忽略）**（对齐宿主 `dsh-tool-jobs` 的官方范式）：消息用 `createUserMessage` 形状 `{id, role:'user', content:[{type:'text',text}], source:{kind:'decision-monitor', form:'notice', summary}}` —— **`source.kind` 必须是本插件自己的名字**（假托 `kind:'user'` 等于把通知伪装成用户输入，且 `user` 分支本身没有 `form` 字段）；投递：目标空闲**且唤醒预算未耗尽** ⇒ `followup`（入队并唤醒），否则 ⇒ `inject`（不唤醒、下一 step 生效）；**合并 + 限频 + 唤醒预算**三件套同时存在；**绝不调用 `agent.cancel`**（实测它会清空整个 inbox）。
 - **file/glob 采样走注入的 `deps.read`**（与 `decision` 同一个 reader）⇒ `monitor-tool.js` 内**没有第二份**文件/glob 读取实现；缺 reader 是**装配错误**，当场报可行动错误，而不是等 deadline 后说「没命中」。

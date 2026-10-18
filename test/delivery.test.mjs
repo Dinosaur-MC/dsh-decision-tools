@@ -63,3 +63,19 @@ test('evidence 上限：长样本只留最后 EVIDENCE_MAX_BYTES 字节（改常
   assert.equal(Buffer.byteLength(out.evidence, 'utf8'), EVIDENCE_MAX_BYTES, 'evidence 必须恰好是 1024 B 的尾部');
   assert.equal(Buffer.byteLength(out.evidence, 'utf8'), 1024, '常量本身也要钉住');
 });
+test('空样本预检短路：立即返回、不调 Decision、不等到 deadline', async () => {
+  let now = 0; let sleeps = 0; let decides = 0;
+  const out = await runMonitor({
+    sources: { read: async () => ({ text: '   ', totalBytes: 3, truncated: false }) },
+    decide: async () => { decides += 1; return { probability: 1 }; },
+    clock: () => now,
+    sleep: async (ms) => { sleeps += 1; now += ms; },
+    args: { source: { kind: 'file', path: 'a.txt' }, rubric: 'x', intervalMs: 1000, timeoutMs: 5000, countThreshold: 1, tailBytes: 4096, mode: 'once', hitThreshold: 0.5 },
+  });
+  assert.equal(out.emptySource, true, '必须标记空源短路');
+  assert.equal(out.samples, 1, '只采样一次就返回');
+  assert.equal(out.timedOut, false, '不是超时结束');
+  assert.equal(out.hit, false);
+  assert.equal(decides, 0, '空样本不得调用 Decision');
+  assert.equal(sleeps, 0, '不得进入休眠/等待');
+});

@@ -151,6 +151,7 @@ v3 形状 —— 判据只写一次，N 项各自只带自己的短对象：
 ```
 
 - `command`：`argv[0]` 是解释器（`pwsh` / `git_bash|bash|sh`），其余按空格拼成命令文本；**带空格的参数要自己加引号**（`['bash','-lc','echo "a b"']`）。解释器自己的前导标志会被剥掉。
+- **空源立即返回**：`source` 读到空内容时 `monitor` 当场返回（`emptySource=true`，`samples=1`），**不调 Decision**、也不等 deadline —— 想让它在「内容出现后」再判，请改用 `file`/`glob` 指向**已有内容**的文件，或先准备好事件。
 - `events`：优先用装配层注入的环形缓冲（**有历史**：`job.registered`/`job.settled`/`job.completed`/`job.failed`/`job.killed` …）；没有缓冲时退到 `ctx.jobs.list(sessionId)` 的**当前状态投影**（只反映此刻）。空样本判 P=0（不调模型），没有数据源当场 `invalid_request`。
 
 ### 7.3 适合 / 不适合
