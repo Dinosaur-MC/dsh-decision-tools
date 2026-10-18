@@ -227,3 +227,16 @@ test('通知器只有 notify/stats 两个出入口：从不持有 agent，也绝
   assert.equal(DEFAULT_WAKE_BUDGET > 0, true);
   for (const call of calls) assert.ok(['followup', 'inject'].includes(call.mode));
 });
+
+test('限频窗口恰为 RATE_WINDOW_MS：窗口边界前一条被拒、边界后可投（改常量会红）', () => {
+  const { calls, deliver } = recorder();
+  const t = fakeClock();
+  const notifier = createNotifier({ deliver, clock: t.clock, coalesceWindowMs: 0, maxPerMinute: 1 });
+  assert.equal(notifier.notify({ key: 'a', text: '1' }).delivered, true);
+  t.advance(RATE_WINDOW_MS - 1);
+  assert.equal(notifier.notify({ key: 'b', text: '2' }).reason, 'rate_limited', '窗口内第 2 条必须被限频');
+  t.advance(1);
+  assert.equal(notifier.notify({ key: 'c', text: '3' }).delivered, true, '窗口边界之后恢复');
+  assert.equal(calls.length, 2);
+  assert.equal(RATE_WINDOW_MS, 60000, '窗口常量本身钉住');
+});
