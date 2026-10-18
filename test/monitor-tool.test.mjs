@@ -7,6 +7,7 @@ import {
   TOOL_DESCRIPTION,
   PARAMETERS,
   OUTPUT_SCHEMA,
+  OUTPUT_JSON_SCHEMA,
   MONITOR_TOOL_DEFAULT_NAME,
 } from '../lib/monitor-tool.js';
 import { valueSchemaSpecToJsonSchema, validateJsonSchemaValue } from '@deepseek-ai/dsh-tools';
@@ -155,10 +156,27 @@ test('注册形状：name/description/parameters/output.render 齐备，render �
   assert.ok(blocks.length > 0);
   for (const block of blocks) assert.equal(block.type, 'text');
   assert.equal(typeof blocks[0].text, 'string');
+
+  const bgContinuous = definition.output.render({}, {
+    background: true, mode: 'continuous', countMode: 'consecutive', notifyEvery: 2, countThreshold: 1,
+    source: { kind: 'file', path: 'a' }, clampNotes: [], notes: [], jobId: 'j-2',
+  });
+  assert.ok(bgContinuous[0].text.includes('jobId j-2'));
+  assert.ok(bgContinuous[0].text.includes('countMode consecutive'));
+  assert.ok(bgContinuous[0].text.includes('notifyEvery 2'));
+  assert.ok(bgContinuous[0].text.includes('notices fire every 2 hit(s)'));
+
+  const bgOnce = definition.output.render({}, {
+    background: true, mode: 'once', countMode: 'cumulative', countThreshold: 3, notifyEvery: 1,
+    source: { kind: 'file', path: 'a' }, clampNotes: [], notes: [], jobId: 'j-3',
+  });
+  assert.ok(bgOnce[0].text.includes('threshold 3'));
+  assert.ok(bgOnce[0].text.includes('when the threshold is reached'));
 });
 
 test('参数用紧凑方言（逐属性 required / object 显式 additionalProperties），归一后是原生 JSON Schema', () => {
   const { out } = setup();
+  assert.equal(PARAMETERS.description.required, true);
   assert.equal(PARAMETERS.rubric.required, true);
   assert.equal(PARAMETERS.source.required, true);
   assert.equal(PARAMETERS.source.additionalProperties, false);
@@ -166,7 +184,7 @@ test('参数用紧凑方言（逐属性 required / object 显式 additionalPrope
   assert.ok(Array.isArray(PARAMETERS.source.properties.kind.enum));
   const native = out.hostDefinition.parameters;
   assert.ok(Array.isArray(native.required), 'defineTool 把逐属性注解收集成根上的 required 数组');
-  assert.deepEqual(native.required.slice().sort(), ['rubric', 'source']);
+  assert.deepEqual(native.required.slice().sort(), ['description', 'rubric', 'source']);
   assert.equal(native.properties.source.additionalProperties, false, '嵌套 object 节点的 additionalProperties 必须落到归一后的 schema 上');
   assert.equal(native.properties.source.properties.kind.type, 'string');
   assert.equal(native.properties.source.properties.kind.enum.includes('file'), true);
@@ -218,6 +236,7 @@ test('execute 走 validateMonitorArgs：钳制生效，clampNotes 原样透传�
   assert.equal(value.background, false);
   assert.equal(value.hit, true);
   assert.equal(value.count, 1);
+  assert.deepEqual(out.hostDefinition.output.schema, OUTPUT_JSON_SCHEMA, 'host-facing schema 必须等于导出的标准 JSON Schema');
   assert.ok(Array.isArray(value.clampNotes) && value.clampNotes.length === 1);
   assert.ok(value.clampNotes[0].includes('intervalMs'));
   assert.deepEqual(value.notes, value.clampNotes, '未注入 composeNotes 时 notes 就是 clampNotes 的透传');
@@ -263,6 +282,63 @@ test('decide 拿得到本次调用的 rubric / 阈值 / 信号（meta 透传，�
   assert.equal(seen[0].meta.at, 1700000000000);
   assert.equal(seen[0].meta.source.kind, 'file');
   assert.equal(seen[0].meta.signal, undefined);
+});
+
+test('P1：后台 decide 不拿 exec.signal（调用返回即中止会打挂后续探测）；前台照旧转发', async () => {
+  const controller = new AbortController();
+
+  // 前台：探测在调用内完成，取消是有效语义 ⇒ 必须原样转发。
+  const seenForeground = [];
+  const fg = setup({ decide: async (text, meta) => { seenForeground.push(meta); return { probability: 0.9 }; } });
+  await fg.out.definition.execute(
+    { rubric: 'x', source: { kind: 'file', path: 'logs/a.txt' } },
+    { ...EXEC, signal: controller.signal },
+  );
+  assert.equal(seenForeground.length, 1);
+  assert.equal(seenForeground[0].signal, controller.signal, '前台必须转发 exec.signal');
+
+  // 后台：作业的生命周期长于调用；转发 exec.signal 会让调用返回后的每次探测都抛错。
+  const { jobs, state } = fakeJobs();
+  const t = fakeTime();
+  const { ctx } = fakeCtx({ jobs });
+  const read = fakeReader({ 'logs/a.txt': 'hello world' });
+  const seenBackground = [];
+  const out = registerMonitorTool(ctx, {
+    deps: {
+      decide: async (text, meta) => { seenBackground.push(meta); return { probability: 0.9 }; },
+      read, clock: t.clock, sleep: t.sleep,
+    },
+  });
+  await out.definition.execute(
+    { rubric: 'x', source: { kind: 'file', path: 'logs/a.txt' }, background: true },
+    { ...EXEC, signal: controller.signal },
+  );
+  await state.handles[0].done;
+  assert.ok(seenBackground.length >= 1);
+  assert.ok(seenBackground[0].signal, '后台 decide 拿 monitor 作业自己的 controller signal');
+  assert.notEqual(seenBackground[0].signal, controller.signal, '后台不得转发 exec.signal（它随调用结束而中止）');
+});
+
+test('P2：后台 notify 缺省 none 时不建通知路径（注入 deliver 也不得投递）', async () => {
+  const { jobs, state } = fakeJobs();
+  const t = fakeTime();
+  const { ctx } = fakeCtx({ jobs });
+  const read = fakeReader({ 'logs/a.txt': 'hit' });
+  const delivered = [];
+  const out = registerMonitorTool(ctx, {
+    deps: {
+      decide: async () => ({ probability: 0.9 }), read, clock: t.clock, sleep: t.sleep,
+      deliver: (mode, payload) => { delivered.push({ mode, payload }); },
+      agent: { status: 'idle' },
+    },
+  });
+  const value = await out.definition.execute(
+    { rubric: 'x', source: { kind: 'file', path: 'logs/a.txt' }, background: true },
+    EXEC,
+  );
+  assert.equal(value.background, true);
+  await state.handles[0].done;
+  assert.equal(delivered.length, 0, 'notify=none 是默认值：命中也不得投递任何通知');
 });
 
 test('composeNotes 注入后 notes 用它的结果（本模块只透传，不新增文案）', async () => {
@@ -409,7 +485,16 @@ test('后台分支：no job controller 时 attachController 后重试，并把 n
   await state.handles[0].done;
   assert.equal(notices.length, 1);
   assert.equal(notices[0].key, 'monitor-hit');
-  assert.ok(notices[0].text.includes('命中'));
+  assert.match(
+    notices[0].text,
+    /^decision-monitor: monitor-job-2 \(monitor: file monitor\) triggered \[[^,]+, true\/0\.\d{2}\/\d+ms\]\. Inspect with job_output \{"job_id":"monitor-job-2"\}\.$/,
+  );
+  assert.equal(notices[0].envelope.jobId, 'monitor-job-2');
+  assert.equal(notices[0].envelope.source, 'file logs/a.txt');
+  assert.equal('summary' in notices[0].envelope, false, 'summary 已删除（与 count/threshold 重复）');
+  assert.equal(notices[0].envelope.count, 1);
+  assert.equal(notices[0].envelope.threshold, 1);
+  assert.equal(notices[0].envelope.mode, 'once');
 });
 
 test('后台 + notify=inbox 但没注入 notifier/deliver ⇒ 直接拒绝，不静默丢通知', async () => {
@@ -489,6 +574,7 @@ test('Q4：坏 source.path 的文案由注入 reader 改写成 source.*（去掉
 
   await assert.rejects(
     () => monitor.execute({
+      description: 'q4',
       rubric: 'x',
       source: { kind: 'file', path: '../outside.txt' },
       // 这条用例走的是**真** apply（真实默认时钟/休眠）⇒ 显式把探测循环钉在一秒内：

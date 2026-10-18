@@ -375,8 +375,8 @@ test('monitor：未知 source.kind 报错并列合法值', () => {
   );
 });
 
-test('monitor：已删除的四个参数被显式拒绝（无 CD / 电平计数 / 不持久化）', () => {
-  for (const k of ['minGapMs', 'countMode', 'persistCount', 'resetCount']) {
+test('monitor：已删除的三个参数被显式拒绝（无 CD / 不持久化）', () => {
+  for (const k of ['minGapMs', 'persistCount', 'resetCount']) {
     assert.throws(
       () => validateMonitorArgs({ rubric: 'x', source: M_SRC, [k]: 1 }),
       (e) => e.kind === 'monitor_invalid' && e.message.includes(k) && e.message.includes('不存在'),
@@ -393,6 +393,25 @@ test('monitor：默认值符合规格（5s 间隔 / 120s 超时 / 计数阈值 1
   assert.equal(r.notify, 'none');
   assert.equal(r.mode, 'once');
   assert.equal(r.tailBytes, MONITOR_LIMITS.defaultTailBytes);
+});
+
+test('monitor：description 折叠为单行（换行/制表不进入 label/通知）', () => {
+  const r = validateMonitorArgs({ rubric: 'x', source: M_SRC, description: ' watch\n build\tline ' });
+  assert.equal(r.description, 'watch build line');
+});
+
+test('monitor：countMode / notifyEvery 归一与校验', () => {
+  const base = { rubric: 'x', source: M_SRC };
+  assert.equal(validateMonitorArgs(base).countMode, 'cumulative');
+  assert.equal(validateMonitorArgs(base).notifyEvery, 1);
+  assert.equal(validateMonitorArgs({ ...base, countMode: 'consecutive', notifyEvery: 3 }).countMode, 'consecutive');
+  assert.throws(() => validateMonitorArgs({ ...base, countMode: 'nope' }), (e) => e.kind === 'monitor_invalid');
+  for (const bad of [0, -1, 1.5, '3']) {
+    assert.throws(() => validateMonitorArgs({ ...base, notifyEvery: bad }), (e) => e.kind === 'monitor_invalid');
+  }
+  const big = validateMonitorArgs({ ...base, notifyEvery: 1e9 });
+  assert.equal(big.notifyEvery, MONITOR_LIMITS.maxNotifyEvery);
+  assert.ok(big.clampNotes.some((note) => note.includes('notifyEvery')));
 });
 
 test('monitor：countThreshold 必须是不小于 1 的整数', () => {

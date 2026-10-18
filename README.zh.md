@@ -101,7 +101,7 @@ node scripts/list-models.mjs --json   # { models, ladder }
 
 ## `monitor`：等一个事件
 
-按间隔采样同一个源、每次问同一个判据、累计命中，达到 `countThreshold`（或 deadline）返回。它**绝不** kill、重试或取消任何东西。
+按间隔采样同一个源、每次问同一个判据、累计命中。`once` 达到 `countThreshold`（或 deadline）返回；`continuous` 跑到 deadline/cancel，返回累积 `count`。它**绝不** kill、重试或取消任何东西。
 
 | 采样源 | 允许的键 | 读什么 |
 |---|---|---|
@@ -111,10 +111,11 @@ node scripts/list-models.mjs --json   # { models, ladder }
 | `command` | `argv` | 复用插件上游管道重跑宿主命令 |
 | `events` | `types`、`limit?` | 作业事件环形缓冲（无缓冲时退到当前作业列表） |
 
-参数：`rubric`（必填）· `source`（必填）· `type`（仅 `noul`）· `hitThreshold`（0.5）· `tailBytes`（4096，上限 65536）· `mode`（`once`|`continuous`）· `intervalMs`（5000）· `timeoutMs`（120000）· `countThreshold`（1）· `background` · `notify` · `coalesce` · `maxNotificationsPerMinute`（6）。
+参数：`description`（必填；作业 label = `source.kind` + description）· `source`（必填）· `rubric`（必填）· `type`（仅 `noul`）· `criteria` · `hitThreshold`（0.5）· `tailBytes`（4096，上限 65536）· `mode`（`once`|`continuous`）· `countMode`（`cumulative`|`consecutive`，默认 cumulative）· `notifyEvery`（continuous，默认 1）· `intervalMs`（5000）· `timeoutMs`（120000）· `countThreshold`（1；仅 once）· `background` · `notify` · `coalesce` · `maxNotificationsPerMinute`（6）。
 
-- **空源立即返回**：`samples: 1`、`emptySource: true`、`hit: false` —— 不调模型、也不等 deadline。
-- **后台**：`background: true` 立刻返回 `jobId`，用 `job_output` 读（读一次即消耗）。`notify: "inbox"` 命中时发通知，且**必须**是后台调用。
+- **空样本**：`file`/`glob` 为空时立即返回（`samples: 1`、`emptySource: true`，不调模型）；`job`/`events`/`command` 的空样本按 P=0 记一次未命中并继续等待事件。
+- **后台**：`background: true` 返回 `jobId`；`job_output` 流式读过程行（config/hit/trigger/summary，读一次即消耗）。`notify: "inbox"` **只在 trigger** 发一行通知（once 达标 / continuous 每 `notifyEvery` 次命中），且**必须**是后台调用。作业状态：abort ⇒ `killed`；全部探测 errors（无有效 verdict）⇒ `failed`；timeout/有有效 verdict ⇒ `completed`。
+- **detail**：`finished [...]` 对 once 为 `hit/P|EP/dur`，continuous 为 `trigger_num/EP/dur`；EP：once = Σ(hit P)/N（N=countThreshold，不足补 0；0 hit ⇒ 0）；continuous = 各 trigger P 均值（trigger P = 窗口 hit P / notifyEvery；0 trigger ⇒ 0）。once `hit=false` 取 1-EP；单位 ms。布尔型 verdict 无 P 时按 0.00（detail/通知/流都不出现 `-`）；`description` 折叠为单行；永久源错误（描述符/越界/显式作业 id 不存在/文件超限）当场失败，瞬态读取错误继续重试；abort 会打断 in-flight decide/sleep。作业 label = `source.kind + description`。
 - **`command` 的 argv**：`argv[0]` 选解释器（`pwsh`、`git_bash`/`bash`/`sh`/`zsh`）；解释器标志会被剥掉；**带空格的参数要自己加引号**。
 - **`events.types`** 按固定词表校验（`job.registered`、`job.stopping`、`job.output`、`job.progress`、`job.settled`、`job.completed`、`job.failed`、`job.killed`、`job.removed`、`job.running`、`job.unknown`），拼错报 `source_invalid`。
 

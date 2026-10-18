@@ -9,6 +9,8 @@ import {
   EVIDENCE_MAX_BYTES,
   MONITOR_JOB_KIND,
 } from '../lib/monitor.js';
+import { NOTICE_SOURCE_SCHEMA } from '../lib/notify.js';
+import { validateJsonSchemaValue } from '@deepseek-ai/dsh-tools';
 import { DecisionSourceError } from '../lib/source.js';
 
 const NL = String.fromCharCode(10);
@@ -159,7 +161,7 @@ test('createSources：job 采样源必须带 sessionId 枚举，且只读尾部 
   assert.equal(read.lossy, false);
 });
 
-test('createSources：job 采样源按 id 读；id 不存在报 source_missing', async () => {
+test('createSources：job 采样源按 id 读；显式 id 不存在报 job_not_found', async () => {
   const views = [{ id: 'pwsh-1', kind: 'pwsh', owner: 'session-1', status: 'running', output: { total: 20 } }];
   const { ctx, calls } = jobCtx({ views, read: () => ({ chunks: [{ at: 1, text: 'tail' }], next: 20, lossy: false }) });
   const sources = createSources(ctx);
@@ -170,7 +172,7 @@ test('createSources：job 采样源按 id 读；id 不存在报 source_missing',
 
   await assert.rejects(() => sources.read({ kind: 'job', id: 'gone' }, { tailBytes: 5 }), (error) => {
     assert.ok(error instanceof DecisionSourceError);
-    assert.equal(error.kind, 'source_missing');
+    assert.equal(error.kind, 'job_not_found');
     return true;
   });
 });
@@ -303,6 +305,85 @@ test('probe-safe：ctx.agents 读取即抛时 resolveAgent 安全降级（通知
   assert.equal(deliveries[0].mode, 'inject', '取不到 agent ⇒ 保守不唤醒');
 });
 
+test('empty sample：file/glob 立即短路；job/events 空样本按 P=0 继续', async () => {
+  const t = fakeTime();
+  const result = await runMonitor({
+    sources: stubSources(['', 'hit']),
+    decide: stubDecide([0.9]),
+    clock: t.clock,
+    sleep: t.sleep,
+    args: {
+      source: { kind: 'job', id: 'j1' },
+      rubric: 'hit?',
+      type: 'noul',
+      intervalMs: 1000,
+      timeoutMs: 5000,
+    },
+  });
+  assert.equal(result.hit, true, '第二拍 hit 后按 once 返回');
+  assert.equal(result.emptySource, false, 'job 的空样本不是终态');
+  assert.equal(result.samples, 2);
+  assert.equal(result.ep, 0.9);
+});
+
+test('empty sample：file 空仍立即返回 emptySource', async () => {
+  const t = fakeTime();
+  const result = await runMonitor({
+    sources: stubSources(['']),
+    decide: stubDecide([0.9]),
+    clock: t.clock,
+    sleep: t.sleep,
+    args: {
+      source: { kind: 'file', path: 'empty.txt' },
+      rubric: 'hit?',
+      type: 'noul',
+      intervalMs: 1000,
+      timeoutMs: 5000,
+    },
+  });
+  assert.equal(result.emptySource, true);
+  assert.equal(result.samples, 1);
+  assert.equal(result.hit, false);
+});
+
+test('永久源错误（source_too_large / job_not_found）立即抛出，不跑满 timeout', async () => {
+  const t = fakeTime();
+  for (const kind of ['source_too_large', 'job_not_found']) {
+    const error = Object.assign(new Error(kind), { kind });
+    await assert.rejects(
+      () => runMonitor({
+        sources: { async read() { throw error; } },
+        decide: async () => 0.9,
+        clock: t.clock,
+        sleep: t.sleep,
+        args: { source: { kind: 'job', id: 'j1' }, intervalMs: 1000, timeoutMs: 60000 },
+      }),
+      (e) => e.kind === kind,
+    );
+  }
+});
+
+test('瞬时源错误（source_missing）继续轮询而不是当场失败', async () => {
+  const t = fakeTime();
+  let reads = 0;
+  const result = await runMonitor({
+    sources: {
+      async read() {
+        reads += 1;
+        if (reads === 1) throw Object.assign(new Error('missing'), { kind: 'source_missing' });
+        return { text: 'hit', bytes: 3, totalBytes: 3, truncated: false };
+      },
+    },
+    decide: async () => 0.9,
+    clock: t.clock,
+    sleep: t.sleep,
+    args: { source: { kind: 'file', path: 'x' }, intervalMs: 1000, timeoutMs: 5000 },
+  });
+  assert.equal(result.hit, true);
+  assert.equal(result.samples, 2);
+  assert.equal(result.errors, 1);
+});
+
 test('runMonitor：按探测结果计数（电平）——countThreshold=3 时第 3 次命中才返回，命中即 +1 无去抖', async () => {
   const t = fakeTime();
   const progress = [];
@@ -397,24 +478,15 @@ test('runMonitor：decide 支持数字与对象（probability / hit / value）�
   }
 });
 
-test('runMonitor：signal abort 立即返回 hit=false 且保留已累计 count，不抛', async () => {
+test('runMonitor：sleep 中 abort 立即返回并保留已累计 count，不抛', async () => {
   const t = fakeTime();
   const controller = new AbortController();
-  let first = true;
-  const sources = {
-    async read() {
-      if (first) {
-        first = false;
-        controller.abort();
-      }
-      return { kind: 'file', text: 'a', bytes: 1, totalBytes: 1, truncated: false };
-    },
-  };
+  const sources = stubSources(['a']);
   const result = await runMonitor({
     sources,
     decide: async () => 0.9,
     clock: t.clock,
-    sleep: t.sleep,
+    sleep: async () => { controller.abort(); },
     signal: controller.signal,
     args: { source: { kind: 'file', path: 'x' }, intervalMs: 1000, timeoutMs: 60000, countThreshold: 3 },
   });
@@ -422,7 +494,6 @@ test('runMonitor：signal abort 立即返回 hit=false 且保留已累计 count�
   assert.equal(result.aborted, true);
   assert.equal(result.count, 1, '已累计的 count 必须保留在返回值里');
   assert.equal(result.samples, 1);
-  assert.equal(t.sleeps.length, 0, 'abort 后不再休眠');
 });
 
 test('runMonitor：进入循环前就 aborted ⇒ 立刻返回、零探测、不抛', async () => {
@@ -573,7 +644,7 @@ test('runMonitor：decide 返回无法识别的形状 ⇒ 记进 errors（与「
   assert.equal(result.level, false, '最后一次探测是「判据说否」，level 取那一次');
 });
 
-test('runMonitor：mode=continuous 达成门槛后继续跑到 deadline，命中持续触发 onHit', async () => {
+test('runMonitor：mode=continuous 每 notifyEvery 次命中触发一次 onHit，最终返回累积 count（无 hit）', async () => {
   const t = fakeTime();
   const hits = [];
   const result = await runMonitor({
@@ -586,16 +657,40 @@ test('runMonitor：mode=continuous 达成门槛后继续跑到 deadline，命中
       intervalMs: 1000,
       timeoutMs: 5000,
       countThreshold: 2,
+      notifyEvery: 2,
       mode: 'continuous',
       onHit: (summary) => { hits.push(summary.count); },
     },
   });
   assert.equal(result.mode, 'continuous');
-  assert.equal(result.hit, true);
+  assert.equal('hit' in result, false, '常驻最终返回累积 count，不返回 hit');
   assert.equal(result.count, 5);
+  assert.equal(result.streak, 5);
   assert.equal(result.samples, 5);
   assert.equal(result.timedOut, true);
-  assert.deepEqual(hits, [2, 3, 4, 5]);
+  assert.deepEqual(hits, [2, 4], '每 2 次命中通知一次');
+});
+
+test('runMonitor：countMode=consecutive —— miss 清零，连续 2 次才返回', async () => {
+  const t = fakeTime();
+  const result = await runMonitor({
+    sources: stubSources(['a']),
+    decide: stubDecide([0.9, 0.1, 0.9, 0.9]),
+    clock: t.clock,
+    sleep: t.sleep,
+    args: {
+      source: { kind: 'file', path: 'x' },
+      intervalMs: 1000,
+      timeoutMs: 60000,
+      countThreshold: 2,
+      countMode: 'consecutive',
+    },
+  });
+  assert.equal(result.hit, true);
+  assert.equal(result.count, 3);
+  assert.equal(result.streak, 2);
+  assert.equal(result.samples, 4);
+  assert.equal(result.countMode, 'consecutive');
 });
 
 test('runMonitor：缺 clock/sleep 直接拒绝（零真实墙钟守卫）', async () => {
@@ -622,12 +717,16 @@ test('formatProgressLine：一行内含 count/countThreshold 与已监控时长'
   assert.equal(formatProgressLine({ count: 2, countThreshold: 3, probability: 0.712, elapsedMs: 45000, hit: false }), '待命中 2/3 · P=0.71 · 已监控 45s');
   assert.equal(formatProgressLine({ count: 3, countThreshold: 3, probability: 0.712, elapsedMs: 45000, hit: true }), '命中 3/3 · P=0.71 · 已监控 45s');
   assert.equal(formatProgressLine({ count: 0, countThreshold: 1, elapsedMs: 0, hit: false }), '待命中 0/1 · P=- · 已监控 0s');
+  assert.equal(
+    formatProgressLine({ mode: 'continuous', count: 7, streak: 3, countMode: 'consecutive', probability: 0.5, elapsedMs: 12000 }),
+    '累计 7 次（连续 3） · P=0.50 · 已监控 12s',
+  );
 });
 
 /** 假 jobs 服务：可让前 N 次 start 抛「no job controller」；run 内联执行并留档进度。 */
 function backgroundJobs(options = {}) {
   const failStarts = options.failStarts === undefined ? 0 : options.failStarts;
-  const state = { starts: 0, attached: null, specs: [], progress: [] };
+  const state = { starts: 0, attached: null, specs: [], runs: [], progress: [], appends: [] };
   const jobs = {
     start(spec) {
       state.starts += 1;
@@ -636,7 +735,7 @@ function backgroundJobs(options = {}) {
       }
       state.specs.push(spec);
       const id = 'monitor-job-' + state.starts;
-      spec.run({ id, updateProgress: (line) => state.progress.push(line), append() {} });
+      state.runs.push(spec.run({ id, updateProgress: (line) => state.progress.push(line), append: (line) => state.appends.push(line) }));
       return id;
     },
     attachController(name) {
@@ -662,11 +761,300 @@ test('startBackgroundMonitor：先 start；命中「no job controller」才 atta
 
   const settled = await result.done;
   assert.equal(settled.status, 'completed');
+  assert.equal(settled.result, undefined, 'job_output 只留流式过程，不再回最终 JSON');
+  assert.match(settled.detail, /^true\/0\.90\/\d+ms$/, 'once detail 必须是 hit/P/dur_time');
+  assert.ok(state.appends.length >= 3, '至少 config + hit + summary 三行');
+  assert.match(state.appends[0], /^\d{4}-\d{2}-\d{2}T[^ ]+ config label="file monitor" mode=once countMode=cumulative countThreshold=1 notifyEvery=1 /);
+  assert.ok(state.appends.some((line) => line.includes(' hit=true P=0.90')), '每次命中写一行 hit/P: ' + JSON.stringify(state.appends));
+  assert.match(state.appends[state.appends.length - 1], / summary hit=true count=1 /);
   assert.ok(state.progress.length >= 1);
   assert.ok(state.progress[0].includes('1/1'), '进度行必须含 count/countThreshold');
   assert.ok(state.progress[0].includes('已监控'));
   assert.ok(state.progress[0].includes('s'));
   assert.ok(state.specs[0].kind === MONITOR_JOB_KIND);
+  assert.equal(state.specs[0].kind, 'monitor', 'job kind 必须保持工具名字面量');
+});
+
+test('background once threshold>1：EP = 所有 hit P 的均值（miss 不计）', async () => {
+  const { jobs, state } = backgroundJobs();
+  const t = fakeTime();
+  const result = startBackgroundMonitor({ jobs }, {
+    description: 'ep-mean',
+    source: { kind: 'file', path: 'a' },
+    intervalMs: 1000,
+    timeoutMs: 5000,
+    countThreshold: 2,
+  }, {
+    sources: stubSources(['a', 'b', 'c']),
+    decide: stubDecide([0.9, 0.1, 0.8]),
+    clock: t.clock,
+    sleep: t.sleep,
+  });
+  const settled = await result.done;
+  assert.equal(state.specs[0].label, 'file ep-mean', 'label = source.kind + description');
+  assert.match(settled.detail, /^true\/0\.85\/\d+ms$/, 'EP=(0.9+0.8)/2=0.85，0.1 的 miss 不计');
+});
+
+test('background once threshold>1：0 hit 时 EP=0，detail 不为破折号', async () => {
+  const { jobs } = backgroundJobs();
+  const t = fakeTime();
+  const result = startBackgroundMonitor({ jobs }, {
+    description: 'ep-zero',
+    source: { kind: 'file', path: 'a' },
+    intervalMs: 1000,
+    timeoutMs: 3000,
+    countThreshold: 2,
+  }, {
+    sources: stubSources(['x']),
+    decide: async () => 0.1,
+    clock: t.clock,
+    sleep: t.sleep,
+  });
+  const settled = await result.done;
+  assert.equal(settled.status, 'completed');
+  assert.match(settled.detail, /^false\/1\.00\/\d+ms$/, '0 hit ⇒ EP=0，失败显示 1-EP=1.00');
+});
+
+test('background once threshold>1：hit 不足 N 时补 0，失败 detail 显示 1-EP', async () => {
+  const { jobs } = backgroundJobs();
+  const t = fakeTime();
+  const result = startBackgroundMonitor({ jobs }, {
+    description: 'ep-pad',
+    source: { kind: 'file', path: 'a' },
+    intervalMs: 1000,
+    timeoutMs: 3000,
+    countThreshold: 3,
+  }, {
+    sources: stubSources(['a', 'b', 'c']),
+    decide: stubDecide([0.9, 0.1]),
+    clock: t.clock,
+    sleep: t.sleep,
+  });
+  const settled = await result.done;
+  // 1 hit (0.9) + 2 个补 0 ⇒ EP=0.30；hit=false ⇒ 1-EP=0.70
+  assert.match(settled.detail, /^false\/0\.70\/\d+ms$/, 'hit 不足 N 要补 0，失败取 1-EP');
+});
+
+test('background continuous cumulative：EP = 各 trigger 的 P 均值', async () => {
+  const { jobs } = backgroundJobs();
+  const clock = fakeTime();
+  const result = startBackgroundMonitor({ jobs }, {
+    description: 'cont-ep',
+    source: { kind: 'file', path: 'a' },
+    mode: 'continuous',
+    countMode: 'cumulative',
+    notifyEvery: 2,
+    intervalMs: 1000,
+    timeoutMs: 3000,
+  }, {
+    sources: stubSources(['a', 'b', 'c']),
+    decide: stubDecide([0.9, 0.8, 0.7]),
+    clock: clock.clock,
+    sleep: clock.sleep,
+  });
+  const settled = await result.done;
+  assert.match(settled.detail, /^1\/0\.85\/\d+ms$/, 'trigger P=(0.9+0.8)/2=0.85；0.7 是未完成的第二个窗口');
+});
+
+test('background continuous consecutive：EP 只算完整 trigger，miss 重置窗口', async () => {
+  const { jobs, state } = backgroundJobs();
+  const clock = fakeTime();
+  const result = startBackgroundMonitor({ jobs }, {
+    description: 'cont-ep-consec',
+    source: { kind: 'file', path: 'a' },
+    mode: 'continuous',
+    countMode: 'consecutive',
+    notifyEvery: 2,
+    intervalMs: 1000,
+    timeoutMs: 3500,
+  }, {
+    sources: stubSources(['a', 'b', 'c', 'd']),
+    decide: stubDecide([0.9, 0.1, 0.9, 0.9]),
+    clock: clock.clock,
+    sleep: clock.sleep,
+  });
+  const settled = await result.done;
+  assert.match(settled.detail, /^1\/0\.90\/\d+ms$/, '0.1 的 miss 重置；0.9+0.9 成一个 trigger');
+  assert.ok(state.appends.some((line) => /hit=false P=0\.10/.test(line)), 'miss 下降沿写 hit=false');
+  assert.ok(state.appends.some((line) => /trigger_num=1/.test(line)), 'notifyEvery>1 的 trigger 写 trigger_num');
+});
+
+test('background continuous：0 trigger 时 EP=0', async () => {
+  const { jobs } = backgroundJobs();
+  const clock = fakeTime();
+  const result = startBackgroundMonitor({ jobs }, {
+    description: 'cont-ep-zero',
+    source: { kind: 'file', path: 'a' },
+    mode: 'continuous',
+    notifyEvery: 2,
+    intervalMs: 1000,
+    timeoutMs: 2000,
+  }, {
+    sources: stubSources(['a', 'b']),
+    decide: stubDecide([0.9, 0.1]),
+    clock: clock.clock,
+    sleep: clock.sleep,
+  });
+  const settled = await result.done;
+  assert.match(settled.detail, /^0\/0\.00\/\d+ms$/, '没有完成 trigger ⇒ trigger_num=0, EP=0');
+});
+
+test('decide P 超出 0..1 时 clamp', async () => {
+  const { jobs } = backgroundJobs();
+  const clock = fakeTime();
+  const result = startBackgroundMonitor({ jobs }, {
+    description: 'clamp-p',
+    source: { kind: 'file', path: 'a' },
+    intervalMs: 1000,
+    timeoutMs: 3000,
+    countThreshold: 1,
+  }, {
+    sources: stubSources(['a']),
+    decide: async () => 1.5,
+    clock: clock.clock,
+    sleep: clock.sleep,
+  });
+  const settled = await result.done;
+  assert.match(settled.detail, /^true\/1\.00\/\d+ms$/, 'P=1.5 必须 clamp 到 1.00');
+});
+
+test('background abort -> status killed；全部 errors -> failed', async () => {
+  const { jobs, state } = backgroundJobs();
+  const clock = fakeTime();
+  const aborted = startBackgroundMonitor({ jobs }, {
+    description: 'abort-status',
+    source: { kind: 'file', path: 'a' },
+    mode: 'continuous',
+    intervalMs: 5000,
+    timeoutMs: 60000,
+  }, {
+    sources: stubSources(['a']),
+    decide: stubDecide([0.9]),
+    clock: clock.clock,
+    sleep: clock.sleep,
+  });
+  state.runs[0].cancel('test');
+  const killed = await aborted.done;
+  assert.equal(killed.status, 'killed');
+
+  const failed = startBackgroundMonitor({ jobs }, {
+    description: 'all-errors',
+    source: { kind: 'file', path: 'a' },
+    intervalMs: 1000,
+    timeoutMs: 3000,
+  }, {
+    sources: stubSources(['a']),
+    decide: async () => { throw new Error('systemone down'); },
+    clock: clock.clock,
+    sleep: clock.sleep,
+  });
+  const errored = await failed.done;
+  assert.equal(errored.status, 'failed');
+  assert.match(errored.detail, /^false\/1\.00\/\d+ms$/);
+});
+
+test('boolean-only verdict：detail/notice/stream 都不出现 "-"', async () => {
+  const { jobs, state } = backgroundJobs();
+  const clock = fakeTime();
+  const deliveries = [];
+  const result = startBackgroundMonitor({ jobs }, {
+    description: 'bool-only',
+    source: { kind: 'file', path: 'a' },
+    intervalMs: 1000,
+    timeoutMs: 3000,
+    notify: 'inbox',
+  }, {
+    sources: stubSources(['hit']),
+    decide: async () => ({ hit: true }),
+    clock: clock.clock,
+    sleep: clock.sleep,
+    sessionId: 's',
+    deliver: (mode, payload) => deliveries.push({ mode, payload }),
+  });
+  const settled = await result.done;
+  assert.match(settled.detail, /^true\/0\.00\/\d+ms$/);
+  assert.ok(deliveries.length === 1, 'once threshold=1 应通知一次');
+  assert.match(deliveries[0].payload.message.content[0].text, /true\/0\.00\/\d+ms\]/);
+  assert.ok(state.appends.some((line) => /hit=true P=0\.00/.test(line)));
+});
+
+test('cancel 穿透 in-flight decide（不等模型返回）', async () => {
+  const { jobs, state } = backgroundJobs();
+  const clock = fakeTime();
+  let decideStarted;
+  const started = new Promise((resolve) => { decideStarted = resolve; });
+  const result = startBackgroundMonitor({ jobs }, {
+    description: 'cancel-decide',
+    source: { kind: 'file', path: 'a' },
+    mode: 'continuous',
+    intervalMs: 5000,
+    timeoutMs: 60000,
+  }, {
+    sources: stubSources(['hit']),
+    decide: (text, meta) => {
+      assert.ok(meta.signal, 'decide 必须拿到 monitor 作业自己的 signal');
+      decideStarted();
+      return new Promise(() => {});
+    },
+    clock: clock.clock,
+    sleep: clock.sleep,
+  });
+  await started;
+  state.runs[0].cancel('test');
+  const settled = await result.done;
+  assert.equal(settled.status, 'killed');
+});
+
+test('cancel 穿透 in-flight sleep（不等 interval）', async () => {
+  const { jobs, state } = backgroundJobs();
+  const clock = fakeTime();
+  let sleepStarted;
+  const reached = new Promise((resolve) => { sleepStarted = resolve; });
+  const result = startBackgroundMonitor({ jobs }, {
+    description: 'cancel-sleep',
+    source: { kind: 'file', path: 'a' },
+    mode: 'continuous',
+    intervalMs: 5000,
+    timeoutMs: 60000,
+  }, {
+    sources: stubSources(['miss']),
+    decide: async () => 0.1,
+    clock: clock.clock,
+    sleep: () => {
+      sleepStarted();
+      return new Promise(() => {});
+    },
+  });
+  await reached;
+  state.runs[0].cancel('test');
+  const settled = await result.done;
+  assert.equal(settled.status, 'killed');
+});
+
+test('continuous notifyEvery：只在 trigger 通知一次', async () => {
+  const { jobs } = backgroundJobs();
+  const clock = fakeTime();
+  const deliveries = [];
+  const result = startBackgroundMonitor({ jobs }, {
+    description: 'cont-notify',
+    source: { kind: 'file', path: 'a' },
+    mode: 'continuous',
+    countMode: 'cumulative',
+    notifyEvery: 2,
+    intervalMs: 1000,
+    timeoutMs: 3000,
+    notify: 'inbox',
+  }, {
+    sources: stubSources(['a', 'b', 'c']),
+    decide: stubDecide([0.9, 0.8, 0.7]),
+    clock: clock.clock,
+    sleep: clock.sleep,
+    sessionId: 's',
+    deliver: (mode, payload) => deliveries.push({ mode, payload }),
+  });
+  const settled = await result.done;
+  assert.equal(deliveries.length, 1, '两个 hit 一个 trigger；第三个 hit 不通知');
+  assert.match(settled.detail, /^1\/0\.85\/\d+ms$/);
 });
 
 test('startBackgroundMonitor：notify=inbox 命中送通知（空闲⇒followup），且绝不调用 agent.cancel', async () => {
@@ -693,7 +1081,19 @@ test('startBackgroundMonitor：notify=inbox 命中送通知（空闲⇒followup�
   assert.equal(deliveries[0].mode, 'followup', '目标空闲 ⇒ 唤醒');
   assert.equal(deliveries[0].payload.message.source.form, 'notice');
   assert.ok(deliveries[0].payload.id.includes('notice-'));
-  assert.ok(deliveries[0].payload.text.includes('命中'));
+  const noticeText = deliveries[0].payload.message.content[0].text;
+  assert.match(
+    noticeText,
+    /^decision-monitor: monitor-job-1 \(monitor: file monitor\) triggered \[[^,]+, true\/0\.\d{2}\/\d+ms\]\. Inspect with job_output \{"job_id":"monitor-job-1"\}\.$/,
+  );
+  const envelope = deliveries[0].payload.message.source;
+  assert.equal(envelope.jobId, 'monitor-job-1');
+  assert.equal(envelope.source, 'file a');
+  assert.deepEqual(validateJsonSchemaValue(NOTICE_SOURCE_SCHEMA, envelope, 'source'), [], '通知信封必须过 NOTICE_SOURCE_SCHEMA');
+  assert.equal(envelope.count, 1);
+  assert.equal(envelope.threshold, 1);
+  assert.equal(envelope.mode, 'once');
+  assert.equal(typeof envelope.probability, 'number');
   assert.equal(cancelled.length, 0, '绝不调用 agent.cancel（实测它会清空整个 inbox）');
 });
 
@@ -703,6 +1103,24 @@ test('startBackgroundMonitor：notify=inbox 但没注入 deliver/notify ⇒ 直�
     () => startBackgroundMonitor({ jobs }, { source: { kind: 'file', path: 'a' }, notify: 'inbox' }, { decide: async () => 0.9 }),
     (error) => error instanceof TypeError,
   );
+});
+
+test('P2：startBackgroundMonitor 的 notify 缺省 none 时，即使注入 deliver 也绝不投递', async () => {
+  const { jobs } = backgroundJobs();
+  const t = fakeTime();
+  const deliveries = [];
+  const result = startBackgroundMonitor({ jobs }, {
+    source: { kind: 'file', path: 'a' }, intervalMs: 1000, timeoutMs: 5000, countThreshold: 1,
+  }, {
+    sources: stubSources(['hit']),
+    decide: async () => 0.9,
+    clock: t.clock,
+    sleep: t.sleep,
+    sessionId: 'session-1',
+    deliver: (mode, payload) => { deliveries.push({ mode, payload }); },
+  });
+  await result.done;
+  assert.equal(deliveries.length, 0, 'args.notify 不是 inbox ⇒ 不得因为注入了 deliver 就发通知');
 });
 
 test('startBackgroundMonitor：start 抛别的错时原样透传，绝不私自 attachController', () => {

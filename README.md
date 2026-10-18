@@ -101,7 +101,7 @@ Give `material` plus **exactly one** mode:
 
 ## `monitor`: wait for an event
 
-Samples one source on an interval, asks the same rubric each time, counts hits, and returns when `countThreshold` is reached (or the deadline expires). It **never** kills, retries, or cancels anything.
+Samples one source on an interval, asks the same rubric each time, and counts hits. `once` returns when `countThreshold` is reached (or the deadline expires); `continuous` runs to the deadline and returns the accumulated `count`. It **never** kills, retries, or cancels anything.
 
 | Source | Keys | Reads |
 |---|---|---|
@@ -111,10 +111,11 @@ Samples one source on an interval, asks the same rubric each time, counts hits, 
 | `command` | `argv` | Re-runs a host command through the plugin's upstream pipe |
 | `events` | `types`, `limit?` | Job-event ring buffer (falls back to the session's current job list) |
 
-Parameters: `rubric` (required) · `source` (required) · `type` (`noul` only) · `hitThreshold` (0.5) · `tailBytes` (4096, max 65536) · `mode` (`once`|`continuous`) · `intervalMs` (5000) · `timeoutMs` (120000) · `countThreshold` (1) · `background` · `notify` · `coalesce` · `maxNotificationsPerMinute` (6).
+Parameters: `description` (required; job description; label = source.kind + description) · `source` (required) · `rubric` (required) · `type` (`noul` only) · `criteria` (`noul` optional false/true descriptions) · `hitThreshold` (0.5) · `tailBytes` (4096, max 65536) · `mode` (`once`|`continuous`) · `countMode` (`cumulative`|`consecutive`, default cumulative) · `notifyEvery` (continuous, default 1) · `intervalMs` (5000) · `timeoutMs` (120000) · `countThreshold` (1; once only) · `background` · `notify` · `coalesce` · `maxNotificationsPerMinute` (6).
 
-- **An empty source returns immediately**: `samples: 1`, `emptySource: true`, `hit: false` — no model call, no waiting.
-- **Background**: `background: true` returns a `jobId` at once; read it with `job_output` (output is consumed on read). `notify: "inbox"` posts a notice on a hit and **requires** background.
+- **Empty samples**: `file`/`glob` with empty content return immediately (`samples: 1`, `emptySource: true`, no model call); `job`/`events`/`command` empty samples count as P=0 and keep waiting for the event.
+- **Details**: the host `finished [...]` shows `hit/P|EP/dur` (once) or `trigger_num/EP/dur` (continuous); the job label is `source.kind + description`. For once, `EP = Σ(hit P)/countThreshold` (missing hits count as 0) and a failed once shows `1-EP`; for continuous, EP is the mean of per-trigger P (a trigger P = Σ(window hit P)/notifyEvery; 0 triggers ⇒ 0). Durations are ms. A boolean-only verdict (`{hit:true}` without P) counts as 0.00, so detail/notice/stream never show `-` for a hit. `description` is folded to one line before it becomes the job label. Permanent source errors (invalid descriptor, outside root, explicit job id missing, file too large) fail fast; transient read errors are retried.
+- **Background**: `background: true` returns a `jobId`; `job_output` streams progress lines (config/hit/trigger/summary) and is consumed on read. `notify: "inbox"` posts a one-line notice **only at a trigger** (once: threshold; continuous: every `notifyEvery` hits) and **requires** background. Job status: abort ⇒ `killed`; all probes errored (no valid verdict) ⇒ `failed`; timeout / valid verdict ⇒ `completed`. Abort interrupts an in-flight `decide` and `sleep`, so `killed` is prompt.
 - **`command` argv**: `argv[0]` picks the interpreter (`pwsh`, `git_bash`/`bash`/`sh`/`zsh`); interpreter flags are stripped; **quote arguments containing spaces yourself**.
 - **`events.types`** is validated against a fixed vocabulary (`job.registered`, `job.stopping`, `job.output`, `job.progress`, `job.settled`, `job.completed`, `job.failed`, `job.killed`, `job.removed`, `job.running`, `job.unknown`); a typo fails as `source_invalid`.
 

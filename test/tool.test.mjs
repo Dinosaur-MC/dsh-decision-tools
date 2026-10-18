@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { name, inject } from '../lib/index.js';
 import { Config, applyAll as apply } from './helpers/apply-all.mjs';
-import { resolveSoftBodyBytes, resolveMinConfidence, collectLowConfidence, scanRoundBudget, OUTPUT_SCHEMA, COMPANION_SKILL } from '../lib/tool.js';
+import { resolveSoftBodyBytes, resolveMinConfidence, collectLowConfidence, scanRoundBudget, OUTPUT_SCHEMA, OUTPUT_JSON_SCHEMA, COMPANION_SKILL } from '../lib/tool.js';
 import { SKILL_NAME } from '../lib/skill.js';
 import { name as decisionName, inject as decisionInject } from '../lib/decision-entry.js';
 import { name as monitorName, inject as monitorInject } from '../lib/monitor-entry.js';
@@ -145,6 +145,7 @@ test('工具名、参数契约（8 键 / required 只有 material）与输出契
     'required 只有 material：depth 可选（缺省 normal），模式内的必给性由 assertModeExclusive 把关');
   assert.equal(definition.description, TOOL_DESCRIPTION);
   assert.equal(definition.output.schema.additionalProperties, false);
+  assert.deepEqual(definition.output.schema, OUTPUT_JSON_SCHEMA, '宿主拿到的 output.schema 必须等于导出的标准 JSON Schema');
   assert.deepEqual(Object.keys(definition.output.schema.properties),
     ['results', 'coverage', 'material', 'cost', 'notes'], 'ADR-13：输出只有这五个键');
   assert.equal(OUTPUT_SCHEMA.properties.coverage.additionalProperties, false);
@@ -1009,8 +1010,8 @@ test('宿主契约：真实 execute 的返回必须通过 OUTPUT_SCHEMA 的强�
     const { registered, ctx } = fakeCtx();
     apply(ctx, Config({ baseUrl: fake.baseUrl }));
     const value = await registered[0].execute({ material: 'ticket', questions: [Q('q1')] }, EXEC);
-    const schema = valueSchemaSpecToJsonSchema(OUTPUT_SCHEMA);
-    assert.deepEqual(validateJsonSchemaValue(schema, value, 'value'), [], 'execute 的返回必须与 OUTPUT_SCHEMA 逐键一致');
+    const schema = OUTPUT_JSON_SCHEMA;
+    assert.deepEqual(validateJsonSchemaValue(schema, value, 'value'), [], 'execute 的返回必须与 OUTPUT_JSON_SCHEMA 逐键一致');
     // 反空转自证：多一个未声明字段必须被判违规 —— 否则这条守卫就是空转的（判据是 violations 非空，不是「函数没抛」）。
     assert.notDeepEqual(validateJsonSchemaValue(schema, { ...value, _probe: 1 }, 'value'), []);
   } finally {

@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createNotifier, DEFAULT_WAKE_BUDGET, RATE_WINDOW_MS } from '../lib/notify.js';
+import { createNotifier, DEFAULT_WAKE_BUDGET, RATE_WINDOW_MS, NOTICE_SOURCE_SCHEMA } from '../lib/notify.js';
+import { validateJsonSchemaValue } from '@deepseek-ai/dsh-tools';
 
 /** 记录投递的假 deliver：调用参数原样留档（**零真实 inbox**，本模块只经它出站）。 */
 function recorder() {
@@ -175,8 +176,8 @@ test('消息 id 唯一且形状可直接交给 agent.followup / agent.inject', (
   assert.deepEqual(message.content, [{ type: 'text', text: 'body 0' }]);
   assert.equal(message.source.kind, 'decision-monitor', 'source.kind 必须是本插件自己的名字（对齐官方 tool-jobs 的写法），不能假托用户');
   assert.equal(message.source.form, 'notice');
-  assert.equal(calls[0].payload.text, 'body 0');
-  assert.equal(calls[0].payload.event.text, 'body 0');
+  assert.deepEqual(Object.keys(calls[0].payload).sort(), ['id', 'message'], 'payload 只留 id + message：text/at/event 都与 message 重复');
+  assert.equal(message.content[0].text, 'body 0');
 });
 
 test('deliver 抛错时不算已投递、不记合并时刻，因此可以重试', () => {
@@ -239,4 +240,38 @@ test('限频窗口恰为 RATE_WINDOW_MS：窗口边界前一条被拒、边界�
   assert.equal(notifier.notify({ key: 'c', text: '3' }).delivered, true, '窗口边界之后恢复');
   assert.equal(calls.length, 2);
   assert.equal(RATE_WINDOW_MS, 60000, '窗口常量本身钉住');
+});
+
+test('notify：envelope 结构化字段并入 message.source，且 kind/form 不可被覆盖', () => {
+  const seen = [];
+  const notifier = createNotifier({ deliver: (mode, payload) => seen.push(payload), clock: () => 1000, coalesceWindowMs: 0 });
+  const result = notifier.notify({
+    key: 'monitor-hit',
+    text: 'body',
+    at: 1000,
+    envelope: {
+      jobId: 'monitor-1', source: 'file a',
+      count: 1, threshold: 2, probability: 0.9, mode: 'once',
+      kind: 'user', form: 'fake',
+    },
+  });
+  assert.equal(result.delivered, true);
+  const source = seen[0].message.source;
+  assert.equal(source.kind, 'decision-monitor', 'envelope 不得覆盖 kind');
+  assert.equal(source.form, 'notice', 'envelope 不得覆盖 form');
+  assert.equal(source.jobId, 'monitor-1');
+  assert.equal(source.source, 'file a');
+  assert.equal(source.count, 1);
+  assert.equal(source.threshold, 2);
+  assert.equal(source.probability, 0.9);
+  assert.equal(source.mode, 'once');
+  assert.equal('summary' in source, false, 'summary 与 count/threshold 重复，已删除');
+  assert.equal('sourceKind' in source, false, 'source 已含 kind，sourceKind 重复');
+  assert.deepEqual(validateJsonSchemaValue(NOTICE_SOURCE_SCHEMA, source, 'source'), [], 'message.source 必须过 NOTICE_SOURCE_SCHEMA');
+
+  const ignoredSeen = [];
+  const other = createNotifier({ deliver: (mode, payload) => ignoredSeen.push(payload), clock: () => 2000, coalesceWindowMs: 0 });
+  other.notify({ key: 'k', text: 'x', at: 2000, envelope: 'not-an-object' });
+  assert.equal(ignoredSeen[0].message.source.kind, 'decision-monitor');
+  assert.equal('jobId' in ignoredSeen[0].message.source, false);
 });

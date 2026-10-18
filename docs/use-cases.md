@@ -1,7 +1,7 @@
 # `decision` 工具：使用场景（use cases）
 
 > 与 `docs/architecture-current.md` 配套：那篇讲**是什么**，这篇讲**什么场景该用、怎么调、成本与边界在哪**。
-> 事实基线：HEAD `b55b942`（2026-10-17 采样）· 套件 345/345 绿 · 本包注册**两个**模型可见工具：`decision`（八键：`material`/`rubric`/`items`/`questions`/`type`/`criteria`/`depth`/`model`）与 `monitor`（探测式等待原语，见 §7）。
+> 事实基线：2026-10-19 代码态 · 套件 455/455 绿 · 本包注册**两个**模型可见工具：`decision`（八键：`material`/`rubric`/`items`/`questions`/`type`/`criteria`/`depth`/`model`）与 `monitor`（探测式等待原语，见 §7）。
 
 ## 0. 判定形状（决定它适配哪些场景）
 
@@ -130,9 +130,10 @@ v3 形状 —— 判据只写一次，N 项各自只带自己的短对象：
 
 ```jsonc
 {
+  description: 'watch build.log for BUILD SUCCEEDED',
   source: { kind: 'file', path: 'build.log' },
   rubric: '日志尾部是否已出现 BUILD SUCCEEDED？',
-  countThreshold: 2,      // 连续两次探测都命中才算「稳」
+  countThreshold: 2,      // 累计两次命中；要连续两次则加 countMode: 'consecutive'
   intervalMs: 5000,
   timeoutMs: 120000
 }
@@ -142,16 +143,18 @@ v3 形状 —— 判据只写一次，N 项各自只带自己的短对象：
 
 ```jsonc
 // 等一条命令的输出满足判据（自己会重复执行，委托复用 decision 的委托管道）
-{ source: { kind: 'command', argv: ['pwsh', '-Command', 'Get-Content build.log -Tail 20'] },
+{ description: 'watch command output',
+  source: { kind: 'command', argv: ['pwsh', '-Command', 'Get-Content build.log -Tail 20'] },
   rubric: '输出里是否出现 BUILD SUCCEEDED？', intervalMs: 5000, timeoutMs: 120000 }
 
 // 等某个作业失败（有事件缓冲时读历史事件；没有缓冲时退到「此刻的状态投影」）
-{ source: { kind: 'events', types: ['job.failed'] }, rubric: '是否已有作业处于 failed？',
-  mode: 'continuous', countThreshold: 1, timeoutMs: 600000 }
+{ description: 'watch for failed jobs',
+  source: { kind: 'events', types: ['job.failed'] }, rubric: '是否已有作业处于 failed？',
+  mode: 'continuous', notifyEvery: 1, timeoutMs: 600000 }
 ```
 
 - `command`：`argv[0]` 是解释器（`pwsh` / `git_bash|bash|sh`），其余按空格拼成命令文本；**带空格的参数要自己加引号**（`['bash','-lc','echo "a b"']`）。解释器自己的前导标志会被剥掉。
-- **空源立即返回**：`source` 读到空内容时 `monitor` 当场返回（`emptySource=true`，`samples=1`），**不调 Decision**、也不等 deadline —— 想让它在「内容出现后」再判，请改用 `file`/`glob` 指向**已有内容**的文件，或先准备好事件。
+- **空样本**：`file`/`glob` 为空时 `monitor` 当场返回（`emptySource=true`，`samples=1`，**不调 Decision**）；`job`/`events`/`command` 的空样本按 P=0 记一次未命中并继续等待（事件还没发生，空不会自己变成非空）。
 - `events`：优先用装配层注入的环形缓冲（**有历史**：`job.registered`/`job.settled`/`job.completed`/`job.failed`/`job.killed` …）；没有缓冲时退到 `ctx.jobs.list(sessionId)` 的**当前状态投影**（只反映此刻）。空样本判 P=0（不调模型），没有数据源当场 `invalid_request`。
 
 ### 7.3 适合 / 不适合
@@ -167,6 +170,13 @@ v3 形状 —— 判据只写一次，N 项各自只带自己的短对象：
 |---|---|
 | 期待命中后自动 kill / 重试 / 派发 | 插件**只通知**；动作必须由调用方显式发起 |
 | 把 `at` / `atIso` 当判定输入，或用时间戳结算持续时间 | 毫秒**只作记录**，不参与命中判定；持续时间要用 `countThreshold × intervalMs` 的量级去估 |
-| 传 `minGapMs` / `countMode` / `persistCount` / `resetCount` | 这些参数**不存在**：计数按探测结果累加（无冷却窗）且**不持久化**，传了会**显式报错**（不静默忽略） |
+| 传 `minGapMs` / `persistCount` / `resetCount` | 这些参数**不存在**：计数按探测结果累加（无冷却窗）且**不持久化**，传了会**显式报错**；`countMode` 是存在的（`cumulative`/`consecutive`） |
 | 把它当持久调度器 / 跨重启监控 | 存活边界 = 前台调用时长或宿主进程寿命；宿主重启即连同作业与计数一起消失 |
 | 起了 `background: true` 就不管 | 用 `job_output` 读 `jobId`；`notify: 'inbox'` 的合并、限频与唤醒预算是**防刷屏**的，不是投递保证 |
+
+补充（2026-10-19 当前契约）：
+
+- `description` 必填并折叠为单行；后台作业 label = `source.kind` + `description`；作业 kind 是工具名 `monitor`，`source.kind` 是输入参数。
+- `job_output` 是**流式过程**：ISO 毫秒时间戳 + `config` / `hit=true|false`（连续模式 miss 只在下降沿写）/ `trigger_num` / `summary`，不再回最终 JSON。作业状态：abort ⇒ `killed`；全部探测 errors（无有效 verdict）⇒ `failed`；timeout/有有效 verdict ⇒ `completed`。
+- `finished [...]` 的 detail：`once` 为 `hit/P|EP/dur_time`（`countThreshold>1` 用 EP），`continuous` 为 `trigger_num/EP/dur_time`。EP：once = Σ(hit P)/N（N=countThreshold，hit 不足 N 时补 0；0 hit ⇒ 0）；continuous = 各 trigger 的 P 均值（trigger P = 窗口 hit P 之和 / notifyEvery；trigger_num=0 ⇒ 0）。`hit=false` 时概率字段取 **1−EP**；布尔型 verdict 无 P 时按 0.00（detail/通知/流都不出现 `-`）；时间单位 ms。永久源错误（描述符/越界/显式作业 id 不存在/文件超限）当场失败，瞬态读取错误继续重试；abort 会打断 in-flight decide/sleep。
+- 通知只在 **trigger** 时发（`once` 达标 / `continuous` 每 `notifyEvery` 次命中），正文一行：`decision-monitor: <jobId> (monitor: <label>) triggered [<ISO>, <detail>]. Inspect with job_output {"job_id":"…"}.`

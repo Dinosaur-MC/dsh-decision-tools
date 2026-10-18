@@ -1,6 +1,6 @@
 # dsh-decision-tools — 现状盘点（架构 / 功能 / 接口）
 
-> 快照时点：代码 HEAD 2026-10-18（本轮三人交叉审查修复后）· 套件 **432 例**（431 pass / 1 skip / 0 fail） · 工作树干净（本轮文档提交在其上）。已过一轮三人交叉对抗复审（task-12/13/14）与 Lead 终检、四轮修复（`3475758` / `588015d` / `5dba57d`+`2540e30` / `a0ad872`）；其后新增 Monitor 与上游委托管道（`b1485e6`→`fcc1d86`），修掉一条真机 P0（`7a3c104`，见 §6 #22），并由 task-31 给 `decision` 补了同类宿主校验守卫（`b55b942`），本文已回填。
+> 快照时点：代码 HEAD 2026-10-19（monitor 流式/通知/EP 收口后）· 套件 **455 例**（455 pass / 0 skip / 0 fail） · 工作树干净（本轮文档提交在其上）。已过一轮三人交叉对抗复审（task-12/13/14）与 Lead 终检、四轮修复（`3475758` / `588015d` / `5dba57d`+`2540e30` / `a0ad872`）；其后新增 Monitor 与上游委托管道（`b1485e6`→`fcc1d86`），修掉一条真机 P0（`7a3c104`，见 §6 #22），并由 task-31 给 `decision` 补了同类宿主校验守卫（`b55b942`），本文已回填。
 > 本文描述 **v3 + 四行/GUI 现状**（as-is）：`decision` 工具面为 material/rubric/items/questions/type/criteria/depth/model 八键，输出统一五键；同时注册第二个模型可见工具 `monitor`。
 
 ## 0. 一句话
@@ -27,20 +27,20 @@
 - 打包白名单：`lib/**/*.js`、`assets/**`、`cordis.patch.yml`、两份 README、`LICENSE`、`THIRD_PARTY_NOTICES`；`npm pack --dry-run` 实测 **32 files**（大小以实跑为准；`docs/`、`test/`、`smoke/` 在 git 里被跟踪但**不入包**）。
 - 运行态通过 profile 的 `link:` symlink 指向工作区 ⇒ 磁盘代码即运行代码，**改码后要重载宿主**才生效。
 
-### 1.2 模块图（25 个模块 / 8100 行，`wc -l lib/*.js` 实测于 2026-10-18 代码态）
+### 1.2 模块图（25 个模块 / 8480 行，`wc -l lib/*.js` 实测于 2026-10-19 代码态）
 
 | 模块 | 行 | 职责 |
 |---|---|---|
-| `tool.js` | 1324 | 装配与编排中枢：decision/monitor 两条工具行共用的引擎（参数解析、分批 / depth 三档 / 内部扫描、输出五键与渲染接线）；source reader 由两条行各自创建 |
-| `monitor.js` | 988 | Monitor 内核：五类采样源适配、探测循环、按探测结果计数、前台 deadline/取消、后台作业注册与进度 |
-| `validate.js` | 905 | 校验层：LIMITS / MONITOR_LIMITS、两模式互斥、material 归一（含 file/glob 字符串简写）、depth 解析、逐题校验、criteria 归一（choice string[] / score {min,max}）、analyzeBody、validateMonitorArgs / validateUpstream |
+| `tool.js` | 1330 | 装配与编排中枢：decision/monitor 两条工具行共用的引擎（参数解析、分批 / depth 三档 / 内部扫描、输出五键与渲染接线）；source reader 由两条行各自创建 |
+| `monitor.js` | 1232 | Monitor 内核：五类采样源适配、探测循环、按探测结果计数、前台 deadline/取消、后台作业注册与进度 |
+| `validate.js` | 934 | 校验层：LIMITS / MONITOR_LIMITS、两模式互斥、material 归一（含 file/glob 字符串简写）、depth 解析、逐题校验、criteria 归一（choice string[] / score {min,max}）、analyzeBody、validateMonitorArgs / validateUpstream |
 | `pipe.js` | 525 | 上游委托管道：runUpstream（同时带 agent 与 parent）、原始输出提取、无条件转储 spillWrite、白名单读取器、委托深度上限 |
-| `monitor-tool.js` | 578 | monitor 的模型可见面：紧凑方言参数契约、全函数 render（返回内容块数组）、注册 |
+| `monitor-tool.js` | 648 | monitor 的模型可见面：紧凑方言参数契约、全函数 render（返回内容块数组）、注册 |
 | `source.js` | 361 | 引用式材料：描述符校验、行范围切片、chunk 分块、glob 匹配器 |
 | `client.js` | 352 | HTTP 层：callSystemOne、错误分类（含溢出与 fetch blocked port 分支）、SystemOneError |
 | `escalate.js` | 328 | 阶梯、选档、单飞、容量分派 selectByCapacity、终态 describeExhausted |
 | `render.js` | 193 | 把结果渲染成给模型看的文本（零 import 的纯函数） |
-| `notify.js` | 178 | 通知策略：合并窗、限频、唤醒预算、投递（绝不调用 agent.cancel） |
+| `notify.js` | 209 | 通知策略：合并窗、限频、唤醒预算、投递（绝不调用 agent.cancel） |
 | `parameters.js` | 183 | 模型可见参数契约（八键，含 material 简写分支）+ 常驻 TOOL_DESCRIPTION |
 | `ollama.js` | 198 | 模型发现（Ollama /api/tags 或 OpenAI /v1/models + /api/show）：名称/上下文长度/参数量；支持 modelsPath 与 Bearer apiKey |
 | `scan.js` | 151 | 分块扫描编排、MAX_CONCURRENCY、聚合 aggregateNoul |
@@ -75,7 +75,7 @@
 - 不注册 prompt 段（ADR-5）；使用指引住在「工具描述 + 随包 skill」两处（前者常驻、后者按需）。
 - **两模式互斥**（取代 v2 的「state 与 stateSource 恰有其一」）；`results` 与批次解耦；结果五键的 own value 一律是无损 JSON（宿主会强校验）。
 - **工具返回值必须与自己的 `output.schema` 逐键一致（宿主运行时硬校验）**：宿主 `createSuccessResult` 会 `validateJsonSchemaValue(output.schema, value, 'value')`，**有 violation 就 `throw ToolOutputError`** —— 顶层 `additionalProperties:false` 下**少声明一个真会返回的键**就等于**每次成功都失败**。⚠️ **本地测试直呼 `definition.execute` 会绕过这条 dispatch 校验**，所以「返回值键集 == schema 键集」必须由守卫钉住，不能靠「套件全绿」判断。2026-10-17 的真实事故与修法：`monitor` 前台分支返回 `probability` 而 `OUTPUT_SCHEMA` 未声明它 ⇒ 真机每次前台成功返回都会被判失败（当时 343/343 全绿也看不见）；`7a3c104` **补 schema 而不删字段**（render 一直在打印它，且它是与 `hitThreshold` 直接比较的第一性量），并在 monitor 侧加「用宿主 `validateJsonSchemaValue` 钉住两边键集」的守卫；decision 侧的同类守卫随 `b55b942`（task-31）落地。**边界**：真机 `createSuccessResult` 的**整条 dispatch 尚未跑过**（只跑了同一校验函数、同一入参）⇒ 「修后真机前台可用」是**推断**，真机验收归 task-26。
-- **Monitor 只记录、不阻断、不持久化**：计数只在内存（每次运行从 0 起算，故**没有重置通道**），`at`/`atIso`/`firstAt`/`lastAt` 毫秒只作记录、不参与命中判定；命中只**通知**，插件绝不 kill/cancel/retry/派发。被设计性删除的参数（`minGapMs` / `countMode` / `persistCount` / `resetCount`）**显式报错**而不是静默忽略 —— 静默忽略会让调用方以为冷却生效了。
+- **Monitor 只记录、不阻断、不持久化**：计数只在内存（每次运行从 0 起算，故**没有重置通道**），`at`/`atIso`/`firstAt`/`lastAt` 毫秒只作记录、不参与命中判定；命中只**通知**，插件绝不 kill/cancel/retry/派发。被设计性删除的参数（`minGapMs` / `persistCount` / `resetCount`）**显式报错**而不是静默忽略 —— 静默忽略会让调用方以为冷却生效了。
 - 安全边界不变量：工作区内、读取上限、「单文件报错 / glob 截断」两种语义不可混同、截断的材料不得当完整材料用。
 
 ## 2. 功能清单
@@ -182,7 +182,7 @@ JSON Schema 的 `required` **只有 `material`**；模式内部必填由校验�
 
 ### 3.5 skill 接口
 
-`{name:'decision-usage', provider:'dsh-decision-tools', source:'bundled', rank:600, invocation:{modelInvocable:true, userInvocable:true}, resourceBase:{kind:'directory', path:<assets 目录>}}`；正文来自 `assets/decision-usage/SKILL.md`（**7102 B**，frontmatter 必须含 `description`（**可路由性硬约束**：两个工具名与主要触发词必须落在**前 200 字符**内 —— 技能目录只展示这段前缀，超出即被截断；长度 ≤400 字符）；正文覆盖**两个工具的全部功能**：`decision` 的八键/四形态/三档 depth/五键读法/confidence/错误 kind，`monitor` 的 14 个参数、五类 source（含 `command` 的 argv 规则与 `events` 的全词表）、空源短路、后台 + `job_output`、通知三件套与输出字段）。
+`{name:'decision-usage', provider:'dsh-decision-tools', source:'bundled', rank:600, invocation:{modelInvocable:true, userInvocable:true}, resourceBase:{kind:'directory', path:<assets 目录>}}`；正文来自 `assets/decision-usage/SKILL.md`（**7663 B**，frontmatter 必须含 `description`（**可路由性硬约束**：两个工具名与主要触发词必须落在**前 200 字符**内 —— 技能目录只展示这段前缀，超出即被截断；长度 ≤400 字符）；正文覆盖**两个工具的全部功能**：`decision` 的八键/四形态/三档 depth/五键读法/confidence/错误 kind，`monitor` 的 17 个参数、五类 source（含 `command` 的 argv 规则与 `events` 的全词表）、空源短路、后台 + `job_output`、通知三件套与输出字段）。
 
 **裁定变更（2026-10-18，用户指令）：Skill 必须把功能写全。** 原 2026-10-17 裁定「不在 skill 里增加 Monitor 用法段」被**取代**：skill 是模型了解本插件能力的唯一按需入口，遗漏功能等于能力未交付。现在正文同时覆盖 `decision` 与 `monitor`，预算上限由 4000 B 提到 **8000 B**（按需加载，不进每轮注入）。约束只剩一条：**参数名必须与工具面同步**（守卫 `test/parameters.test.mjs` 逐个比对 `PARAMETERS` 的键、五类 `source.kind` 与 `EVENT_TYPES` 全词表）。
 
@@ -192,25 +192,33 @@ JSON Schema 的 `required` **只有 `material`**；模式内部必填由校验�
 
 | 参数 | 必填 | 形状 | 说明 |
 |---|---|---|---|
+| `description` | **是** | `string` | 本次监控说明；空白折叠为单行；后台作业的 `label` = `source.kind` + `description`（模型面由参数 schema 强制必填） |
 | `rubric` | **是** | `string` | **唯一**共享判据：「什么算目标事件已发生」 |
 | `source` | **是** | 对象，`kind` ∈ `job`/ `file`/ `glob`/ `command`/ `events` | 每次探测采样的对象。`job`（`id`/`select`/`jobKind`）· `file`（`path`/`startLine`/`endLine`）· `glob`（`pattern`/`limit`）· `command`（`argv`）· `events`（`types`）；**每个 kind 只接受自己那组键**，多给报 `source_invalid` |
 | `type` / `criteria` | 否 | `noul`（唯一支持）+ 可选 `{false,true}` 描述 | 单次探测判定用的题型；命中语义要求概率，choice/score 不支持 |
 | `hitThreshold` | 否 | `number`（缺省 0.5） | 单次探测 P(true) 达到该值记**一次命中** |
 | `tailBytes` | 否 | `number`（缺省 4096，硬上限 65536） | 每次采样读取的窗口（取尾部、不劈开多字节字符） |
-| `mode` | 否 | `once`(缺省)/`continuous` | `once` 达成即返回；`continuous` 跑到 deadline |
+| `mode` | 否 | `once`(缺省)/`continuous` | `once` 达成即返回；`continuous` 跑到 deadline/取消，返回累积 count（无 hit） |
 | `intervalMs` | 否 | `number`（缺省 5000） | 探测间隔；生效值 = `max(intervalMs, Config.minProbeIntervalMs)`，钳制写进 `notes` |
 | `timeoutMs` | 否 | `number`（缺省 120000） | **自管** deadline（宿主不抢占阻塞调用），被抬到 `≥ intervalMs` |
 | `background` | 否 | `boolean` | `true` ⇒ 注册宿主作业并**立刻**返回 `jobId`（用 `job_output` 读） |
-| `countThreshold` | 否 | `number`（缺省 1） | **达成门槛**：`hit = count ≥ countThreshold` |
+| `countThreshold` | 否 | `number`（缺省 1） | `once` 的**返回门槛**（`hit = gate ≥ countThreshold`）；`continuous` 忽略 |
+| `countMode` | 否 | `cumulative`(缺省)/`consecutive` | 计数口径：累计总命中数，或连续命中数（一次 miss 立即清零） |
+| `notifyEvery` | 否 | `number`（缺省 1） | 仅 `continuous`：每命中 N 次发一次通知 |
 | `notify` | 否 | `none`(缺省)/`inbox` | 命中时通知 |
 | `coalesce` | 否 | `boolean`（缺省 true） | 合并同类通知 |
 | `maxNotificationsPerMinute` | 否 | `number`（缺省 6，硬上限 600） | 通知限频 |
 
-- **计数口径**：按**探测结果**累加（电平）—— 每次判定命中就 +1，**没有去抖、没有冷却窗**。⇒ `countThreshold` 等价于「以探测为单位的持续时间」（`countThreshold × intervalMs` 量级）。`minGapMs`/`countMode`/`persistCount`/`resetCount` **不存在**，传了会**显式报错**（静默忽略会让调用方以为冷却生效了）。
+- **计数口径**：`countMode=cumulative`（缺省）按总命中数累计；`consecutive` 按当前连续命中数（一次 miss 立即清零）。每次判定命中就 +1，**没有去抖、没有冷却窗**。`once` 用 `countThreshold` 作返回门槛；`continuous` 忽略它，按 `notifyEvery` 发通知并以**累积 count** 作为最终返回值（不返回 hit）。`minGapMs`/`persistCount`/`resetCount` **不存在**，传了会**显式报错**（静默忽略会让调用方以为冷却生效了）。
+- **通知时机**：只在 **trigger** 时发通知 —— `once` 是达到 `countThreshold`，`continuous` 是每 `notifyEvery` 次命中；**不是每次命中都发**。日志与通知分离：每次命中都进 job_output，通知只走 trigger。
 - **只记录**：`at`/`atIso`/`firstAt`/`lastAt` 是 epoch 毫秒整数，**不参与任何命中判定**。
-- **空样本预检短路**：源返回空文本（或仅空白）⇒ **立即返回**（`samples=1`、`emptySource=true`、`hit=false`、`timedOut=false`），**不调用 Decision、也不进休眠**。「目标事件已发生」对空材料在任何判据下都不成立，空样本也不会自己变非空（file/glob/events 的空都是结构性空）。
-- **返回形状**：后台分支 `{background:true, mode, source, jobId, clampNotes, notes}`；前台分支另含 `{hit, count, countThreshold, at, atIso, firstAt, lastAt, elapsedMs, samples, hitSamples, level, probability, confidence, evidence, intervalMs, timeoutMs, aborted, timedOut, errors, cost, coverage}`。`evidence` 是命中那次采样的**有界尾部**（`EVIDENCE_MAX_BYTES` = 1024 B）；采样正文不落盘。
-- **通知（仅 `background:true`；前台传 `notify:'inbox'` 会当场报错，不再静默忽略）**（对齐宿主 `dsh-tool-jobs` 的官方范式）：消息用 `createUserMessage` 形状 `{id, role:'user', content:[{type:'text',text}], source:{kind:'decision-monitor', form:'notice', summary}}` —— **`source.kind` 必须是本插件自己的名字**（假托 `kind:'user'` 等于把通知伪装成用户输入，且 `user` 分支本身没有 `form` 字段）；投递：目标空闲**且唤醒预算未耗尽** ⇒ `followup`（入队并唤醒），否则 ⇒ `inject`（不唤醒、下一 step 生效）；**合并 + 限频 + 唤醒预算**三件套同时存在；**绝不调用 `agent.cancel`**（实测它会清空整个 inbox）。
+- **空样本语义**：只有 `file`/`glob` 的空是结构性空 ⇒ **立即返回**（`samples=1`、`emptySource=true`、`hit=false`、`timedOut=false`，不调 Decision、不进休眠）；`job`/`events`/`command` 的空是「事件还没发生 / 命令还没输出」⇒ 按 P=0 记一次未命中（不调模型），继续探测到 deadline。永久源错误（描述符不合法、越界、显式作业 id 不存在、文件超限）当场抛出；瞬态读取错误计入 `errors` 后继续重试。
+- **返回形状**：后台分支 `{background:true, description, mode, source, countMode, notifyEvery, countThreshold, jobId, clampNotes, notes}`；前台分支另含 `{description, count, streak, ep, triggers, hitProbability, countMode, notifyEvery, countThreshold, at, atIso, firstAt, lastAt, elapsedMs, samples, hitSamples, level, probability, confidence, evidence, intervalMs, timeoutMs, aborted, timedOut, errors, cost, coverage}` —— **`once` 另含 `hit` 布尔，`continuous` 不含 `hit`**（返回累积 `count`）。`evidence` 是命中那次采样的**有界尾部**（`EVIDENCE_MAX_BYTES` = 1024 B）；采样正文不落盘。
+- **通知（仅 `background:true`；前台传 `notify:'inbox'` 会当场报错，不再静默忽略）**（对齐宿主 `dsh-tool-jobs` 的官方范式）：消息用 `createUserMessage` 形状 `{id, role:'user', content:[{type:'text',text}], source:{kind:'decision-monitor', form:'notice', jobId, source, count, probability, mode, countMode, threshold?(仅 once), streak?(consecutive), notifyEvery?(continuous)}}` —— **`source.kind` 必须是本插件自己的名字**（假托 `kind:'user'` 等于把通知伪装成用户输入，且 `user` 分支本身没有 `form` 字段）；正文是**一行**：`decision-monitor: <jobId> (<kind>: <label>) triggered [<ISO>, <detail>]. Inspect with job_output {"job_id":"…"}.`（`<kind>` = 工具名 `monitor`；source.kind 是输入参数）；`<detail>` 与 finished 行同口径（`hit/P|EP/dur_time` 或 `trigger_num/EP/dur_time`；`<label>` = `source.kind` + `description`，见作业行）；信封的机器契约是标准 JSON Schema **`NOTICE_SOURCE_SCHEMA`**（`lib/notify.js`）：删掉了与 count/threshold 重复的 `summary` 与重复 kind 的 `sourceKind`，`payload` 只留 `{id, message}`（`text/at/event` 与 message 重复，已删），`kind`/`form` 由 notifier 固定；测试用宿主 `validateJsonSchemaValue` 钉住。投递：目标空闲**且唤醒预算未耗尽** ⇒ `followup`（入队并唤醒），否则 ⇒ `inject`（不唤醒、下一 step 生效）；**合并 + 限频 + 唤醒预算**三件套同时存在；**绝不调用 `agent.cancel`**（实测它会清空整个 inbox）。
+- **后台 job_output 是流式过程（2026-10-19 用户裁定）**：不再回最终 JSON。每行行首是 ISO-8601 毫秒时间戳；首行 `config label="…" mode=… countMode=… countThreshold=… notifyEvery=… intervalMs=… timeoutMs=… source=…`；每次命中一行 `hit=true P=…`；连续模式只在 **hit→miss 下降沿**写 `hit=false P=…`（不是每个 miss 都写）；`N>1` 且触发节拍到达时写 `trigger_num=<累计触发数>`；停止时最后一行 `summary …`。宿主 finished 行的 detail 按模式给：`once` 为 `hit/P/dur_time`（`countThreshold=1`）或 `hit/EP/dur_time`（`>1`），`continuous` 为 `trigger_num/EP/dur_time`；`hit` 一律布尔、`dur_time` 单位 ms、EP：`once` = 所有 **hit** 探测 P 之和 ÷ N（N = `countThreshold`，hit 不足 N 时**补 0**；0 hit ⇒ 0）；`continuous` = 各 **trigger** 的 P 均值（trigger P = 该窗口 hit P 之和 ÷ `notifyEvery`；`trigger_num=0` ⇒ 0）。`hit=false` 时 detail 的概率字段取 **1−EP**；布尔型 verdict 无 P 时按 0.00（detail/通知/流一致，不出现 `-`）。`description` 在进入 label 前折叠为单行。作业状态：abort ⇒ `killed`；全部探测 errors（无有效 verdict）⇒ `failed`；timeout/有有效 verdict ⇒ `completed`。
+- **JSON Schema 产物**：`NOTICE_SOURCE_SCHEMA`（通知信封）、`OUTPUT_JSON_SCHEMA`（decision/monitor 的工具输出，由 `defineTool` 的紧凑方言编译）——与宿主实际校验逐键一致，各有测试守卫。后台不再产出 `jobResultText` JSON（`JOB_RESULT_SCHEMA` 已随流式 job_output 删除）。⚠️ `defineTool` 仍要求紧凑方言（宿主拿到的是编译后的标准 JSON Schema），所以工具 output **不能**直接改写成原生 JSON Schema。
+- **后台取消语义（2026-10-19 真机修复）**：探测循环只吃 monitor 作业自己的 controller signal，**不转发调用方的 `exec.signal`** —— 它随工具调用/轮次结束而中止，转发会让调用返回后的每次探测都失败（真机实测 `errors=samples`，结果只剩 `hit=false`）。controller signal 会随 decide 的 meta 下传，并对 in-flight `decide`/`sleep` 做 abort race：取消不再等一个 interval 或一次模型请求。
+- **`notify` 缺省 none 不建通知路径（2026-10-19 真机修复）**：即使装配层注入了 `deliver`，也只有显式 `notify:'inbox'` 才创建 notifier；此前 deliver 兜底会让默认 none 的调用照样收到命中通知。
 - **file/glob 采样走注入的 `deps.read`**（与 `decision` 同一个 reader）⇒ `monitor-tool.js` 内**没有第二份**文件/glob 读取实现；缺 reader 是**装配错误**，当场报可行动错误，而不是等 deadline 后说「没命中」。
 - **`command` 源（真机口径）**：`argv[0]` 选解释器（`pwsh`/`powershell`、`git_bash`/`bash`/`sh`/`zsh`），其余项**按空格拼成命令文本**；解释器自己的前导标志（`-c`/`-lc`/`-Command`/`-NoProfile`/`-ExecutionPolicy`…）会被剥掉，**判定标志不能限长度**（`-lc` 剥得掉而 `-Command` 剥不掉会静默变成低概率）。⇒ **带空格的参数要由调用方自己加引号**（`['bash','-lc','echo "a b"']`），argv 不承诺 shell 级引用解析。委托复用既有 `runUpstream`（整份 `exec`：`agent`+`parent token`），模块自己**绝不 spawn**。
 - **`events` 源（真机口径）**：数据源优先级 = `deps.eventLog`（装配层环形缓冲，**有历史**）→ `ctx.monitorEventLog` → **`ctx.jobs.list(sessionId)` 的当前状态投影**（每个作业一条 `{type:'job.<status>', …}`，只反映此刻）。缓冲由 `lib/event-log.js` 通过 **`ctx.jobs.events.subscribe({ owners: 'scope' }, listener)` 两参服务**订阅 `registered/stopping/output/progress/settled/removed` 填充，`settled` 额外派生 `job.completed`/`job.failed`/`job.killed`。
@@ -238,7 +246,7 @@ JSON Schema 的 `required` **只有 `material`**；模式内部必填由校验�
 
 另有**独立常量对象**（与 `LIMITS` 分开；数值只有一处来源，`Config` 里只放覆盖点、不复制数字）：
 
-- `MONITOR_LIMITS`（`validate.js`）：`defaultProbeIntervalMs:5000` · `minProbeIntervalMs:1000` · `maxProbeIntervalMs:3600000` · `defaultTimeoutMs:120000` · `minTimeoutMs:1000` · `maxTimeoutMs:3600000` · `defaultTailBytes:4096` · `maxTailBytes:65536` · `defaultCountThreshold:1` · `maxCountThreshold:1000000` · `defaultHitThreshold:0.5` · `defaultNotifyCoalesceWindowMs:5000` · `defaultMaxNotificationsPerMinute:6` · `maxNotificationsPerMinute:600` · `sourceKinds`(job/file/glob/command/events) · `modes`(once/continuous) · `notifyModes`(none/inbox) · `removedKeys`(minGapMs/countMode/persistCount/resetCount) · `allowedKeys`(14 键)。
+- `MONITOR_LIMITS`（`validate.js`）：`defaultProbeIntervalMs:5000` · `minProbeIntervalMs:1000` · `maxProbeIntervalMs:3600000` · `defaultTimeoutMs:120000` · `minTimeoutMs:1000` · `maxTimeoutMs:3600000` · `defaultTailBytes:4096` · `maxTailBytes:65536` · `defaultCountThreshold:1` · `maxCountThreshold:1000000` · `defaultCountMode:cumulative` · `countModes`(cumulative/consecutive) · `defaultNotifyEvery:1` · `maxNotifyEvery:1000000` · `defaultHitThreshold:0.5` · `defaultNotifyCoalesceWindowMs:5000` · `defaultMaxNotificationsPerMinute:6` · `maxNotificationsPerMinute:600` · `sourceKinds`(job/file/glob/command/events) · `modes`(once/continuous) · `notifyModes`(none/inbox) · `removedKeys`(minGapMs/persistCount/resetCount) · `allowedKeys`(17 键)。
 - `UPSTREAM_SELF_TOOLS`（`validate.js`）：`['decision','monitor']` —— 默认禁递归名单；工具层会把**生效的** `Config.toolName`/`monitorToolName` 传进去覆盖它（改名部署下闸才不落空）。
 - `DEFAULT_SPILL_MAX_BYTES`（`pipe.js`）：`16 MiB` —— `Config.spillDirCap` 的回落常量。
 
@@ -265,7 +273,7 @@ JSON Schema 的 `required` **只有 `material`**；模式内部必填由校验�
 
 ## 5. 测试与门禁
 
-- 套件 `node --test --experimental-test-isolation=none "test/*.test.mjs"` = **432 例**（2026-10-18 代码态实跑核对；431 pass / 1 skip / 0 fail）= 顶层 `test(` 声明 **408** 条（`grep -c '^test('` 逐文件相加）+ 循环内生成的表驱动用例 **24** 条；共 **32** 个测试文件（`ls test/*.test.mjs | wc -l` = 32）；另有装置 `test/fake-ollama.mjs`（不匹配 `test/*.test.mjs` 这个 glob，不算例）。
+- 套件 `node --test --experimental-test-isolation=none "test/*.test.mjs"` = **455 例**（2026-10-19 代码态实跑核对；455 pass / 0 skip / 0 fail）= 顶层 `test(` 声明 **431** 条（`grep -c '^test('` 逐文件相加）+ 循环内生成的表驱动用例 **24** 条；共 **32** 个测试文件（`ls test/*.test.mjs | wc -l` = 32）；另有装置 `test/fake-ollama.mjs`（不匹配 `test/*.test.mjs` 这个 glob，不算例）。
 - **墙钟纪律（精确版）**：**不得用真实计时派生判定**（如按 deadline 计数、按耗时决定分支）。deep 的多轮重切预算用可注入时钟 + 纯函数 `scanRoundBudget` 断言（曾有一条用服务端忙等 60 ms 的用例在并行负载下抖红，已重写）。**已登记的例外**：`test/client.test.mjs` 用 `Date.now()` 做 `elapsed < 2000 ms` 的粗上限兜底、`test/escalate.test.mjs` 有一处 10 ms 等待用于让承诺沉降 —— 这两处不派生判定结果，保留并登记（见 §6 #21）。
 - 守卫：§4.9 判别性锚点、skill 锚点（十四条 v3 读法 + 词表负例）、README 配置表与 `Config` 投影一致（**29 键，按行计**；两份 README 的三张表键集与顺序 == 三条 `Config.dict`）、注入预算上限（`decision` description ≤1900 / 参数 schema ≤3600 / skill ≤8000；`monitor` description ≤1900 / 参数 schema ≤3600）、`COMPANION_SKILL === SKILL_NAME`、缺 skill 拒服务、首次交付 skill 正文；Monitor/管道新增：**零真实墙钟**（clock/sleep/decide/deliver 全注入）、通知三件套（合并 + 限频 + 唤醒预算）、`material.tool` 双形状对齐（模型面 `{name,arguments}` ↔ 校验层 `{tool,arguments}`）、禁自递归（名单含生效的 `toolName` 与 `monitorToolName`）、模型可见文案词表（v2 参数名负例，含 `stateSource`）、**output schema 与返回值键集一致**（monitor 侧 `7a3c104`、decision 侧 `b55b942`，两边都用宿主的 `valueSchemaSpecToJsonSchema` + `validateJsonSchemaValue` 钉住）。
 - 另有：`node --check lib/*.js`、CR 字节 = 0、变异自检（累计 30+ 定点变异全杀）、隔离实例真机冒烟。
