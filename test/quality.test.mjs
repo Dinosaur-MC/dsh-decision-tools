@@ -31,3 +31,21 @@ test('rebuild 刷新判定：版本不同就要重拷（否则 DSH 升级后静�
   assert.equal(mod.needsRefresh(src, dst), true, '目标缺 package.json ⇒ 需要刷新');
   fs.rmSync(root, { recursive: true, force: true });
 });
+test('空源短路：execute 返回 samples=1、不调 decide，并在 notes 里说明原因', async () => {
+  const { registerMonitorTool } = await import('../lib/monitor-tool.js');
+  let decides = 0;
+  const { definition } = registerMonitorTool({ tools: { register() {} } }, {
+    deps: {
+      register: false,
+      read: async () => ({ text: '' }),
+      decide: async () => { decides += 1; return { probability: 1 }; },
+    },
+  });
+  const value = await definition.execute({ rubric: 'x', source: { kind: 'file', path: 'tmp/empty.txt' } }, {});
+  assert.equal(value.samples, 1);
+  assert.equal(value.emptySource, true);
+  assert.equal(decides, 0, '空源不得调用 Decision');
+  assert.ok(value.notes.some((n) => /空内容/.test(n)), 'notes 必须说明短路：' + JSON.stringify(value.notes));
+
+  assert.equal(value.emptyReason, undefined, '内部字段不得外泄');
+});
