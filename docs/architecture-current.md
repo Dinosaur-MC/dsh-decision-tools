@@ -25,7 +25,7 @@
 - 打包白名单：`lib/**/*.js`、`assets/**`、`cordis.patch.yml`、两份 README、`LICENSE`、`THIRD_PARTY_NOTICES`；`npm pack --dry-run` 实测 **24 files / 120.3 kB**（unpacked 341.3 kB；`docs/`、`test/`、`smoke/` 在 git 里被跟踪但**不入包**）。
 - 运行态通过 profile 的 `link:` symlink 指向工作区 ⇒ 磁盘代码即运行代码，**改码后要重载宿主**才生效。
 
-### 1.2 模块图（20 个模块 / 6483 行，`wc -l lib/*.js` 实测于 2026-10-18 代码态）
+### 1.2 模块图（19 个模块 / 6483 行，`wc -l lib/*.js` 实测于 2026-10-18 代码态）
 
 | 模块 | 行 | 职责 |
 |---|---|---|
