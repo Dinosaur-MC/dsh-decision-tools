@@ -1,142 +1,104 @@
 # dsh-decision-tools
 
-A DSH agent tool that puts a local [Ollama System One](https://docs.ollama.com/capabilities/decision)
-model behind one tool call: classify, answer yes/no, and score against a rubric —
-all in a single request that shares one piece of state.
+**Ask a local model for probabilities, not prose.** Two DSH tools turn bounded judgements into cheap, repeatable calls:
+
+| Tool | What it answers | Typical use |
+|---|---|---|
+| `decision` | One criterion over 1–64 items, or up to 64 different questions — in **one** call | Filter a list, classify tickets, route requests, rank candidates, "does this log mean failure?" |
+| `monitor` | Re-samples one source until your criterion holds | Wait for a build to finish, a line to appear, a job to fail |
+
+Judgements run on **your own Ollama** (`/v1/systemone`). Nothing goes to a cloud provider, and the material never has to enter your conversation.
 
 ## Why
 
-Routing, filtering, relevance judgement and scoring are bounded decisions whose
-useful answer is a probability, not prose. Sending them to a generative model is
-slow and expensive. A System One decision model answers in one forward pass.
+- **Cheap by design** — the rubric is sent **once**, and one call judges up to 64 items. Looping one call per item is the expensive anti-pattern.
+- **Material stays out of your context** — pass a workspace file, a glob, or another tool's raw output; you only read back the answers.
+- **Honest output** — every answer is a probability plus `confidence`, partial work is reported in `coverage`, and `notes` says what the plugin did.
 
 ## Requirements
 
-- Ollama >= 0.35.0 running locally
-- At least one decision model: `ollama pull tev1:0.8b` (recommended default)
-- DSH with `@deepseek-ai/dsh-tools` >= 0.2.0-rc.2
+- DSH desktop with this plugin enabled (see Install).
+- A local Ollama serving the decision model — default `tev1:0.8b`, override per call with `model`.
+- No API key; the judgement itself makes no outbound call.
 
 ## Install
 
-    plugin_manager(action="install_bundle", target="<absolute path to this package>")
+Link the workspace into your profile (development) or enable the published bundle, then confirm the tools are visible:
 
-Then confirm the tool is visible with
-`cordis_inspect_query(platform="host", provider="Tool", method="listTools")`.
-
-## Tools
-
-This bundle registers **two** model-visible tools:
-
-| Tool | What it is |
-|---|---|
-| `decision` | One shared `material` + one shared `rubric`, judged in a single request: 1–64 items (batch) or a handful of distinct questions (mixed). Answers are probabilities, not prose. |
-| `monitor` | A **probing wait primitive**: sample a `source` on an interval, ask the same decision model "has the event happened yet" against your `rubric`, count the probes that count as hits, and return once the count reaches `countThreshold` (or the deadline expires). It never kills, retries or dispatches anything — see [Monitor](#monitor). |
-
-## Usage
-
-One call, one `material`, and **one of two mutually exclusive modes** (giving both, or neither, is an error).
-
-`material` has **four forms**; the last three are references that never enter your context:
-
-| Form | Use when |
-|---|---|
-| a plain string | the text is small and already in your context |
-| `{ file: { path, startLine?, endLine? } }` | the material is a workspace file (1-based inclusive range). A single file over the cap is an **error**, never truncated |
-| `{ glob: { pattern, limit? } }` | a set of files. Total over the cap is **truncated**, reported in `coverage.truncated` / `coverage.truncatedBy` — a truncated material must never be used as if it were complete |
-| `{ tool: { name, arguments? } }` | run **another** tool and judge its **raw output** without pulling it into your context. The plugin delegates it in-process (**always** with `agent` and `parent`), spills the raw output to a file **unconditionally**, and returns `material.spillPath` / `bytes` / `fullBytes` / `truncated` (plus `exitCode` for process-style tools). Delegating to this plugin's own tools (`decision`, `monitor`) is rejected — the host has no recursion guard of its own |
-
-**Batch** — one shared rubric judging N items independently; the rubric is written **once**:
-
-```json
-{
-  "material": "Our checkout has returned 500 errors since 9am. The payments page shows a generic error and no orders go through.",
-  "rubric": "Is this ticket a payment failure that needs a refund?",
-  "type": "noul",
-  "items": ["ticket 12", "ticket 13", "ticket 14"]
-}
+```
+cordis_inspect_query(platform="host", provider="Tool", method="listTools")
 ```
 
-**Mixed** — several distinct questions about the same material; here each question carries its own `criteria`:
+The companion skill `decision-usage` is registered with the tools and documents every parameter; it loads on demand.
 
-```json
-{
-  "material": "Our checkout has returned 500 errors since 9am. The payments page shows a generic error and no orders go through.",
+## Quick start
+
+```jsonc
+// 1) Filter a list: one rubric, N items
+{ "material": "<the list or its context>", "rubric": "Is this a bug report?",
+  "items": ["app crashes on save", "please add dark mode"], "type": "noul" }
+
+// 2) Ask different questions about one file
+{ "material": { "file": { "path": "build.log", "startLine": 1, "endLine": 200 } },
   "questions": [
-    { "name": "label", "type": "choice",
-      "instructions": "Which label fits this ticket?",
-      "criteria": { "billing": "Payments and refunds", "bug": "Software errors",
-                    "account": "Login and account access" } },
-    { "name": "refund", "type": "noul",
-      "instructions": "Is the customer requesting a refund?" },
-    { "name": "urgency", "type": "score",
-      "instructions": "How urgently does this ticket need a response?",
-      "criteria": ["Routine: no time pressure",
-                   "Soon: a customer is inconvenienced",
-                   "Immediate: a critical service is unavailable"] }
-  ]
-}
+    { "name": "ok", "type": "noul", "instructions": "Did the build succeed?" },
+    { "name": "why", "type": "choice", "instructions": "What failed?",
+      "criteria": { "compile": "compile error", "test": "a test failed", "env": "missing dependency" } }
+  ] }
+
+// 3) Judge another tool's output without reading it
+{ "material": { "tool": { "name": "git_bash", "arguments": { "command": "npm test" } } },
+  "rubric": "Did the test suite pass?" }
+
+// 4) Wait for a background job, and get a notice on a hit
+{ "source": { "kind": "job", "id": "<jobId>" },
+  "rubric": "Did the job finish successfully?", "background": true, "notify": "inbox" }
 ```
 
-`rubric` is written once and the wire layer repeats it for the model, so you never repeat it per item. A
-`choice`/`score` label set is written once too: in batch mode in the **top-level** `criteria`, in mixed mode in
-each question. `noul` takes no `criteria` at all, and a top-level `criteria` in mixed mode is an error.
+## `decision`: one call, one mode
 
-The mixed request above renders as one line per result, then `coverage`, `material`, `cost` and `notes`:
+Give `material` plus **exactly one** mode:
 
-    label    choice  bug  p={bug=0.9648, account=0.0293, billing=0.0059}  conf=0.847
-    refund   noul    P(true)=0.5045
-    urgency  score   Soon  p={1=0.7369, 2=0.1933, 0=0.0698}  conf=0.337
-    覆盖: requested=3 answered=3 batches=1 truncated=false failed=0 aborted=false
-    cost: model=tev1:0.8b input_tokens=796 body=682B wall=97ms escalated=false attempts=1
-    模型选择：tev1:0.8b（fits-default）。
-
-The **shape** of those lines is fixed by the renderer (`lib/render.js`); `noul` deliberately prints only
-`P(true)` — the boolean in `results[].value` is a thresholded product, and printing it would invite reading a
-probability as a decision. The distributions and labels above are the ones measured earlier on `tev1:0.8b`
-for this ticket; the `coverage` / `cost` numbers are representative — the wire shape changed in this release,
-so re-measure bytes and `input_tokens` on your own machine.
-
-## Question types
-
-| Type | Criteria | `results[]` entry |
+| Mode | Shape | Meaning |
 |---|---|---|
-| `choice` | 2–255 named options with descriptions (`criteria` object) | `value` = the most likely option; `probabilities` = option → probability; `confidence` |
-| `noul` | optional `{"false": ..., "true": ...}` descriptions; **no `criteria`** (batch mode rejects one) | `value` = boolean (`P(true) >= 0.5`); `probabilities` = `{ true, false }`; no `confidence` (the server returns none) |
-| `score` | 2–10 descriptions ordered lowest → highest (`criteria` array) | `value` = the chosen level label; `probabilities` = level index (0..N-1) → probability; `confidence` |
+| Batch | `rubric` + `items` + `type` (+ `criteria`) | One shared criterion, judged independently per item |
+| Mixed | `questions` | Up to 64 different questions about the same material |
 
-`score`'s probability-weighted mean is not returned as a number, but you can recompute it as `Σ index × p`
-over `probabilities`. `confidence` is distribution concentration, `1 - H(p)/ln N`. It is **not** calibrated
-accuracy. Entries whose `confidence` is below `minConfidence` (or missing) are named in a `notes[]` line —
-a flag, not a filter: nothing is dropped, rewritten or rejected.
+| Parameter | Required | Notes |
+|---|---|---|
+| `material` | yes | Inline string, `{file}`, `{glob}`, or `{tool}` |
+| `rubric` | batch | The one shared criterion; the wire layer repeats it for the model |
+| `items` | batch | 1–64 self-contained short objects |
+| `questions` | mixed | 1–64 `{name, type, instructions, criteria?}` |
+| `type` | batch | `choice` / `noul` / `score` (mixed: per question) |
+| `criteria` | choice/score | Labels once: top-level in batch, per question in mixed |
+| `depth` | no | `quick` (no escalation/batching), `normal` (default), `deep` (may chunk) |
+| `model` | no | Pin a model; disables capacity choice and escalation |
 
-When rendered, `noul` prints `P(true)` only, while `choice` / `score` print the label plus the probabilities in
-descending order.
+**Material forms**: inline text · `{ file: { path, startLine?, endLine? } }` · `{ glob: { pattern, limit? } }` · `{ tool: { name, arguments? } }`. A tool's raw output never enters your context; the full text is spilled and returned as `material.spillPath`. `tool` cannot be combined with `file`/`glob`, and the plugin's own tools are refused.
 
-## Monitor
+**Read the result**: `results[]` (`id`, `type`, `value`, `probabilities?`, `confidence?`) · `coverage` (`requested`/`answered`/`batches`/`truncated`/`truncatedBy`/`failed`/`aborted`) · `cost` (`model`/`inputTokens`/`bodyBytes`/`wallMs`/`escalated`/`attempts`) · `notes` (first line = model-selection decision).
 
-`monitor` is a **probing wait primitive, not a scheduler**. You give it a `source` and one `rubric` ("what counts as the event having happened"); it samples on an interval, asks the decision model each time, and counts every probe that answers a hit.
+`noul` returns a **number** (0.475 = 47.5% yes); `score` is on the 0..N-1 scale; `choice` returns the chosen label. `confidence` is concentration, **not accuracy** — when `notes` flags low-confidence items, read `probabilities` instead of the label.
 
-```json
-{
-  "source": { "kind": "file", "path": "build.log" },
-  "rubric": "Does the log already contain the line BUILD SUCCEEDED?",
-  "intervalMs": 5000,
-  "timeoutMs": 120000
-}
-```
+## `monitor`: wait for an event
 
-- **Counting is level-based**: every probe that answers a hit increments the counter. **There is no debounce and no cooldown window** — `countThreshold: 3` means roughly "hit on three probes" (order of `3 × intervalMs`). `minGapMs`, `countMode`, `persistCount` and `resetCount` do not exist and are **rejected explicitly** rather than silently ignored.
-- **Timestamps are recorded only** (`at`, `atIso`, `firstAt`, `lastAt`) — they never take part in the hit decision.
-- `intervalMs` is raised to the deployment floor (`Config.minProbeIntervalMs`); `timeoutMs` is a **self-managed** deadline (the host does not preempt a blocking call), raised to at least `intervalMs`. Both clamps are written into `notes`.
-- `background: true` registers a host job and returns a `jobId` immediately (read it later with `job_output`). `notify: "inbox"` sends a notice when the threshold is reached (**`background: true` only** — a foreground call with `notify: "inbox"` is rejected), with coalescing + a per-minute cap + a wake budget — the inbox has no backpressure of its own.
-- `source.kind` is one of `job` / `file` / `glob` / `command` / `events`. `file` and `glob` go through the **same reader as `decision`** (workspace-relative, same containment gate).
-- `command` re-runs a host command through the plugin's own upstream pipe (the same one behind `decision`'s `material.tool`): `argv[0]` picks the interpreter (`pwsh`/`powershell`, `git_bash`/`bash`/`sh`/`zsh`), the rest are **joined by spaces**, and the interpreter's own leading flags (`-c`/`-lc`/`-Command`/`-NoProfile`…) are stripped — **quote any argument that contains spaces yourself** (`['bash','-lc','echo "a b"']`).
-- An **empty source** returns immediately: `samples: 1`, `emptySource: true`, `hit: false` — no model call, no waiting for the deadline.
-- `events` reads the plugin's job-event ring buffer (`job.registered` / `job.settled` / `job.completed` / `job.failed` / `job.killed` / …); with no buffer available it falls back to the session's **current** job list (`types: ['job.failed']` then means “some job is failed right now”). `types` is validated against a fixed vocabulary; a typo fails as `source_invalid`.
-- **On a hit the plugin NOTIFIES only.** It never kills, retries, dispatches or cancels anything — that stays your call. The counter lives in memory only: it starts at 0 on every call and is lost when the host restarts.
-- **Not for** goals that need multi-turn reasoning or candidates discovered while thinking — it only answers a bounded question you can already state.
+Samples one source on an interval, asks the same rubric each time, counts hits, and returns when `countThreshold` is reached (or the deadline expires). It **never** kills, retries, or cancels anything.
 
-A foreground call returns `hit` / `count` / `countThreshold`, the timestamps, a bounded tail of the hitting sample (`evidence`, cap 1024 B), and `cost` / `coverage` / `notes`.
+| Source | Keys | Reads |
+|---|---|---|
+| `job` | `id?`, `select?` (`newest`/`oldest`), `jobKind?` | A background job's output (default: newest of this session) |
+| `file` | `path`, `startLine?`, `endLine?` | Workspace-relative file |
+| `glob` | `pattern`, `limit?` | Matched files, concatenated |
+| `command` | `argv` | Re-runs a host command through the plugin's upstream pipe |
+| `events` | `types`, `limit?` | Job-event ring buffer (falls back to the session's current job list) |
+
+Parameters: `rubric` (required) · `source` (required) · `type` (`noul` only) · `hitThreshold` (0.5) · `tailBytes` (4096, max 65536) · `mode` (`once`|`continuous`) · `intervalMs` (5000) · `timeoutMs` (120000) · `countThreshold` (1) · `background` · `notify` · `coalesce` · `maxNotificationsPerMinute` (6).
+
+- **An empty source returns immediately**: `samples: 1`, `emptySource: true`, `hit: false` — no model call, no waiting.
+- **Background**: `background: true` returns a `jobId` at once; read it with `job_output` (output is consumed on read). `notify: "inbox"` posts a notice on a hit and **requires** background.
+- **`command` argv**: `argv[0]` picks the interpreter (`pwsh`, `git_bash`/`bash`/`sh`/`zsh`); interpreter flags are stripped; **quote arguments containing spaces yourself**.
+- **`events.types`** is validated against a fixed vocabulary (`job.registered`, `job.stopping`, `job.output`, `job.progress`, `job.settled`, `job.completed`, `job.failed`, `job.killed`, `job.removed`, `job.running`, `job.unknown`); a typo fails as `source_invalid`.
 
 ## Configuration
 
@@ -207,96 +169,39 @@ keys are only `id`, `name`, `config`, `disabled`, `inject`, `intercept` and `iso
 existing row uses a bare `id` with no `insert`.
 The defaults above are the ones declared in `lib/tool.js` (`Config`).
 
-## Known limitations
+## Troubleshooting
 
-1. **The `clef` defect is gone as of 2026-10-12.** It used to fail on every request with
-   `Clef: non-finite logit` under Ollama 0.35.1; re-tested on **0.40.3** (and with the model
-   files re-pulled), `clef-flash:latest`, `clef:latest` and `nimble:latest` all return 200 for
-   all three question types, and the two `clef` models now advertise `vision`. The fix cannot be
-   attributed to a single cause (Ollama version *and* model files both changed).
-   ⚠️ **State changed again on 2026-10-15**: under Ollama **0.40.4** old-format models are
-   rejected (`was downloaded in a format that is no longer supported`). After re-pulling
-   `nimble:latest`, `clef-flash:latest` and `clef:latest` in turn (16:08–18:0x that day),
-   **all six decision models are available again**. ⇒ Availability flips with re-pulls;
-   any "works / doesn't work" claim must be re-measured. **Image input is not exposed by this
-   extension**: there is no `images` parameter and no path-based image loading — the upstream
-   `/v1/systemone` endpoint does accept `images` (base64 PNG/JPEG/WebP, shared by every question in
-   that request; local body cap 32 MiB including base64) and the `clef` / `clef-flash` models can
-   judge them, so this is a gap in this plugin, not an upstream limit — see ADR-3. The `model_broken`
-   mapping is kept as a guard against an upstream regression.
-2. **Bigger is not necessarily more correct.** On the same ticket, `tev1:0.8b`
-   answered `bug` (p=0.9648) while `tev1:latest` (4.2B) answered `billing`
-   (p=0.5710, `bug` only 0.3212) — and `billing` is the weaker answer given the
-   text. Verify per task.
-3. First call includes model load (measured on this machine: 14.3 s cold and
-   11.1 s warm for `tev1:0.8b`; 15.7 s cold and 8.0 s warm for `tev1:latest`).
-4. No streaming, no tool calling, one request one response.
-5. Server limits: 64 KiB request without images, 64 questions, **2–255 `choice` options**
-   (the OpenAPI spec notes the option limit is model-dependent) and **2–10 `score` levels** —
-   two independent limits, not one. The binding limit is usually smaller: the effective
-   context is the model's own `num_ctx`, not the architecture's context length. On this machine
-   `ollama show tev1:0.8b` reports `context length 262144` but `num_ctx = 8192` (re-pulled
-   2026-10-15; it was 2050 before), and measured on real English technical prose that ceiling
-   is roughly `num_ctx / 3.33` bytes of body (~3.33 bytes/token), so an over-sized body returns
-   HTTP 400 `prompt 0 has <N> tokens; expected 1–<M> (input is never truncated)`, mapped to
-   `context_overflow` — the input is **not** truncated and no partial answer is returned.
-   The plugin's **default** advisory size threshold is a fixed byte count
-   (`LIMITS.softBodyBytes = 4096` B), deliberately independent of any model's `num_ctx`: it can
-   warn **before** the server rejects, and crossing it only adds a note to `notes[]` and changes no
-   rejection behaviour — model *selection*, by contrast, now computes its own per-call threshold
-   from the window, the 0.6 margin and the material's language density. The authoritative guard
-   stays the server's token check. Byte count is a crude proxy, though: dense scripts (CJK) and
-   ID-heavy text tokenize worse than 3.33 B/token and this threshold under-protects on such input.
-6. **Bounded decisions only.** This plugin answers bounded questions whose candidate set is known up front. Open-ended generation, reasoning chains, and candidates that must be discovered while thinking still belong to a generative model.
-7. **The confidence gate is a flag, not a guarantee.** Answers below the configured `minConfidence` — or with a missing `confidence` — are named in a `notes[]` line; nothing is dropped, rewritten or rejected. The 0.25 default was calibrated on one small local sample (`tev1:0.8b`, 4 questions × 6 candidate orderings) and confidence scales differ by roughly an order of magnitude between models, so **re-calibrate per model**. A cross-session probe recorded an order-induced label flip at `confidence = 0.357`, above this threshold, and `confidence` measures concentration rather than accuracy — a question absent from the warning is **not** thereby endorsed.
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `context_overflow` | Material + questions exceed the model's window | Use `depth: "deep"` (chunking), smaller material, or fewer questions |
+| Tool not listed | Plugin not enabled in the profile | Link it into the profile and reload |
+| `ERR_MODULE_NOT_FOUND` after a DSH upgrade | Workspace `node_modules` still points at the old install | Run `scripts/rebuild-node-modules.mjs` inside DSH, then re-run the tests |
+| `monitor` gives `hit:false` with `errors: 0` | Source was empty, or `types` matched nothing | Check `emptySource`; `notes` states the reason |
+| `monitor` gives `errors: N > 0` | Reads or judgements failed | Inspect the error text; failed probes are also rendered |
+| `source.kind=events` fails | Event source unavailable in this composition | Falls back to the session's current job list when possible |
+| `invalid_request` / `mode_invalid` | Malformed arguments | The message lists legal values; `mode_invalid` = mode/count/shape, `invalid_request` = a field |
+
+## Limits and safety
+
+- These are **probabilities, not proof**. Never treat one as correctness evidence, and never let it be the sole basis for a pass/allow decision — that needs artifact-level evidence.
+- The tool must **not** decide routing, and must **not** be the basis of any **fail-open or fail-closed** policy; those belong to deterministic rules.
+- `tev1` returns only probabilities and no text — use a generative model when you need a human-readable rationale.
+- Raw tool output is spilled to a plugin-owned temp directory (16 MiB cap, `spillDirCap`); the path is returned in the result.
+- Judgements are local; the plugin makes no cloud calls of its own.
 
 ## Development
 
-    npm run link-peers     # symlink the host's peer packages (no network)
-    npm test               # node --test "test/*.test.mjs"
-    node smoke/live.mjs    # optional: hit the real local Ollama
+```
+node --test test/*.test.mjs     # full suite
+node --check lib/*.js          # syntax gate
+```
 
-`node --test test/` does **not** work on Node 22 — the directory form is treated as
-a module path. Use the quoted glob.
-
-`smoke/live.mjs` needs a live Ollama and is not part of CI. It is a development
-fixture and is deliberately excluded from the published package.
+After editing `lib/`, reload the plugin in DSH before drawing conclusions from real calls: the host runs the last loaded snapshot.
 
 ## Licence
 
-MIT. See LICENSE and THIRD_PARTY_NOTICES.
+MIT — see [LICENSE](./LICENSE).
 
-## Migrating from the earlier API (breaking)
+## Migrating from the earlier API
 
-This release replaces the tool surface. There is **no compatibility layer** — the old keys below are no
-longer accepted as arguments or returned in a result. What to change:
-
-| Old | New | Action needed |
-|---|---|---|
-| `state` | `material` (a plain string is still a valid form) | rename |
-| `stateSource` | `material: { file: … }` / `{ glob: … }` | rename + reshape |
-| `strategy` | `depth: 'quick' \| 'normal' \| 'deep'` | rename + pick a level |
-| `aggregate` | removed (its semantics moved into `depth` and automatic batching) | delete it |
-| the shared rubric repeated in every `questions[].instructions` | `rubric` (written once) + `items` + `type` | use the batch mode |
-| the option set repeated per question | top-level `criteria` (batch mode); per-question only in mixed mode | move it once, to the top level |
-| `questions[].instructions` | meaning unchanged, but in batch mode it is no longer where the shared criterion lives | depends on the mode |
-| `answers[name]` | `results[]` — `{ id, type, value, probabilities?, confidence? }` | read differently |
-| `chunks` | removed (every result lives in `results`, one entry per item) | read differently |
-| `usage` / `state_bytes` / `body_bytes` | `cost` (`inputTokens` / `bodyBytes`) | read `cost` |
-| `body_warning` / `confidence_warning` | `notes[]` (strings, printed verbatim) | read `notes` |
-| `source` | `material` (`{ source, bytes, descriptor? }`) | read `material` |
-| `plan` | `notes[]` (its first line states the model and the selection reason) | read `notes` |
-| `escalated: { from, to, sticky }` | `cost.escalated` (boolean) + `cost.attempts[]` | read `cost` |
-| `scan` (`failed` / `truncated` / `aborted` / `remaining`) | `coverage` (`requested` / `answered` / `batches` / `truncated` / `truncatedBy` / `failed` / `aborted`) | read `coverage` |
-
-Also:
-
-- `items` and `questions` are **mutually exclusive**: giving both (`mode_conflict`) or neither
-  (`mode_missing`) is an error.
-- Scanning is no longer a parameter: it is an internal behaviour available only with `depth: 'deep'`.
-  `coverage` reports truthfully whether it ran, and a per-chunk maximum is a **locator, not a
-  document-level probability**.
-- Unchanged: the `model` escape hatch, escalation-sticky behaviour, the materials-never-enter-your-context
-  rule and the workspace guard, and every `Config` key in the table above.
-- The package also ships a **skill**: enabling the `dsh-decision-tools/skill` row puts `decision-usage` in
-  the session skill catalog (the shipped `cordis.patch.yml` enables both rows).
+The v2 top-level keys (`state`, `answers`, `usage`, `strategy`, `aggregate`, …) are gone; `material` plus one mode replaces them. See [docs/architecture-current.md](./docs/architecture-current.md) for the as-is contract and [docs/use-cases.md](./docs/use-cases.md) for worked examples.

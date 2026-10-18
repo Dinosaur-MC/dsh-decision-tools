@@ -1,136 +1,104 @@
 # dsh-decision-tools
 
-一个 DSH 代理工具：把本机 [Ollama System One](https://docs.ollama.com/capabilities/decision)
-模型藏在一次工具调用之后 —— 分类、是/否判定、按评分表打分，三件事在一次请求里完成，
-共享同一段 state。
+**向本地模型要概率，而不是要文字。** 两个 DSH 工具，把有界判定变成便宜、可重复的调用：
 
-## Why
-
-路由、过滤、相关性判断与打分都是**有界判定**：有用的答案是一个概率，不是一段文字。
-把它们交给生成式模型既慢又贵。System One 决策模型一次前向传播就给出答案。
-
-## Requirements
-
-- 本机运行的 Ollama >= 0.35.0
-- 至少一个决策模型：`ollama pull tev1:0.8b`（推荐的默认值）
-- DSH 带 `@deepseek-ai/dsh-tools` >= 0.2.0-rc.2
-
-## Install
-
-    plugin_manager(action="install_bundle", target="<本包的绝对路径>")
-
-然后用 `cordis_inspect_query(platform="host", provider="Tool", method="listTools")`
-确认工具已可见。
-
-## 工具
-
-本包注册**两个**模型可见工具：
-
-| 工具 | 是什么 |
-|---|---|
-| `decision` | 一份共享 `material` + 一条共享 `rubric`，一次请求判定：1–64 项（批量）或几个互不相同的问题（异质）。给的是概率，不是文字。 |
-| `monitor` | **探测式等待原语**：按间隔采样一个 `source`，用同一个判定模型按你的 `rubric` 反复问「事件是否已发生」，累加命中次数，达到 `countThreshold`（或到 deadline）即返回。它绝不 kill、重试或派发任何东西 —— 见 [Monitor](#monitor)。 |
-
-## Usage
-
-一次调用、一份 `material`，两种**互斥**模式择一（同时给或都不给都报错）。
-
-`material` 有**四种形态**；后三种是引用式，**永不进你的上下文**：
-
-| 形态 | 何时用 |
-|---|---|
-| 纯字符串 | 材料小且本就在上下文里 |
-| `{ file: { path, startLine?, endLine? } }` | 材料是工作区文件（1-based 闭区间）。单文件超上限是**报错**，绝不截断 |
-| `{ glob: { pattern, limit? } }` | 一批文件。总量超上限是**截断**，由 `coverage.truncated` / `coverage.truncatedBy` 如实报告 —— 截断的材料绝不当完整材料用 |
-| `{ tool: { name, arguments? } }` | 跑**另一个**工具并判它的**原始输出**，且不把输出拉进你的上下文。插件在进程内委托（**始终**带 `agent` 与 `parent`）、把原始输出**无条件**转储成文件，并回传 `material.spillPath` / `bytes` / `fullBytes` / `truncated`（进程型工具另带 `exitCode`）。委托给本插件自己的工具（`decision`、`monitor`）会被拒 —— 宿主自己没有递归护栏 |
-
-**批量（batch）** —— 一条共享判据判 N 项，判据**只写一次**：
-
-```json
-{
-  "material": "Our checkout has returned 500 errors since 9am. The payments page shows a generic error and no orders go through.",
-  "rubric": "Is this ticket a payment failure that needs a refund?",
-  "type": "noul",
-  "items": ["ticket 12", "ticket 13", "ticket 14"]
-}
-```
-
-**异质（mixed）** —— 同一份材料上问多个不同问题，每题自带 `criteria`：
-
-```json
-{
-  "material": "Our checkout has returned 500 errors since 9am. The payments page shows a generic error and no orders go through.",
-  "questions": [
-    { "name": "label", "type": "choice",
-      "instructions": "Which label fits this ticket?",
-      "criteria": { "billing": "Payments and refunds", "bug": "Software errors",
-                    "account": "Login and account access" } },
-    { "name": "refund", "type": "noul",
-      "instructions": "Is the customer requesting a refund?" },
-    { "name": "urgency", "type": "score",
-      "instructions": "How urgently does this ticket need a response?",
-      "criteria": ["Routine: no time pressure",
-                   "Soon: a customer is inconvenienced",
-                   "Immediate: a critical service is unavailable"] }
-  ]
-}
-```
-
-`rubric` 只写一次，wire 层会替模型逐题重复，你不必按项抄。`choice` / `score` 的标签集也只写一次：
-批量模式放**顶层** `criteria`，异质模式放每题里；`noul` 不接受任何 `criteria`，异质模式里出现
-顶层 `criteria` 会报错。
-
-上面那次异质请求的渲染结果 —— 每条结果一行，随后是 `coverage`、`material`、`cost`、`notes`：
-
-    label    choice  bug  p={bug=0.9648, account=0.0293, billing=0.0059}  conf=0.847
-    refund   noul    P(true)=0.5045
-    urgency  score   Soon  p={1=0.7369, 2=0.1933, 0=0.0698}  conf=0.337
-    覆盖: requested=3 answered=3 batches=1 truncated=false failed=0 aborted=false
-    cost: model=tev1:0.8b input_tokens=796 body=682B wall=97ms escalated=false attempts=1
-    模型选择：tev1:0.8b（fits-default）。
-
-这些行的**形状**由渲染层（`lib/render.js`）固定；`noul` 刻意只打 `P(true)` —— `results[].value` 里的
-布尔是阈值化产物，打出来会让人把概率读成判定。上面的概率与标签取自早前在本机 `tev1:0.8b` 上对同一
-工单的实测分布；`coverage` / `cost` 两行的数字是**示意值** —— 本次改动换了 wire 形状，字节数与
-`input_tokens` 请在你自己的机器上重测。
-
-## Question types
-
-| Type | Criteria | `results[]` 项 |
+| 工具 | 回答什么 | 典型用法 |
 |---|---|---|
-| `choice` | 2–255 个带描述的具名选项（`criteria` 对象） | `value` = 最可能的选项；`probabilities` = 选项 → 概率；带 `confidence` |
-| `noul` | 可选 `{"false": ..., "true": ...}` 描述；**不接受 `criteria`**（批量模式下给了会被拒） | `value` = 布尔（`P(true) >= 0.5`）；`probabilities` = `{ true, false }`；**无** `confidence`（上游不返回） |
-| `score` | 2–10 条由低到高排序的描述（`criteria` 数组） | `value` = 选中的档位标签；`probabilities` = 档位下标（0..N-1）→ 概率；带 `confidence` |
+| `decision` | 一份判据判 1–64 项，或一次问最多 64 个不同问题 | 筛列表、分类工单、路由请求、排序候选、「这段日志是不是失败？」 |
+| `monitor` | 反复采样同一个源，直到判据成立 | 等构建结束、等某行出现、等作业失败 |
 
-`score` 的概率加权均值不再作为数字返回，但你可用 `probabilities` 复算 `Σ index × p`。
-`confidence` 是**分布集中度** `1 - H(p)/ln N`，**不是**校准正确率。`confidence` 低于 `minConfidence`
-（或缺失）的项会被列进 `notes[]` 的一行 —— 这是**旗，不是过滤器**：没有任何答案被删除、改写或拒绝。
+判定跑在**你自己的 Ollama**（`/v1/systemone`）上：不经过云服务，材料也不必进入对话上下文。
 
-渲染时 `noul` 只打 `P(true)`，`choice` / `score` 打标签 + 降序概率。
+## 为什么值得用
 
-## Monitor
+- **天然省钱**：判据只发**一次**，一次调用判最多 64 项；逐项循环才是昂贵的反模式。
+- **材料不进上下文**：传工作区文件、glob 或另一个工具的原始输出，你只读回答案。
+- **输出诚实**：每个答案是概率 + `confidence`；部分完成写进 `coverage`，插件做了什么写在 `notes`。
 
-`monitor` 是**探测式等待原语，不是调度器**。你给它一个 `source` 和一条 `rubric`（「什么算事件已发生」）；它按间隔采样、每次问一次判定模型，并把每次命中都计入计数。
+## 环境要求
 
-```json
-{
-  "source": { "kind": "file", "path": "build.log" },
-  "rubric": "日志里是否已出现 BUILD SUCCEEDED 这一行？",
-  "intervalMs": 5000,
-  "timeoutMs": 120000
-}
+- 已启用本插件的 DSH 桌面版（见「安装」）。
+- 本地 Ollama 提供 decision 模型 —— 默认 `tev1:0.8b`，可用 `model` 单次覆盖。
+- 无需 API Key；判定本身不出网。
+
+## 安装
+
+开发期把工作区链进 profile，或启用已发布包，然后确认工具可见：
+
+```
+cordis_inspect_query(platform="host", provider="Tool", method="listTools")
 ```
 
-- **按探测结果计数（电平口径）**：每次判定命中就 +1。**没有去抖、没有冷却窗** —— `countThreshold: 3` 大致等于「连续三次探测都命中」（量级 `3 × intervalMs`）。`minGapMs`、`countMode`、`persistCount`、`resetCount` **不存在**，传了会被**显式拒绝**而不是静默忽略。
-- **时间戳只作记录**（`at`、`atIso`、`firstAt`、`lastAt`）—— 不参与命中判定。
-- `intervalMs` 会被抬到部署下限（`Config.minProbeIntervalMs`）；`timeoutMs` 是**自管** deadline（宿主不抢占阻塞调用），被抬到不小于 `intervalMs`。两处钳制都写进 `notes`。
-- `background: true` 注册宿主作业并立刻返回 `jobId`（之后用 `job_output` 读）。`notify: "inbox"` 在达到门槛时发通知（**仅 `background: true`**；前台传它会被当场拒绝），带合并 + 每分钟上限 + 唤醒预算 —— inbox 自身没有任何背压。
-- **空源立即返回**：`samples: 1`、`emptySource: true`、`hit: false` —— 不调模型、也不等 deadline；`events.types` 按固定词表校验，拼错即 `source_invalid`。
-- `source.kind` 取 `job` / `file` / `glob` / `command` / `events` 之一。`file` 与 `glob` 走**与 `decision` 同一个 reader**（工作区相对、同一道 containment 闸）；`command` 走插件自己的上游管道（与 `decision` 的 `material.tool` 同一条）：`argv[0]` 选解释器（`pwsh`/`powershell`、`git_bash`/`bash`/`sh`/`zsh`），其余**按空格拼接**、解释器自身前导标志（`-c`/`-lc`/`-Command`/`-NoProfile`…）会被剥掉 —— **带空格的参数要自己加引号**。`events` 读插件的作业事件环形缓冲（`job.registered` / `job.settled` / `job.completed` / `job.failed` / `job.killed` …），没有缓冲时退到本会话**当前**作业列表。
-- **命中只通知**。它绝不 kill、重试、派发或取消任何东西 —— 那由你决定。计数只在内存：每次调用从 0 起算，宿主重启即丢。
-- **不适合**需要多轮推理、或候选要边想边发现的复杂目标 —— 它只回答你**现在就能写清**的有界问题。
+随包技能 `decision-usage` 与工具一起注册，写全了每个参数，按需加载。
 
-前台调用返回 `hit` / `count` / `countThreshold`、各时间戳、命中那次采样的**有界尾部**（`evidence`，上限 1024 B），以及 `cost` / `coverage` / `notes`。
+## 快速开始
+
+```jsonc
+// 1) 筛列表：一份判据判 N 项
+{ "material": "<列表或其上下文>", "rubric": "This is a bug report?",
+  "items": ["app crashes on save", "please add dark mode"], "type": "noul" }
+
+// 2) 对同一个文件问不同的问题
+{ "material": { "file": { "path": "build.log", "startLine": 1, "endLine": 200 } },
+  "questions": [
+    { "name": "ok", "type": "noul", "instructions": "Did the build succeed?" },
+    { "name": "why", "type": "choice", "instructions": "What failed?",
+      "criteria": { "compile": "compile error", "test": "a test failed", "env": "missing dependency" } }
+  ] }
+
+// 3) 判另一个工具的输出，而不把它读进上下文
+{ "material": { "tool": { "name": "git_bash", "arguments": { "command": "npm test" } } },
+  "rubric": "Did the test suite pass?" }
+
+// 4) 等后台作业结束，并让插件通知你
+{ "source": { "kind": "job", "id": "<jobId>" },
+  "rubric": "Did the job finish successfully?", "background": true, "notify": "inbox" }
+```
+
+## `decision`：一次调用，一种模式
+
+给 `material`，再加**恰好一种**模式：
+
+| 模式 | 形状 | 含义 |
+|---|---|---|
+| 批量 | `rubric` + `items` + `type`（+ `criteria`） | 一份共享判据，逐项独立判定 |
+| 混合 | `questions` | 对同一份材料问最多 64 个不同问题 |
+
+| 参数 | 必填 | 说明 |
+|---|---|---|
+| `material` | 是 | 内联字符串 / `{file}` / `{glob}` / `{tool}` |
+| `rubric` | 批量 | 唯一共享判据；线格式会替模型重复它 |
+| `items` | 批量 | 1–64 个自包含的短对象 |
+| `questions` | 混合 | 1–64 个 `{name, type, instructions, criteria?}` |
+| `type` | 批量 | `choice` / `noul` / `score`（混合模式逐题给） |
+| `criteria` | choice/score | 标签集只写一次：批量走顶层，混合走每题 |
+| `depth` | 否 | `quick`（不升档不分批）、`normal`（默认）、`deep`（可切块） |
+| `model` | 否 | 固定模型；关闭容量选择与升档 |
+
+**材料四形态**：内联文本 · `{ file: { path, startLine?, endLine? } }` · `{ glob: { pattern, limit? } }` · `{ tool: { name, arguments? } }`。工具输出**不进上下文**，全文落盘、路径回传为 `material.spillPath`；`tool` 不能与 `file`/`glob` 同时给，插件自身工具会被拒。
+
+**读结果**：`results[]`（`id`/`type`/`value`/`probabilities?`/`confidence?`）· `coverage`（`requested`/`answered`/`batches`/`truncated`/`truncatedBy`/`failed`/`aborted`）· `cost`（`model`/`inputTokens`/`bodyBytes`/`wallMs`/`escalated`/`attempts`）· `notes`（首行是选档结论）。
+
+`noul` 返回**数值**（0.475 = 47.5% 是）；`score` 落在 0..N-1 尺度；`choice` 返回所选标签。`confidence` 是分布集中度，**不是正确率** —— 当 `notes` 点名低置信项时，改读 `probabilities` 而不是标签。
+
+## `monitor`：等一个事件
+
+按间隔采样同一个源、每次问同一个判据、累计命中，达到 `countThreshold`（或 deadline）返回。它**绝不** kill、重试或取消任何东西。
+
+| 采样源 | 允许的键 | 读什么 |
+|---|---|---|
+| `job` | `id?`、`select?`（`newest`/`oldest`）、`jobKind?` | 后台作业输出（缺省看本会话最新） |
+| `file` | `path`、`startLine?`、`endLine?` | 工作区相对文件 |
+| `glob` | `pattern`、`limit?` | 命中文件拼接 |
+| `command` | `argv` | 复用插件上游管道重跑宿主命令 |
+| `events` | `types`、`limit?` | 作业事件环形缓冲（无缓冲时退到当前作业列表） |
+
+参数：`rubric`（必填）· `source`（必填）· `type`（仅 `noul`）· `hitThreshold`（0.5）· `tailBytes`（4096，上限 65536）· `mode`（`once`|`continuous`）· `intervalMs`（5000）· `timeoutMs`（120000）· `countThreshold`（1）· `background` · `notify` · `coalesce` · `maxNotificationsPerMinute`（6）。
+
+- **空源立即返回**：`samples: 1`、`emptySource: true`、`hit: false` —— 不调模型、也不等 deadline。
+- **后台**：`background: true` 立刻返回 `jobId`，用 `job_output` 读（读一次即消耗）。`notify: "inbox"` 命中时发通知，且**必须**是后台调用。
+- **`command` 的 argv**：`argv[0]` 选解释器（`pwsh`、`git_bash`/`bash`/`sh`/`zsh`）；解释器标志会被剥掉；**带空格的参数要自己加引号**。
+- **`events.types`** 按固定词表校验（`job.registered`、`job.stopping`、`job.output`、`job.progress`、`job.settled`、`job.completed`、`job.failed`、`job.killed`、`job.removed`、`job.running`、`job.unknown`），拼错报 `source_invalid`。
 
 ## Configuration
 
@@ -191,86 +159,39 @@
 用裸 `id`、**不带 `insert`**。
 上表默认值取自 `lib/tool.js` 的 `Config`。
 
-## Known limitations
+## 常见问题
 
-1. **`clef` 系缺陷已于 2026-10-12 复测消失。** 原先在 Ollama 0.35.1 上任何请求都报
-   `Clef: non-finite logit`；在 **0.40.3** 上复测（且模型文件被重拉过），`clef-flash:latest`、
-   `clef:latest`、`nimble:latest` 三型全部返回 200，两个 `clef` 现已声明 `vision`。
-   **修复来源无法单一归因**（Ollama 版本与模型文件两者都变了）。
-   ⚠️ **2026-10-15 状态再变**：Ollama 升到 **0.40.4** 后，旧格式模型会被拒（`was downloaded
-   in a format that is no longer supported`）；当日 16:08–18:0x 依次重拉
-   `nimble:latest`/`clef-flash:latest`/`clef:latest` 之后，**6 个 decision 模型全部恢复可用**。
-   ⇒ **模型可用性随重拉瞬变，任何「可用/不可用」的陈述都必须现测**。
-   **但本扩展没有暴露图片输入**：没有 `images` 参数、也没有路径式读图 —— 上游 `/v1/systemone` 本身接受
-   `images`（base64 PNG/JPEG/WebP，被该次请求的所有问题共享；本地整包上限 32 MiB 含 base64），
-   `clef` / `clef-flash` 也能判图，所以这是**本扩展的缺口、不是上游限制** —— 见 ADR-3。
-   `model_broken` 映射保留，作为上游回归的兜底。
-2. **更大不必然更对。** 同一题上 `tev1:0.8b` 给 `bug`（p=0.9648），而
-   `tev1:latest`（4.2B）给 `billing`（p=0.5710，`bug` 仅 0.3212）——
-   按题面看 `billing` 是更弱的答案。请按题实测选型。
-3. 首次调用含模型加载（本机实测：`tev1:0.8b` 冷 14.3 s、热 11.1 s；
-   `tev1:latest` 冷 15.7 s、热 8.0 s）。
-4. 无流式、无工具调用，一请求一响应。
-5. 服务端硬限：无图请求 64 KiB、64 题、**`choice` 2–255 个选项**（OpenAPI 明说该上限
-   依模型而异）与 **`score` 2–10 档** —— 这是**两条独立**的约束，不是同一个数。但真正
-   先撞上的往往更小：有效上下文是该模型自己的 `num_ctx`，不是架构声明的 context length。本机
-   `ollama show tev1:0.8b` 显示 `context length 262144`，而 `num_ctx = 8192`（2026-10-15
-   重拉后；此前是 2050）；按真实英技术散文实测（约 3.33 B/token），该上限约折合
-   `num_ctx / 3.33` 字节的 body，超出即返回 HTTP 400
-   `prompt 0 has <N> tokens; expected 1–<M> (input is never truncated)`，
-   映射为 `context_overflow` —— 输入**不会被截断**，也不会给出部分答案。
-   本插件的**默认**体积告警阈值是一个固定字节数（`LIMITS.softBodyBytes = 4096` B），
-   **刻意不跟随任何模型的 `num_ctx`**：它能在服务端拒绝**之前**响；越过它只在 `notes[]` 里
-   多一行归因，**不改变任何拒绝行为**；而**选档**阈值自本次改动起改为按「窗口 × 0.6 余量 ×
-   语言密度」现算（中文 2.32 / 英文 3.33 B per token，见 `lib/density.js`），本常量只在拿不到
-   窗口信息时兜底。权威守卫仍是服务端的 token 检查。
-   注意字节数只是**粗糙代理**：中日韩等密集文字与 ID 密集文本的 token/字节比
-   远差于 3.33，此时该阈值**保护不足**。
-6. **只解决「有界判定」。** 候选集合已知且有界的问题才归本插件；开放式生成、需要推理链、候选要边想边发现的情形，仍须交给生成式模型。
-7. **置信度门限只加旗，不是保证。** 低于所配 `minConfidence`（或 `confidence` 缺失）的答案会被列进 `notes[]` 的一行；**没有任何答案**被删除、改写或拒绝。默认 0.25 只在一份小样本上标定过（`tev1:0.8b`，4 题 × 6 个候选排列），而不同模型的 confidence 尺度差约一个量级 ⇒ **换模型必须重新标定**。跨会话调研里唯一那次顺序翻转发生在 `confidence = 0.357`，高于本阈值；且 `confidence` 是分布集中度而非正确率 —— **没被列进告警 ≠ 该答案可信**。
+| 现象 | 可能原因 | 处理 |
+|---|---|---|
+| `context_overflow` | 材料 + 问题超出模型窗口 | 用 `depth: "deep"` 切块、减小材料或减少问题数 |
+| 工具列表里没有 | 插件未在 profile 启用 | 链接进 profile 后重载 |
+| DSH 升级后 `ERR_MODULE_NOT_FOUND` | 工作区 `node_modules` 仍指向旧安装 | 在 DSH 内跑 `scripts/rebuild-node-modules.mjs`，再复跑测试 |
+| `monitor` 返回 `hit:false` 且 `errors:0` | 源为空，或 `types` 没匹配到 | 看 `emptySource`；`notes` 会写原因 |
+| `monitor` 返回 `errors: N > 0` | 读取或判定失败 | 看错误正文，渲染结果里也有 failed probes |
+| `source.kind=events` 报错 | 该组合下事件源不可用 | 能回落时会退到本会话当前作业列表 |
+| `invalid_request` / `mode_invalid` | 参数不合法 | 报错列出合法值；`mode_invalid` = 模式/数量/形态，`invalid_request` = 字段 |
 
-## Development
+## 边界与安全
 
-    npm run link-peers     # 软链宿主的 peer 包（不走网络）
-    npm test               # node --test "test/*.test.mjs"
-    node smoke/live.mjs    # 可选：打真实的本机 Ollama
+- 这些是**概率，不是证据**：不得当作正确性证据，也不得单独作为放行/拒绝的依据（那需要产物级证据）。
+- 工具**不得**决定路由，也**不得**作为任何 **fail-open / fail-closed** 策略的依据 —— 那属于确定性规则。
+- `tev1` 只返回概率、不返回文本；需要可读理由时换生成类模型。
+- 工具原始输出落到插件自建的临时目录（总上限 16 MiB，`spillDirCap`），路径随结果回传。
+- 判定全程本地，插件自身不发起云调用。
 
-`node --test test/` 在 Node 22 上**不可用** —— 目录形式会被当成模块路径。
-请用带引号的 glob。
+## 开发
 
-`smoke/live.mjs` 需要本机 Ollama 在跑，不参与 CI；它是开发装置，
-**刻意不进发布包**。
+```
+node --test test/*.test.mjs     # 全量套件
+node --check lib/*.js          # 语法门
+```
+
+改过 `lib/` 后，先在 DSH 里重载插件再下结论：宿主跑的是最后一次加载的快照。
 
 ## Licence
 
-MIT。见 LICENSE 与 THIRD_PARTY_NOTICES。
+MIT —— 见 [LICENSE](./LICENSE)。
 
-## 从旧版迁移（破坏性变更）
+## 从旧版迁移
 
-本版重建了工具面，**不提供兼容层** —— 下表的旧键不再作为参数接受、也不再出现在返回值里。要改的地方：
-
-| 旧 | 新 | 要不要动手 |
-|---|---|---|
-| `state` | `material`（字符串仍是合法形态之一） | 改名 |
-| `stateSource` | `material: { file: … }` / `{ glob: … }` | 改名 + 换形 |
-| `strategy` | `depth: 'quick' \| 'normal' \| 'deep'` | 改名 + 选档 |
-| `aggregate` | 删除（语义并入 `depth` 与自动分批） | 删掉 |
-| 共享判据在每条 `questions[].instructions` 里重复 | `rubric`（只写一次）+ `items` + `type` | 改用批量模式 |
-| 每个问题重复选项集 | 顶层 `criteria`（批量模式）；异质模式仍放每题 | 挪到顶层，只写一次 |
-| `questions[].instructions` | 语义不变，但批量模式下它不再承载共享判据 | 视模式 |
-| `answers[name]` | `results[]` —— `{ id, type, value, probabilities?, confidence? }` | 换读法 |
-| `chunks` | 删除（结果始终在 `results`，每项一条） | 换读法 |
-| `usage` / `state_bytes` / `body_bytes` | `cost`（`inputTokens` / `bodyBytes`） | 读 `cost` |
-| `body_warning` / `confidence_warning` | `notes[]`（字符串，原样打印） | 读 `notes` |
-| `source` | `material`（`{ source, bytes, descriptor? }`） | 读 `material` |
-| `plan` | `notes[]`（首行写明模型与选档原因） | 读 `notes` |
-| `escalated: { from, to, sticky }` | `cost.escalated`（布尔）+ `cost.attempts[]` | 读 `cost` |
-| `scan`（`failed` / `truncated` / `aborted` / `remaining`） | `coverage`（`requested` / `answered` / `batches` / `truncated` / `truncatedBy` / `failed` / `aborted`） | 读 `coverage` |
-
-另外：
-
-- `items` 与 `questions` **互斥**：同时给（`mode_conflict`）或都不给（`mode_missing`）都报错。
-- 扫描不再是参数：它是**只有** `depth: 'deep'` 才允许的内部行为；是否真的跑了由 `coverage` 如实报告，
-  且「逐块最大只是**定位线索**，不是文档级结论」这条不变。
-- 不变的部分：`model` 逃生口、提升的进程级粘滞、材料不进上下文的规则与工作区闸，以及上表所有 `Config` 键。
-- 本包还随带一个 **skill**：启用 `dsh-decision-tools/skill` 行即把 `decision-usage` 放进会话技能目录（随包 `cordis.patch.yml` 默认两行都启用）。
+v2 的顶层键（`state`、`answers`、`usage`、`strategy`、`aggregate` 等）已全部移除，改用 `material` + 一种模式。契约见 [docs/architecture-current.md](./docs/architecture-current.md)，用例见 [docs/use-cases.md](./docs/use-cases.md)。
