@@ -12,7 +12,7 @@ import {
 import { valueSchemaSpecToJsonSchema, validateJsonSchemaValue } from '@deepseek-ai/dsh-tools';
 import { MONITOR_LIMITS, validateMonitorArgs, DecisionValidationError } from '../lib/validate.js';
 import { DecisionSourceError } from '../lib/source.js';
-import { apply, Config } from '../lib/index.js';
+import { applyAll as apply, Config } from './helpers/apply-all.mjs';
 
 /**
  * 宿主自己的 output 校验路径：`defineTool` 用 `valueSchemaSpecToJsonSchema` 归一 output.schema，

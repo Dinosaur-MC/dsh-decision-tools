@@ -1,7 +1,7 @@
 # dsh-decision-tools — 现状盘点（架构 / 功能 / 接口）
 
-> 快照时点：代码 HEAD 2026-10-18（本轮三人交叉审查修复后）· 套件 **374/374 绿** · 工作树干净（本轮文档提交在其上）。已过一轮三人交叉对抗复审（task-12/13/14）与 Lead 终检、四轮修复（`3475758` / `588015d` / `5dba57d`+`2540e30` / `a0ad872`）；其后新增 Monitor 与上游委托管道（`b1485e6`→`fcc1d86`），修掉一条真机 P0（`7a3c104`，见 §6 #22），并由 task-31 给 `decision` 补了同类宿主校验守卫（`b55b942`），本文已回填。
-> 本文描述 **v3 现状**（as-is）：`decision` 工具面为 material/rubric/items/questions/type/criteria/depth/model 八键，输出统一五键；同时注册第二个模型可见工具 `monitor`。
+> 快照时点：代码 HEAD 2026-10-18（本轮三人交叉审查修复后）· 套件 **422 例**（421 pass / 1 skip / 0 fail） · 工作树干净（本轮文档提交在其上）。已过一轮三人交叉对抗复审（task-12/13/14）与 Lead 终检、四轮修复（`3475758` / `588015d` / `5dba57d`+`2540e30` / `a0ad872`）；其后新增 Monitor 与上游委托管道（`b1485e6`→`fcc1d86`），修掉一条真机 P0（`7a3c104`，见 §6 #22），并由 task-31 给 `decision` 补了同类宿主校验守卫（`b55b942`），本文已回填。
+> 本文描述 **v3 + 四行/GUI 现状**（as-is）：`decision` 工具面为 material/rubric/items/questions/type/criteria/depth/model 八键，输出统一五键；同时注册第二个模型可见工具 `monitor`。
 
 ## 0. 一句话
 
@@ -14,42 +14,48 @@
 
 ### 1.1 装配（composition）
 
-两个独立插件行（`cordis.patch.yml` 的 `- insert:` 块）：
+四个独立插件行（`cordis.patch.yml` 的 `- insert:` 块）：
 
 | 行 | 包入口 | `inject` | 作用 |
 |---|---|---|---|
-| `decision-tools-tool` | `dsh-decision-tools`（`lib/index.js` → `tool.js`） | `['tools','fs','skills']` | 注册模型可见工具 `decision` 与 `monitor`（后者由 `lib/monitor-tool.js` 提供） |
+| `decision-tools-plugin` | `dsh-decision-tools`（`lib/index.js`） | `[]` | 核心行：发布共享模型/运行时配置；裸包名承载 `dsh.client` 与 `lib/browser.js` 浏览器半 |
+| `decision-tools-decision` | `dsh-decision-tools/decision`（`lib/decision-entry.js`） | `['tools','fs','skills']` | 只注册 `decision` 工具 |
+| `decision-tools-monitor` | `dsh-decision-tools/monitor`（`lib/monitor-entry.js`） | `['tools','fs','jobs','agents']` | 只注册 `monitor` 工具 |
 | `decision-tools-skill` | `dsh-decision-tools/skill`（`lib/skill.js`） | `['skills']` | 注册随包 skill `decision-usage` |
 
 - 无运行时依赖；peer 依赖 `dsh-tools` / `dsh-skill` / `cordis` / `schemastery`（`package.json`）。
 - 打包白名单：`lib/**/*.js`、`assets/**`、`cordis.patch.yml`、两份 README、`LICENSE`、`THIRD_PARTY_NOTICES`；`npm pack --dry-run` 实测 **24 files / 120.3 kB**（unpacked 341.3 kB；`docs/`、`test/`、`smoke/` 在 git 里被跟踪但**不入包**）。
 - 运行态通过 profile 的 `link:` symlink 指向工作区 ⇒ 磁盘代码即运行代码，**改码后要重载宿主**才生效。
 
-### 1.2 模块图（20 个模块 / 6700 行，`wc -l lib/*.js` 实测于 2026-10-18 代码态）
+### 1.2 模块图（25 个模块 / 7510 行，`wc -l lib/*.js` 实测于 2026-10-18 代码态）
 
 | 模块 | 行 | 职责 |
 |---|---|---|
-| `tool.js` | 1333 | **装配与编排中枢**：参数解析、编排（分批 / 三档 depth / 内部扫描）、输出五键与渲染接线；**注册两个工具**（`decision` 与 `monitor`）并把同一 reader 注入 monitor |
+| `tool.js` | 1311 | 装配与编排中枢：decision/monitor 两条工具行共用的引擎（参数解析、分批 / depth 三档 / 内部扫描、输出五键与渲染接线）；source reader 由两条行各自创建 |
 | `monitor.js` | 988 | Monitor 内核：五类采样源适配、探测循环、按探测结果计数、前台 deadline/取消、后台作业注册与进度 |
-| `validate.js` | 849 | 校验层：`LIMITS` / `MONITOR_LIMITS`、两模式互斥、material 归一、depth 解析、逐题校验、`analyzeBody` 体积归因、`validateMonitorArgs` / `validateUpstream` |
-| `pipe.js` | 525 | 上游委托管道：`runUpstream`（**同时带 agent 与 parent**）、原始输出提取、**无条件**转储 `spillWrite`、白名单读取器、委托深度上限 |
-| `monitor-tool.js` | 580 | `monitor` 的模型可见面：紧凑方言参数契约、**全函数** render（返回内容块数组）、注册 |
-| `source.js` | 361 | 引用式材料：描述符校验、行范围切片、`chunk` 分块、glob 匹配器 |
-| `client.js` | 346 | HTTP 层：`callSystemOne`、错误分类（含溢出与 **fetch blocked port** 分支）、`SystemOneError` |
-| `escalate.js` | 328 | 阶梯、选档、单飞、容量分派 `selectByCapacity`、终态 `describeExhausted` |
-| `render.js` | 193 | 把结果渲染成给模型看的文本（**零 import** 的纯函数） |
-| `notify.js` | 178 | 通知策略：合并窗、限频、唤醒预算、投递（**绝不调用 `agent.cancel`**） |
-| `parameters.js` | 173 | 模型可见参数契约（八键）+ 常驻 `TOOL_DESCRIPTION` |
-| `ollama.js` | 163 | 本地 Ollama 模型发现（`/api/tags` + `/api/show`）：名称/上下文长度/参数量；`formatLadder` 生成可粘进 `Config.ladder` 的片段 |
-| `scan.js` | 151 | 分块扫描编排、`MAX_CONCURRENCY`、聚合 `aggregateNoul` |
-| `event-log.js` | 158 | `monitor` 的 `events` 源生产者：定长环形缓冲 + 从 `ctx.jobs` 事件流映射 `job.<status>`（只读不写、故障隔离） |
-| `density.js` | 88 | **语言密度层**：CJK 占比 → 2.32 / 3.33 B per token，`softBytesFor(窗口 × 0.6 × 密度)` |
+| `validate.js` | 900 | 校验层：LIMITS / MONITOR_LIMITS、两模式互斥、material 归一（含 file/glob 字符串简写）、depth 解析、逐题校验、criteria 归一（choice string[] / score {min,max}）、analyzeBody、validateMonitorArgs / validateUpstream |
+| `pipe.js` | 525 | 上游委托管道：runUpstream（同时带 agent 与 parent）、原始输出提取、无条件转储 spillWrite、白名单读取器、委托深度上限 |
+| `monitor-tool.js` | 580 | monitor 的模型可见面：紧凑方言参数契约、全函数 render（返回内容块数组）、注册 |
+| `source.js` | 361 | 引用式材料：描述符校验、行范围切片、chunk 分块、glob 匹配器 |
+| `client.js` | 346 | HTTP 层：callSystemOne、错误分类（含溢出与 fetch blocked port 分支）、SystemOneError |
+| `escalate.js` | 328 | 阶梯、选档、单飞、容量分派 selectByCapacity、终态 describeExhausted |
+| `render.js` | 193 | 把结果渲染成给模型看的文本（零 import 的纯函数） |
+| `notify.js` | 178 | 通知策略：合并窗、限频、唤醒预算、投递（绝不调用 agent.cancel） |
+| `parameters.js` | 183 | 模型可见参数契约（八键，含 material 简写分支）+ 常驻 TOOL_DESCRIPTION |
+| `ollama.js` | 163 | 本地 Ollama 模型发现（/api/tags + /api/show）：名称/上下文长度/参数量；formatLadder 生成 Config.ladder 片段 |
+| `scan.js` | 151 | 分块扫描编排、MAX_CONCURRENCY、聚合 aggregateNoul |
+| `event-log.js` | 158 | monitor 的 events 源生产者：定长环形缓冲 + 从 ctx.jobs 事件流映射 job.<status>（只读不写、故障隔离） |
+| `density.js` | 88 | 语言密度层：CJK 占比 → 2.32 / 3.33 B per token，softBytesFor(窗口 × 0.6 × 密度) |
 | `skill.js` | 88 | 注册随包 skill（provider、frontmatter 解析、资产定位） |
-| `wire.js` | 76 | **线格式唯一产地**：`WIRE_TYPES`、`toWireRequest`（判据写在材料之后） |
-| `plan.js` | 73 | 决策表：`planAction`（send/scan/escalate/fail）—— **depth=deep 分块的唯一入口** |
-| `deliver.js` | 43 | 通知的最后一跳：`deliverNotice(agents, mode, payload, info)`（followup/inject 二分、绝不 cancel、失败静默） |
-| `index.js` | 6 | 入口再导出 |
-
+| `wire.js` | 76 | 线格式唯一产地：WIRE_TYPES、toWireRequest（判据写在材料之后） |
+| `plan.js` | 73 | 决策表：planAction（send/scan/escalate/fail）—— depth=deep 分块的唯一入口 |
+| `deliver.js` | 43 | 通知的最后一跳：deliverNotice(agents, mode, payload, info)（followup/inject 二分、绝不 cancel、失败静默） |
+| `index.js` | 42 | 核心行入口：发布共享模型/运行时配置；裸包名承载 dsh.client 与浏览器半 |
+| `browser.js` | 570 | 浏览器半：Plugins 页三个 Configure 表单（plugins.row.config）、locale / CSS、staged save + revision fence；缺 React/primitives 时安静降级 |
+| `config-bus.js` | 83 | 共享活配置总线：核心行发布 baseUrl/defaultModel/timeoutMs/keepAlive/escalationEnabled/ladder/toolName/monitorToolName/spillDirCap 的句柄，工具行每次读取 |
+| `configs.js` | 52 | 三条行的 Config schema：SharedConfig / DecisionConfig / MonitorConfig（GUI 字段 .volatile()） |
+| `decision-entry.js` | 15 | decision 行入口：Config + 只注册 decision 工具 |
+| `monitor-entry.js` | 15 | monitor 行入口：Config + 只注册 monitor 工具 |
 依赖方向：`tool.js` → 全部纯模块；纯模块之间无循环依赖，`wire.js`/`render.js` 零 import。接触 `ctx` 的**不止** tool.js：`monitor.js` 只在 `createSources` 里经注入的 ctx 触碰 `jobs`/`sessions`，`pipe.js` 只碰 `ctx.tools`，`monitor-tool.js` 只把 ctx 转交（注释里说明「本模块没有任何文件/glob 读取实现」）。
 
 ### 1.3 一次调用的数据流
@@ -250,7 +256,7 @@ JSON Schema 的 `required` **只有 `material`**；模式内部必填由校验�
 
 ## 5. 测试与门禁
 
-- 套件 `node --test test/*.test.mjs` = **403 例**（2026-10-18 代码态实跑核对）= 顶层 `test(` 声明 **379** 条（`grep -c '^test('` 逐文件相加）+ 循环内生成的表驱动用例 **24** 条（§4.9 锚点 10 + skill 锚点 14）；共 **25** 个测试文件（`ls test/*.test.mjs | wc -l` = 24）；另有装置 `test/fake-ollama.mjs`（不匹配 `test/*.test.mjs` 这个 glob，不算例）。
+- 套件 `node --test --experimental-test-isolation=none "test/*.test.mjs"` = **422 例**（2026-10-18 代码态实跑核对；421 pass / 1 skip / 0 fail）= 顶层 `test(` 声明 **398** 条（`grep -c '^test('` 逐文件相加）+ 循环内生成的表驱动用例 **24** 条；共 **30** 个测试文件（`ls test/*.test.mjs | wc -l` = 30）；另有装置 `test/fake-ollama.mjs`（不匹配 `test/*.test.mjs` 这个 glob，不算例）。
 - **墙钟纪律（精确版）**：**不得用真实计时派生判定**（如按 deadline 计数、按耗时决定分支）。deep 的多轮重切预算用可注入时钟 + 纯函数 `scanRoundBudget` 断言（曾有一条用服务端忙等 60 ms 的用例在并行负载下抖红，已重写）。**已登记的例外**：`test/client.test.mjs` 用 `Date.now()` 做 `elapsed < 2000 ms` 的粗上限兜底、`test/escalate.test.mjs` 有一处 10 ms 等待用于让承诺沉降 —— 这两处不派生判定结果，保留并登记（见 §6 #21）。
 - 守卫：§4.9 判别性锚点、skill 锚点（十四条 v3 读法 + 词表负例）、README 配置表与 `Config` 投影一致（**22 键**，两份 README 的键集与顺序 == `Config.dict`）、注入预算上限（`decision` description ≤1900 / 参数 schema ≤3600 / skill ≤8000；`monitor` description ≤1900 / 参数 schema ≤3600）、`COMPANION_SKILL === SKILL_NAME`、缺 skill 拒服务、首次交付 skill 正文；Monitor/管道新增：**零真实墙钟**（clock/sleep/decide/deliver 全注入）、通知三件套（合并 + 限频 + 唤醒预算）、`material.tool` 双形状对齐（模型面 `{name,arguments}` ↔ 校验层 `{tool,arguments}`）、禁自递归（名单含生效的 `toolName` 与 `monitorToolName`）、模型可见文案词表（v2 参数名负例，含 `stateSource`）、**output schema 与返回值键集一致**（monitor 侧 `7a3c104`、decision 侧 `b55b942`，两边都用宿主的 `valueSchemaSpecToJsonSchema` + `validateJsonSchemaValue` 钉住）。
 - 另有：`node --check lib/*.js`、CR 字节 = 0、变异自检（累计 30+ 定点变异全杀）、隔离实例真机冒烟。

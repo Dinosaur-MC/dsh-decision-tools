@@ -1,34 +1,49 @@
-# dsh-decision-tools — 把本机 Ollama 的 System One 决策能力注册成模型工具。
+# dsh-decision-tools — 四行：核心/模型、decision、monitor、skill。
 #
 # 行说明：
-#   decision-tools-tool — 注册 `decision` 工具（模型可见名由配置项 toolName 决定），
-#     本插件不依赖平台，任何环境都注册。使用指引在工具 description 里，不注册 prompt 段（ADR-5）。
+#   decision-tools-plugin — 核心行。裸包名是刻意的：Web 客户端只从裸包名行的
+#     package.json 读取 dsh.client + exports["./client"]，浏览器半（Plugins 页的
+#     Configure 表单）只能由这一行携带。核心行不注册模型工具；它把共享模型配置
+#     （baseUrl / defaultModel / timeoutMs / keepAlive / escalationEnabled / ladder）
+#     发布到 lib/config-bus.js，并持有 toolName / monitorToolName / spillDirCap。
+#     核心行关闭时两个工具仍用内置默认值工作，但 Plugins 页的 Configure 入口消失。
 #
-# 本行**不需要任何配置**，故下面没有 `config:` 键 —— Config 的键全部走插件默认值
-# （键表见 README / README.zh.md 的 Configuration 小节；它与 Config 的投影对齐由测试守卫把守）。
+#   decision-tools-decision — 只注册 decision 工具；Config 只含判定行为与 modelOverride。
+#   decision-tools-monitor  — 只注册 monitor 工具；Config 只含探测/通知默认值与 modelOverride。
+#   decision-tools-skill    — 随包 decision-usage skill，保持独立启停。
 #
-# 可选 per-machine 覆盖（写在你自己的 patch 层里）—— **覆盖既有行**要用「裸 `id` + 无 `insert`」：
-#   - id: decision-tools-tool
-#     config:
-#       baseUrl: 'http://localhost:11434'
-#       defaultModel: 'tev1:0.8b'
-#       timeoutMs: 180000
-#       toolName: 'decision'
-#       keepAlive: '30m'
+# 开关：Plugins 页的行开关就是唯一启停机制；没有 decisionEnabled/monitorEnabled 之类的
+# 第二层布尔开关。关掉一行只少该行的工具，其他行不受影响。
 #
-# 配置**必须写在行的 `config:` 键下**；把字段平铺在行上会被**静默忽略**（`EntryOptions` 只认
-# id/name/config/group/disabled/inject/intercept/isolate，且只有 `options.config` 会传给插件）。
-# patch 会**替换整行 config**（绝不深合并），故覆盖时必须重述该行用到的全部字段。
+# 配置写在行的 config: 键下（不是平铺在行上）；覆盖既有行用「裸 id + 无 insert」，
+# patch 会整块替换该行 config（不深合并）。
 #
-# 两种操作别混：`insert:` 是**新增行**（本 bundle 自己的 patch 就是这么注册的，见下）；
-# **覆盖既有行**用裸 `id`、**不带 `insert`**。
+# GUI 可改字段在 Config 里声明 .volatile()；保存后下一次工具调用生效，无需重启/重载行。
+# toolName / monitorToolName / ladder / spillDirCap 是注册期或高级 YAML 项，改后重载对应行。
 
 - insert:
-    # 主插件：注册 `decision` 工具。
-    - id: decision-tools-tool
+    - id: decision-tools-plugin
       name: 'dsh-decision-tools'
-    # 随包 Skill（ADR-10）：**独立入口**，缺技能注册表的组合里它不激活，而上面那行照常工作。
-    # v2 刻意**默认启用**（第一方 `dsh-skill-badge` 的惯例是默认 `disabled: true` 让部署显式选择，
-    # 这里不走那条过渡路：用法指引在 v2 里是功能件）。
+      # 可选共享模型覆盖（示例）：
+      #   config:
+      #     baseUrl: 'http://localhost:11434'
+      #     defaultModel: 'tev1:0.8b'
+      #     timeoutMs: 180000
+      #     keepAlive: '30m'
+
+    - id: decision-tools-decision
+      name: 'dsh-decision-tools/decision'
+      # 可选判定行为覆盖（示例）：
+      #   config:
+      #     modelOverride: 'tev1:0.8b'
+      #     defaultDepth: normal
+
+    - id: decision-tools-monitor
+      name: 'dsh-decision-tools/monitor'
+      # 可选探测/通知覆盖（示例）：
+      #   config:
+      #     modelOverride: 'nimble:latest'
+      #     minProbeIntervalMs: 1000
+
     - id: decision-tools-skill
       name: 'dsh-decision-tools/skill'

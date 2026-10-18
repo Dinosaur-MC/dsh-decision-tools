@@ -1,8 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { name, inject, Config, apply } from '../lib/index.js';
+import { name, inject } from '../lib/index.js';
+import { Config, applyAll as apply } from './helpers/apply-all.mjs';
 import { resolveSoftBodyBytes, resolveMinConfidence, collectLowConfidence, scanRoundBudget, OUTPUT_SCHEMA, COMPANION_SKILL } from '../lib/tool.js';
 import { SKILL_NAME } from '../lib/skill.js';
+import { name as decisionName, inject as decisionInject } from '../lib/decision-entry.js';
+import { name as monitorName, inject as monitorInject } from '../lib/monitor-entry.js';
 import { TOOL_DESCRIPTION } from '../lib/parameters.js';
 import { LIMITS } from '../lib/validate.js';
 import { toWireRequest } from '../lib/wire.js';
@@ -88,24 +91,29 @@ const ITEMS = (n, text = '甲') => Array.from({ length: n }, (_, i) => `${text}$
 /** 一遍真实注册（无 fs）。 */
 const register = (config = {}) => fakeCtx();
 
-test('插件导出形状与默认配置', () => {
+test('插件导出形状与默认配置（核心 + 两条工具行）', () => {
   assert.equal(name, 'decision-tools');
-  // `jobs`/`agents` 是**真机打出来的**：不声明时 monitor 的后台路径报
-  // `cannot get property "jobs" without inject`（Cordis 只对 `prop in fiber.inject` 解析服务），
-  // 而前台路径不受影响 —— 这类缺陷只有真机能暴露。
-  assert.deepEqual(inject, ['tools', 'fs', 'skills', 'jobs', 'agents'], '工具行硬依赖 skills/jobs/agents 服务');
+  assert.deepEqual(inject, [], '核心行只发布共享配置，不依赖宿主服务');
   assert.equal(typeof apply, 'function');
-  assert.deepEqual(Config({}), {
-    baseUrl: 'http://localhost:11434',
-    defaultModel: 'tev1:0.8b',
-    timeoutMs: 120000,
-    toolName: 'decision',
-    escalationEnabled: true,
-    escalationMaxAttempts: 3,
-    ladder: [],
-    decisionEnabled: true,
-    monitorEnabled: true,
-  });
+  // 两条工具行的服务依赖各自成立：decision 不要 jobs/agents，monitor 需要。
+  assert.equal(decisionName, 'decision-tools-decision');
+  assert.deepEqual(decisionInject, ['tools', 'fs', 'skills']);
+  assert.equal(monitorName, 'decision-tools-monitor');
+  assert.deepEqual(monitorInject, ['tools', 'fs', 'jobs', 'agents']);
+
+  const defaults = Config({});
+  assert.equal(defaults.baseUrl, 'http://localhost:11434');
+  assert.equal(defaults.defaultModel, 'tev1:0.8b');
+  assert.equal(defaults.timeoutMs, 120000);
+  assert.equal(defaults.toolName, 'decision');
+  assert.equal(defaults.monitorToolName, 'monitor');
+  assert.equal(defaults.escalationEnabled, true);
+  assert.equal(defaults.escalationMaxAttempts, 3);
+  assert.equal(defaults.defaultDepth, 'normal');
+  assert.deepEqual(defaults.ladder, []);
+  // 旧的双布尔开关已经删除：行开关是唯一启停机制。
+  assert.equal(Object.hasOwn(defaults, 'decisionEnabled'), false);
+  assert.equal(Object.hasOwn(defaults, 'monitorEnabled'), false);
 });
 
 test('Monitor / 管道的四个部署键：接受合法值、拒绝非法值（不设默认值，回落常量）', () => {

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdir, readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { apply, Config } from '../lib/index.js';
+import { applyAll as apply, Config } from './helpers/apply-all.mjs';
 import { TOOL_DESCRIPTION, PARAMETERS } from '../lib/parameters.js';
 import { renderAnswers } from '../lib/render.js';
 import { startFakeOllama } from './fake-ollama.mjs';

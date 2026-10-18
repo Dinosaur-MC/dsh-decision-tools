@@ -107,7 +107,7 @@ test('V3 类型只接受 choice / noul / score', () => {
   );
 });
 
-test('V4 choice 选项数 2–255（服务端按模型可放宽），且必须是对象', () => {
+test('V4 choice 选项数 2–255（服务端按模型可放宽）；对象或 string[] 简写', () => {
   const opts = (n) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`k${i}`, `desc ${i}`]));
   assert.doesNotThrow(() => validateRequest(base({ questions: [{ ...CHOICE_Q, criteria: opts(26) }] })));
   assert.doesNotThrow(() => validateRequest(base({ questions: [{ ...CHOICE_Q, criteria: opts(255) }] })),
@@ -120,7 +120,9 @@ test('V4 choice 选项数 2–255（服务端按模型可放宽），且必须�
   })));
   expectReject(base({ questions: [{ ...CHOICE_Q, criteria: opts(31) }], maxChoiceOptions: 30 }),
     /有 31 个选项，合法范围 2–30/);
-  expectReject(base({ questions: [{ ...CHOICE_Q, criteria: ['a', 'b'] }] }), /必须是「选项名 → 描述」的对象/);
+  assert.doesNotThrow(() => validateRequest(base({ questions: [{ ...CHOICE_Q, criteria: ['a', 'b'] }] })));
+  expectReject(base({ questions: [{ ...CHOICE_Q, criteria: ['a', 'a'] }] }), /重复/);
+  expectReject(base({ questions: [{ ...CHOICE_Q, criteria: ['a', ''] }] }), /非空字符串/);
 });
 
 test('V5/V6 score 必须是由低到高的字符串数组，长度 2–10（与 choice 的 255 无关）', () => {

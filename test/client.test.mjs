@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { callSystemOne, classifyOverflow, SystemOneError } from '../lib/client.js';
-import { apply, Config } from '../lib/index.js';
+import { applyAll as apply, Config } from './helpers/apply-all.mjs';
 import { overflowReply, startFakeOllama } from './fake-ollama.mjs';
 import { isFetchBlockedPort } from './helpers/fetch-ports.mjs';
 import { firstFreeBlockedPort, startHttpServerOnPort } from './helpers/http.mjs';

@@ -1,7 +1,7 @@
 {
   "name": "dsh-decision-tools",
-  "version": "0.2.0",
-  "description": "DSH agent tool for local Ollama System One decision models: classify, answer yes/no, and score against a rubric in one batched request.",
+  "version": "0.3.0",
+  "description": "DSH agent tools for local Ollama System One decision models: classify, answer yes/no, and score against a rubric in one batched request.",
   "keywords": ["dsh-plugin", "ollama", "decision", "system-one", "classification", "reranking"],
   "license": "MIT",
   "author": "Dinosaur_MC",
@@ -9,7 +9,10 @@
   "main": "lib/index.js",
   "exports": {
     ".": "./lib/index.js",
+    "./decision": "./lib/decision-entry.js",
+    "./monitor": "./lib/monitor-entry.js",
     "./skill": "./lib/skill.js",
+    "./client": "./lib/browser.js",
     "./package.json": "./package.json"
   },
   "files": [
@@ -27,6 +30,9 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
     }
   },
   "scripts": {

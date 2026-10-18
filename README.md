@@ -120,74 +120,65 @@ Parameters: `rubric` (required) · `source` (required) · `type` (`noul` only) �
 
 ## Configuration
 
+The plugin is four rows: a core row, a decision row, a monitor row and a skill row. Each row has its own switch in the Plugins page; the core/decision/monitor rows also have their own Configure page. GUI-editable fields are declared .volatile() and apply to the next call without reloading the row. toolName / monitorToolName / ladder / spillDirCap are registration-time or advanced YAML fields: edit them in cordis.patch.yml and reload that row.
+
+### Core row — decision-tools-plugin (shared model & runtime)
+
 | Key | Default | Meaning |
 |---|---|---|
-| `baseUrl` | `http://localhost:11434` | Ollama endpoint; a path prefix is preserved (`http://host/ollama` → `http://host/ollama/v1/systemone`) |
-| `defaultModel` | `tev1:0.8b` | model when a call omits `model` |
-| `timeoutMs` | `120000` | per-request budget, including cold model load |
-| `toolName` | `decision` | the name the model sees |
-| `keepAlive` | unset | passed through as `keep_alive`; unset uses the server default |
-| `softBodyBytes` | unset (falls back to `LIMITS.softBodyBytes`, 4096) | body size in bytes above which the result carries a size note in `notes[]` |
-| `bodyWarning` | unset (on) | `false` never emits the size note; unset or `true` keeps it on |
-| `minConfidence` | unset (falls back to `LIMITS.minConfidence`, 0.25) | `choice`/`score` entries whose `confidence` is below this — or missing — are named in a `notes[]` line; `0` disables the gate |
-| `maxChoiceOptions` | unset (falls back to `LIMITS.maxChoiceOptions`, 255) | Upper bound on `choice` option count. The OpenAPI spec notes *"The option limit depends on the model"*, so raise or lower this if your model differs. `score` is a separate, spec-fixed 2–10 and is **not** configurable. |
-| `escalationEnabled` | `true` | Automatic escalation to a bigger-context decision model on context overflow. Passing `model` on a call disables it for that call. |
-| `ladder` | unset (uses `DEFAULT_LADDER`) | Ordered `{ model, numCtx }[]` escalation candidates. Two deliberate exclusions: `clef:latest` (27B on 8 GB never returned within 300 s) and `nimble:latest` (its `num_ctx` 8194 is only 2 tokens above tev1's 8192, so it can never satisfy the capacity margin — a rung that is never selectable). Re-read `/api/show` after re-pulling; these are snapshots. |
-| `escalationMaxAttempts` | `3` | Maximum escalation attempts before failing with an actionable error instead of silently degrading. |
-| `scanFirstChunkBytes` | unset (uses `LIMITS.softBodyBytes`) | Byte budget for the first scan chunk; later chunks are re-cut from the server's own token numbers. |
-| `scanMaxChunks` | unset (uses `LIMITS.scanMaxChunks`) | Maximum chunks per scan; exceeding it returns a partial scan rather than failing. |
-| `scanMaxTotalBytes` | unset (uses `LIMITS.scanMaxTotalBytes`) | Cumulative byte cap per scan. |
-| `scanDeadlineMs` | unset (uses `LIMITS.scanDeadlineMs`) | Wall-clock budget per scan, independent of `timeoutMs`. |
-| `scanAggregate` | `none` | `any` adds a provisional max probability per `noul` question. Cross-chunk probabilities are not calibrated — never treat it as a decision. |
-| `minProbeIntervalMs` | unset (uses `MONITOR_LIMITS.minProbeIntervalMs`, 1000) | Lower bound for the `monitor` tool's probe interval: the model's `intervalMs` is raised to at least this. |
-| `notifyCoalesceWindowMs` | unset (uses `MONITOR_LIMITS.defaultNotifyCoalesceWindowMs`, 5000) | Window in which same-kind `monitor` notifications are coalesced — the inbox has no backpressure of its own. |
-| `maxNotificationsPerMinute` | unset (uses `MONITOR_LIMITS.defaultMaxNotificationsPerMinute`, 6) | Per-minute cap on `monitor` notifications. |
-| `spillDirCap` | unset (uses `DEFAULT_SPILL_MAX_BYTES`, 16 MiB) | Total byte cap for the pipe's own spill directory under the system temp area. |
-| `monitorToolName` | `monitor` | Model-visible name of the second tool (`monitor`). Set it if that name collides with another tool in your composition. |
-| `decisionEnabled` | `true` | Register the `decision` tool. `false` leaves `monitor` and the skill working; the tool simply does not exist for the model. |
-| `monitorEnabled` | `true` | Register the `monitor` tool. Independent of `decisionEnabled`, so either tool can be switched off on its own. |
+| `baseUrl` | http://localhost:11434 | Ollama endpoint; path prefixes are preserved; GUI-editable. |
+| `defaultModel` | tev1:0.8b | Model used when a tool row has no modelOverride; GUI-editable. |
+| `timeoutMs` | 120000 | Per-request budget, including cold model load; GUI-editable. |
+| `keepAlive` | unset | Passed as keep_alive; unset uses the server default; GUI-editable. |
+| `escalationEnabled` | true | Allow automatic escalation on context overflow; GUI-editable. |
+| `ladder` | unset (DEFAULT_LADDER) | Ordered {model,numCtx}[]; YAML only; reload the core row after editing. |
+| `toolName` | decision | Model-visible decision tool name; reload the decision row after editing. |
+| `monitorToolName` | monitor | Model-visible monitor tool name; reload the core row after editing. |
+| `spillDirCap` | unset (16 MiB) | Byte cap for the plugin's spill directory; YAML only. |
 
-`softBodyBytes` is silently clamped to `LIMITS.maxBodyBytes` (65536) — a threshold above
-that byte cap could never fire — and a threshold set above the model's **real** capacity
-(its `num_ctx`) silently makes the note useless; nothing inside the plugin can detect
-that, so the server's token check stays the authoritative guard. Since this release the
-**model-selection** thresholds are computed per call from the chosen window, the 0.6
-margin and the material's language density (Chinese 2.32, English 3.33 bytes/token — see
-`lib/density.js`); this constant is only the fallback used when no window is known.
+### decision row — decision-tools-decision
 
-`minConfidence` only ever **adds a flag**: every answer is returned unchanged, and the
-plugin never drops, rewrites or rejects one for being uncertain. `0` disables the gate
-(note the opposite reading of `softBodyBytes: 0`, which warns on every call), and values
-above `1` clamp to `1`. The 0.25 default was calibrated on one small local sample
-(`tev1:0.8b`, 4 questions × 6 candidate orderings); confidence scales differ by roughly an
-order of magnitude between models (measured 0.04–0.62 for `tev1:0.8b` against 0.77–0.99 for
-every 4B-and-above model on the same questions), so **re-calibrate per model** — and note
-that on those larger models the gate is **inert**: their confidence never falls below 0.25.
-It is not a safety guarantee: the single order-induced flip seen in cross-session research
-landed at `confidence = 0.357`, above this threshold, and `confidence` is a concentration
-measure, not calibrated accuracy. Related: the order effect itself turned out to be an
-**0.8B-only phenomenon** — across 6 candidate orderings, `tev1:latest` (4B), `clef-flash`
-(9.1B), `nimble` (9B) and `clef` (27B) returned identical labels on all 4 questions.
+| Key | Default | Meaning |
+|---|---|---|
+| `modelOverride` | unset (core default) | Blank uses the core defaultModel; GUI-editable. |
+| `defaultDepth` | normal | quick | normal | deep; used when the call omits depth; GUI-editable. |
+| `bodyWarning` | unset (on) | false suppresses size/text-shape notes; GUI-editable. |
+| `softBodyBytes` | unset (4096) | Body size above which notes[] carries a size note; 0 warns every call; GUI-editable. |
+| `minConfidence` | unset (0.25) | choice/score confidence below this (or missing) is named in notes[]; 0 disables; GUI-editable. |
+| `maxChoiceOptions` | unset (255) | Upper bound on choice options; GUI-editable. |
+| `escalationMaxAttempts` | 3 | Maximum escalation attempts; GUI-editable. |
+| `scanFirstChunkBytes` | unset (4096) | First scan chunk byte budget; GUI-editable. |
+| `scanMaxChunks` | unset (32) | Maximum chunks per scan; GUI-editable. |
+| `scanMaxTotalBytes` | unset (4 MiB) | Cumulative byte cap per scan; GUI-editable. |
+| `scanDeadlineMs` | unset (180000) | Wall-clock budget per scan; GUI-editable. |
+| `scanAggregate` | none | none | any; any adds a provisional cross-chunk max probability; GUI-editable. |
 
-Override in `cordis.patch.yml` by nesting the fields under the row's `config:` key. To
-**override the existing row**, use a bare `id` and **no `insert`**. Fields written
-**flat on the row** are silently ignored, and no warning is printed — the plugin just
-runs on its defaults.
+### monitor row — decision-tools-monitor
 
-    - id: decision-tools-tool
+| Key | Default | Meaning |
+|---|---|---|
+| `modelOverride` | unset (core default) | Blank uses the core defaultModel; GUI-editable. |
+| `minProbeIntervalMs` | unset (1000) | Lower bound for the monitor probe interval; GUI-editable. |
+| `notifyCoalesceWindowMs` | unset (5000) | Same-kind notice coalescing window; 0 disables coalescing; GUI-editable. |
+| `maxNotificationsPerMinute` | unset (6) | Per-minute notice cap; GUI-editable. |
+
+Override an existing row with a bare id and no insert; fields go under config. config is replaced wholesale, never deep-merged, so restate every field the row needs.
+
+    - id: decision-tools-plugin
       config:
         baseUrl: 'http://localhost:11434'
         defaultModel: 'tev1:0.8b'
         timeoutMs: 180000
-        toolName: 'decision'
         keepAlive: '30m'
+    - id: decision-tools-decision
+      config:
+        modelOverride: 'tev1:0.8b'
+        defaultDepth: normal
+    - id: decision-tools-monitor
+      config:
+        modelOverride: 'nimble:latest'
 
-`config` is replaced wholesale, never deep-merged, so an override must restate every
-field the row needs — the whole block above is the shape to copy, and the row's own
-keys are only `id`, `name`, `config`, `disabled`, `inject`, `intercept` and `isolate`.
-`insert:` is for adding a new row (this bundle's own patch does that); overriding an
-existing row uses a bare `id` with no `insert`.
-The defaults above are the ones declared in `lib/tool.js` (`Config`).
+The three Config schemas live in lib/configs.js.
 
 ## Troubleshooting
 

@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parameterSchemaSpecToJsonSchema } from '@deepseek-ai/dsh-tools';
 import { PARAMETERS, TOOL_DESCRIPTION } from '../lib/parameters.js';
-import { Config } from '../lib/tool.js';
+import { SharedConfig, DecisionConfig, MonitorConfig } from '../lib/configs.js';
 
 /** 随包 skill 的正文：§4.9 的使用指引允许住在它里面（按需加载），但必须在 description 或它之中一处。 */
 const SKILL_BODY = readFileSync(fileURLToPath(new URL('../assets/decision-usage/SKILL.md', import.meta.url)), 'utf8');
@@ -29,8 +29,12 @@ test('参数契约的结构不变量（DSL 的硬性要求）', () => {
   const reference = PARAMETERS.material.oneOf.find((branch) => branch.type === 'object');
   assert.equal(typeof reference.additionalProperties, 'boolean');
   assert.deepEqual(Object.keys(reference.properties), ['file', 'glob', 'tool']);
-  assert.equal(reference.properties.file.properties.path.required, true);
-  assert.equal(reference.properties.glob.properties.pattern.required, true);
+  assert.equal(reference.properties.file.oneOf.length, 2, 'file 接受字符串简写或对象');
+  assert.equal(reference.properties.glob.oneOf.length, 2, 'glob 接受字符串简写或对象');
+  const fileObject = reference.properties.file.oneOf.find((branch) => branch.type === 'object');
+  const globObject = reference.properties.glob.oneOf.find((branch) => branch.type === 'object');
+  assert.equal(fileObject.properties.path.required, true);
+  assert.equal(globObject.properties.pattern.required, true);
   assert.equal(reference.properties.tool.properties.name.required, true, 'tool 必须显式给工具名');
   assert.deepEqual(
     Object.keys(reference.properties.tool.properties),
@@ -38,7 +42,7 @@ test('参数契约的结构不变量（DSL 的硬性要求）', () => {
     'arguments 是被委托工具自己的参数面，故只做开放对象（不复制它的 schema）',
   );
   assert.equal(typeof reference.properties.tool.properties.arguments.additionalProperties, 'boolean');
-  for (const branch of [reference.properties.file, reference.properties.glob, reference.properties.tool]) {
+  for (const branch of [fileObject, globObject, reference.properties.tool]) {
     assert.equal(typeof branch.additionalProperties, 'boolean', 'object 节点必须显式声明 openness');
   }
 
@@ -129,14 +133,18 @@ for (const [point, label, anchor] of POINT_ANCHORS) {
  * 复述一份就等于把「改代码要同步改这里」变成新的漂移点。
  * `schemastery` 的 `dict` 保持 `z.object({...})` 的书写顺序，故顺序也可作为断言。
  */
-const AUTHORITATIVE_KEYS = Object.keys(Config.dict ?? {});
+const AUTHORITATIVE_KEYS = [
+  ...Object.keys(SharedConfig.dict ?? {}),
+  ...Object.keys(DecisionConfig.dict ?? {}),
+  ...Object.keys(MonitorConfig.dict ?? {}),
+];
 
 /** 配置表的识别锚点：表头行必须逐字命中它，且下一行是 Markdown 分隔行。 */
 const TABLE_HEADER = '| Key | Default | Meaning |';
 
 /** 对不齐时能直接改 README 的报错文本：文件名 + 期望的表头 + 缺/多/乱序三类差集。 */
 function inconsistency(file, detail) {
-  return `${file}: README 的 ## Configuration 表格键必须与 lib/tool.js 的 Config 投影一致`
+  return `${file}: README 的 ## Configuration 表格键必须与 lib/configs.js 的三条 Config 投影一致`
     + `（集合与顺序都要一致）。期望表头 "${TABLE_HEADER}"，后随 "|---|" 分隔行。`
     + `\n  权威键（Config.dict）：${AUTHORITATIVE_KEYS.join(', ')}\n  ${detail}`;
 }

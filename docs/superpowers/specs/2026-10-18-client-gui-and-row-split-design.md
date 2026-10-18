@@ -56,7 +56,7 @@
 
 ### 3.2 为什么核心行必须是裸包名
 
-DSH 的客户端模块发现按行的 name 解析包 package.json：裸包名（dsh-decision-tools）能解析到 dsh.client 与 exports["./client"]；子路径（dsh-decision-tools/decision）解析不到包清单，因此**不能承载浏览器半**。所有行页都必须由核心行的 lib/client.js 注册。
+DSH 的客户端模块发现按行的 name 解析包 package.json：裸包名（dsh-decision-tools）能解析到 dsh.client 与 exports["./client"]；子路径（dsh-decision-tools/decision）解析不到包清单，因此**不能承载浏览器半**。所有行页都必须由核心行的 lib/browser.js 注册。
 
 ### 3.3 关闭语义
 
@@ -67,7 +67,7 @@ DSH 的客户端模块发现按行的 name 解析包 package.json：裸包名（
 
 ### 3.4 为什么删除 decisionEnabled / monitorEnabled
 
-行开关已经是独立的启停机制；保留布尔开关会产生「行开着但工具被配置关掉」的双重语义，且在插件页里一个行会显示“已启用”但工具不存在。0.3.0 删除这两个键，迁移表见 §9。
+行开关已经是独立的启停机制；保留布尔开关会产生「行开着但工具被配置关掉」的双重语义，且在插件页里一个行会显示“已启用”但工具不存在。本次升级直接删除这两个键；行开关是唯一启停机制。
 
 ## 4. 配置分层
 
@@ -81,16 +81,20 @@ DSH 的客户端模块发现按行的 name 解析包 package.json：裸包名（
       escalationEnabled: z.boolean().default(true).volatile(),
       // 高级：数组编辑器不进第一版表单；改后需重载核心行（工具行每次执行读取）
       ladder: z.array(z.object({ model: z.string(), numCtx: z.number().min(1) })).required(false),
+      // 注册期值：工具行从共享总线读取；改后重载核心行
+      toolName: z.string().default('decision'),
+      monitorToolName: z.string().default('monitor'),
+      // 上游委托转储上限；YAML 高级项
+      spillDirCap: z.number().min(1).required(false),
     });
 
 - baseUrl / defaultModel / timeoutMs / keepAlive / escalationEnabled 是 GUI 实时项。
-- ladder 是 YAML 高级项；不声明 volatile，不出现在表单。工具行通过共享总线每次执行读取，因此核心行重载后新阶梯立即被工具行看到。
+- ladder / toolName / monitorToolName / spillDirCap 是 YAML 高级或注册期项；不声明 volatile。工具行通过共享总线每次执行读取；改后重载核心行。
 - 核心行 apply 只做一件事：把上述字段（含活句柄）发布到 lib/config-bus.js；不注册工具。
 
 ### 4.2 decision 行 decision-tools-decision
 
     export const Config = z.object({
-      toolName: z.string().default('decision'),                 // 注册期；改后重载本行
       modelOverride: z.string().required(false).volatile(),     // 空 = 用核心 defaultModel
       defaultDepth: z.union([
         z.const('quick'), z.const('normal'), z.const('deep'),
@@ -109,27 +113,30 @@ DSH 的客户端模块发现按行的 name 解析包 package.json：裸包名（
 
 - defaultDepth 是新增的便捷项：调用方省略 depth 时用它，显式 depth 仍优先。
 - 其余数值项沿用既有「常量单源 + apply 回落」纪律；只是从注册时快照改为每次执行解析。
-- toolName 非 volatile：工具名在注册期确定，不能保存即改；README 与表单提示都写“改后重载本行”。
+- 工具名 toolName 属于核心行；decision 行只覆盖模型与判定行为。
 
 ### 4.3 monitor 行 decision-tools-monitor
 
     export const Config = z.object({
-      monitorToolName: z.string().required(false),              // 注册期；缺省 monitor
       modelOverride: z.string().required(false).volatile(),     // 空 = 用核心 defaultModel
       minProbeIntervalMs: z.number().min(1).required(false).volatile(),
       notifyCoalesceWindowMs: z.number().min(0).required(false).volatile(),
       maxNotificationsPerMinute: z.number().min(1).required(false).volatile(),
-      spillDirCap: z.number().min(1).required(false).volatile(),
     });
+
+- monitorToolName 与 spillDirCap 属于核心行；monitor 行只覆盖模型与探测/通知默认值。
 
 ### 4.4 有效值合成
 
-    effective.model       = live(decision.modelOverride) || shared.defaultModel
-    effective.baseUrl     = shared.baseUrl
-    effective.timeoutMs   = shared.timeoutMs
-    effective.keepAlive   = shared.keepAlive
-    effective.ladder      = shared.ladder（非 volatile，但每次执行读取）
-    effective.escalation  = shared.escalationEnabled
+    effective.model          = live(decision.modelOverride) || shared.defaultModel
+    effective.baseUrl        = shared.baseUrl
+    effective.timeoutMs      = shared.timeoutMs
+    effective.keepAlive      = shared.keepAlive
+    effective.ladder         = shared.ladder（非 volatile，但每次执行读取）
+    effective.escalation     = shared.escalationEnabled
+    effective.toolName       = shared.toolName
+    effective.monitorToolName = shared.monitorToolName
+    effective.spillDirCap    = shared.spillDirCap
 
 monitor 同理，只是没有 ladder/escalation 消费者；它的判据请求用 shared.baseUrl/defaultModel/timeoutMs/keepAlive。
 
@@ -212,7 +219,7 @@ package.json 必须新增：
         "./decision": "./lib/decision-entry.js",
         "./monitor": "./lib/monitor-entry.js",
         "./skill": "./lib/skill.js",
-        "./client": "./lib/client.js",
+        "./client": "./lib/browser.js",
         "./package.json": "./package.json"
       },
       "dsh": {
@@ -227,15 +234,15 @@ package.json 必须新增：
 
 ### 6.2 模块结构
 
-    lib/client.js           浏览器半（window.__ModuleLoader__.load）
+    lib/browser.js          浏览器半（window.__ModuleLoader__.load）
     lib/config-bus.js       host 侧共享活配置
-    lib/runtime.js          host 侧共享运行时（source reader / monitor decide / command / event log）
-    lib/decision-entry.js   decision 行入口（Config + apply）
-    lib/monitor-entry.js    monitor 行入口（Config + apply）
-    lib/index.js            核心行入口（Config + apply，包 main）
-    lib/tool.js             decision/monitor 实现（可保留旧组合 apply 供测试/兼容，但生产行不调用）
+    lib/configs.js          三条行的 Config schema
+    lib/decision-entry.js   decision 行入口（Config + applyDecision）
+    lib/monitor-entry.js    monitor 行入口（Config + applyMonitor）
+    lib/index.js            核心行入口（Config + publish；包 main）
+    lib/tool.js             decision/monitor 共用的实现引擎：applyDecision / applyMonitor + 纯逻辑
 
-为减少回归，**P0 先做行为保持的抽取**：把 tool.js 中 monitor 需要的 readSource/readForMonitor/decideForMonitor/runMonitorCommand/deliverNotice/eventLog 抽到 lib/runtime.js；tool.js 的现有组合 apply 保留为 applyBoth（测试用），生产入口分别调用 applyDecision / applyMonitor。抽取阶段不改行为、不改 Config，现有测试全绿后再拆行。
+**一次性到位**：旧 tool.js 的组合 apply 被拆成 applyDecision / applyMonitor；旧能力（source reader、monitor decide、command、event log、deliver）全部并入同一个引擎，不保留生产兼容入口。测试侧用 test/helpers/apply-all.mjs 把两条行组合起来跑既有用例 —— 这是测试组合器，不是生产接口。
 
 ### 6.3 浏览器半骨架
 
@@ -420,35 +427,17 @@ model 传 "auto" 等价于省略（走容量选档、允许升档），不再被
 
 **不做**：noul 改名、items/questions 合并、type 别名、v4 参数重设。
 
-## 9. 兼容与迁移
+## 9. 一次性升级（不保留兼容层）
 
-版本：0.2.0 → 0.3.0（行结构与配置键是 breaking change）。
+本次不提供旧行 id、旧键别名或兼容读取层。旧能力按职责并入新结构：
 
-| 旧 | 新 |
-|---|---|
-| decision-tools-tool（裸包，注册两个工具） | decision-tools-plugin（核心）+ decision-tools-decision + decision-tools-monitor |
-| 旧 baseUrl/defaultModel/timeoutMs/keepAlive/escalationEnabled/ladder | 核心行 |
-| 旧 toolName/bodyWarning/softBodyBytes/minConfidence/maxChoiceOptions/escalationMaxAttempts/scan* | decision 行 |
-| 旧 monitorToolName/minProbeIntervalMs/notifyCoalesceWindowMs/maxNotificationsPerMinute/spillDirCap | monitor 行 |
-| decisionEnabled / monitorEnabled | 删除；用行开关 |
-| 旧 decision-tools-tool 的 profile 覆盖 | 改成三个新行的覆盖 |
+- 旧 combined apply 的 decision / monitor 逻辑 → lib/tool.js 的 applyDecision / applyMonitor；它们是唯一实现，不是兼容入口。
+- 旧 Config 的模型键 → 核心行 SharedConfig；decision 行为键 → DecisionConfig；monitor 键 → MonitorConfig。没有别名。
+- decisionEnabled / monitorEnabled → 删除；行开关是唯一启停机制。
+- 旧 decision-tools-tool 行 → 不再存在；cordis.patch.yml 只写四行。
+- 旧 profile 覆盖 → 直接按新行 id 写 config；config 整块替换的语义不变。
 
-迁移示例（覆盖既有行用裸 id + config，不带 insert）：
-
-    - id: decision-tools-plugin
-      config:
-        baseUrl: 'http://localhost:11434'
-        defaultModel: 'tev1:0.8b'
-        timeoutMs: 180000
-        keepAlive: '30m'
-    - id: decision-tools-decision
-      config:
-        toolName: 'decision'
-    - id: decision-tools-monitor
-      config:
-        monitorToolName: 'monitor'
-
-README 两份都要改：Configuration 拆成三张表（核心/decision/monitor），每张表增加“实时/重载”列；加迁移段。
+测试侧 test/helpers/apply-all.mjs 只是把两条行组合起来跑既有用例的测试组合器；生产没有 combined apply。
 
 ## 10. 测试与验收
 
@@ -480,7 +469,7 @@ README 两份都要改：Configuration 拆成三张表（核心/decision/monitor
 
 ### 10.4 回归
 
-- 现有 403 例全绿；拆行导致 test/tool.test.mjs / test/monitor-tool.test.mjs 的 apply 入口改为 applyBoth 测试助手。
+- 全量套件（当前 422 例：421 pass / 1 skip / 0 fail）全绿；test/tool.test.mjs / test/monitor-tool.test.mjs 的入口改为 test/helpers/apply-all.mjs 的测试组合器。
 - npm test 全量；docs-numbers 守卫更新模块/测试计数（在提交点重新测量）。
 
 ## 11. 风险与缓解
@@ -493,7 +482,7 @@ README 两份都要改：Configuration 拆成三张表（核心/decision/monitor
 | 行未加载导致页面不出现 | 预期行为；whileServed 而不是无条件注册 |
 | 核心行被关 | 工具回退默认值；插件页/README 明说 |
 | 设置服务缺失 | configForms required inject ⇒ 浏览器半不激活；host 工具不受影响 |
-| 旧 profile 覆盖失效 | 0.3.0 迁移表；README 顶部醒目 breaking 提示 |
+| 旧 profile 覆盖失效 | 一次性切换；README 直接写新行 id，不保留旧键别名 |
 | 表单字段与 Config 漂移 | 契约守卫（字段路径 + volatile） |
 | 改名/重载语义误导 | 表单只显示 volatile 字段；toolName/ladder 明确写“需重载” |
 
@@ -502,59 +491,36 @@ README 两份都要改：Configuration 拆成三张表（核心/decision/monitor
 ### 新增
 
 - lib/config-bus.js — 共享活配置总线。
-- lib/runtime.js — 共享运行时（source reader / monitor decide / command / event log）。
+- lib/configs.js — 三条行 Config schema。
 - lib/decision-entry.js — decision 行入口与 Config。
 - lib/monitor-entry.js — monitor 行入口与 Config。
-- lib/client.js — 浏览器半。
-- test/config-bus.test.mjs、test/live-config.test.mjs、test/client-form.test.mjs、test/client-contract.test.mjs、test/client-boot.test.mjs、test/parameters-convenience.test.mjs。
+- lib/browser.js — 浏览器半。
+- test/config-bus.test.mjs、test/live-config.test.mjs、test/client-form.test.mjs、test/client-contract.test.mjs、test/parameters-convenience.test.mjs、test/helpers/apply-all.mjs。
 - docs/superpowers/specs/2026-10-18-client-gui-and-row-split-design.md（本文件）。
 
 ### 修改
 
 - package.json — exports / dsh.client / version。
 - cordis.patch.yml — 四行。
-- lib/index.js — 核心入口（Config + publish；不再注册工具）。
-- lib/tool.js — 拆出 applyDecision / applyMonitor / applyBoth；保留纯逻辑导出。
+- lib/index.js — 核心入口（Config + publish；不注册工具）。
+- lib/tool.js — 拆出 applyDecision / applyMonitor（唯一实现），保留纯逻辑导出。
 - lib/parameters.js — 简写描述。
-- lib/validate.js / lib/source.js — choice string[]、score {min,max}、material 简写。
-- lib/monitor-tool.js — 适配 resolveConfig 的活读取（若签名需要）。
-- README.md / README.zh.md — 三张配置表 + 迁移 + GUI 说明。
-- docs/architecture-current.md — 行结构、客户端半、配置分层、数字重测。
+- lib/validate.js — choice string[]、score {min,max}、material 简写。
+- lib/monitor-tool.js — 适配 resolveConfig 的活读取。
+- README.md / README.zh.md — 三张配置表 + GUI 说明（无迁移段）。
+- docs/architecture-current.md — 四行结构、客户端半、模块/用例数字。
 - docs/use-cases.md — GUI 配置工作流。
-- test/tool.test.mjs / test/monitor-tool.test.mjs — 入口改 applyBoth。
-- test/docs-numbers.test.mjs — 数字守卫。
+- test/tool.test.mjs / test/monitor-tool.test.mjs — 入口改测试组合器。
+- test/parameters.test.mjs / test/validate.test.mjs — 新契约。
+- test/docs-numbers.test.mjs — 数字守卫（未改断言，只更新文档数字）。
 
-## 13. 实施阶段
+## 13. 实施（一次性完成）
 
-### P0 — 行为保持抽取（不改行结构）
-
-- 新增 lib/config-bus.js（先不接入）。
-- 从 lib/tool.js 抽 lib/runtime.js；保留 applyBoth 旧行为。
-- 现有测试全绿。
-
-### P1 — 拆行 + 活配置（无 GUI）
-
-- 新增三个入口 + 核心入口；cordis.patch.yml 四行；package.json exports。
-- Config 拆分 + volatile；applyDecision/applyMonitor 每次读活值。
-- 删除 decisionEnabled/monitorEnabled。
-- 更新测试为 applyBoth 助手；全绿。
-- 真机确认两个工具仍工作、行开关独立。
-
-### P2 — 浏览器半
-
-- lib/client.js；package.json dsh.client；locale/CSS/表单/槽。
-- 真机验收 §10.3。
-- 契约守卫。
-
-### P3 — 工具接口增量
-
-- choice string[]、score {min,max}、material 简写、model auto。
-- 文档 + 测试。
-
-### P4 — 文档与收口
-
-- README 三张表 + 迁移；architecture 数字重测；use-cases。
-- 全量回归；提交。
+1. **host 最终结构**：新增 configs / config-bus / decision-entry / monitor-entry；lib/tool.js 拆成 applyDecision / applyMonitor；cordis.patch.yml 写四行；package.json 写 exports 与 dsh.client。
+2. **实时配置**：三条 Config 的 GUI 字段声明 .volatile()；核心行发布句柄；工具行每次 execute / 探测读取；删除 decisionEnabled / monitorEnabled。
+3. **浏览器半**：lib/browser.js 注册三个 plugins.row.config 页面；locale / CSS；staged save + revision fence；契约守卫。
+4. **工具接口增量**：choice string[]、score {min,max}、material 简写、model auto；文档 + 测试。
+5. **收口**：README 三张表；architecture 数字重测；use-cases；全量回归；真机验收。
 
 ## 14. 后续（不在本规格）
 

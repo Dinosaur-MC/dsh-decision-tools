@@ -120,64 +120,65 @@ node scripts/list-models.mjs --json   # { models, ladder }
 
 ## Configuration
 
+插件由四行组成：核心行、decision 行、monitor 行与 skill 行。每行在 Plugins 页都有自己的开关；核心/decision/monitor 三行还各有自己的 Configure 页。GUI 可改字段声明为 .volatile()，保存后下一次调用生效，无需重载行。toolName / monitorToolName / ladder / spillDirCap 是注册期或高级 YAML 项：在 cordis.patch.yml 里改，然后重载对应行。
+
+### 核心行 — decision-tools-plugin（共享模型与运行时）
+
 | Key | Default | Meaning |
 |---|---|---|
-| `baseUrl` | `http://localhost:11434` | Ollama 地址；路径前缀会被保留（`http://host/ollama` → `http://host/ollama/v1/systemone`） |
-| `defaultModel` | `tev1:0.8b` | 调用未给 `model` 时使用的模型 |
-| `timeoutMs` | `120000` | 单次请求预算，含冷加载 |
-| `toolName` | `decision` | 模型看到的工具名 |
-| `keepAlive` | 未设 | 透传为 `keep_alive`；未设则用服务端默认 |
-| `softBodyBytes` | 未设（回落到 `LIMITS.softBodyBytes`，4096） | 超过该字节数的 body 会在 `notes[]` 里带一行体积归因 |
-| `bodyWarning` | 未设（开启） | `false` 时永不产出该行；未设或 `true` 则保持开启 |
-| `minConfidence` | 未设（回落到 `LIMITS.minConfidence`，0.25） | `confidence` 低于该值（或缺失）的 `choice`/`score` 项会被列进 `notes[]` 的一行；`0` 关闭该门限 |
-| `maxChoiceOptions` | 未设（回落到 `LIMITS.maxChoiceOptions`，255） | `choice` 选项数上限。OpenAPI 明说 *「The option limit depends on the model」*，故模型不同时应在此调整。`score` 是**另一条**约束、由规格写死为 2–10，**不可配置**。 |
-| `escalationEnabled` | `true` | 上下文溢出时自动提升到更大上下文的判定模型。调用时传了 `model` 会在该次调用禁用自动提升。 |
-| `ladder` | 未设（用 `DEFAULT_LADDER`） | 有序的 `{ model, numCtx }[]` 提升候选。两处刻意排除：`clef:latest`（27B 在 8 GB 显存上 300 s 未返回）；`nimble:latest`（其 `num_ctx` 8194 只比 tev1 的 8192 大 2 token，永远过不了容量余量 ⇒ 一档**选不中**的档）。重拉模型后须重读 `/api/show`，这些是快照。 |
-| `escalationMaxAttempts` | `3` | 提升尝试次数上限；用尽即抛可行动错误，绝不静默降级。 |
-| `scanFirstChunkBytes` | 未设（用 `LIMITS.softBodyBytes`） | 首块字节预算；后续块据服务端自己的 token 数字重切。 |
-| `scanMaxChunks` | 未设（用 `LIMITS.scanMaxChunks`） | 单次扫描的块数上限；触顶返回**部分结果**而非失败。 |
-| `scanMaxTotalBytes` | 未设（用 `LIMITS.scanMaxTotalBytes`） | 单次扫描的累计字节上限。 |
-| `scanDeadlineMs` | 未设（用 `LIMITS.scanDeadlineMs`） | 单次扫描的墙钟预算，**独立于** `timeoutMs`。 |
-| `scanAggregate` | `none` | `any` 会给每道 `noul` 题加一个**暂定**的跨块最大概率。跨块概率未经校准 —— 不得当作判定依据。 |
-| `minProbeIntervalMs` | 未设（用 `MONITOR_LIMITS.minProbeIntervalMs`，1000） | `monitor` 探测间隔的**下限**：模型给的 `intervalMs` 会被抬到不小于它。 |
-| `notifyCoalesceWindowMs` | 未设（用 `MONITOR_LIMITS.defaultNotifyCoalesceWindowMs`，5000） | 同类 `monitor` 通知的合并窗口 —— inbox 自身没有任何背压。 |
-| `maxNotificationsPerMinute` | 未设（用 `MONITOR_LIMITS.defaultMaxNotificationsPerMinute`，6） | `monitor` 通知的每分钟上限。 |
-| `spillDirCap` | 未设（用 `DEFAULT_SPILL_MAX_BYTES`，16 MiB） | 管道自建转储目录（系统临时区）的总字节上限。 |
-| `monitorToolName` | `monitor` | 第二个工具（`monitor`）的**模型可见名**。与其它工具重名时改它。 |
-| `decisionEnabled` | `true` | 是否注册 `decision` 工具。设为 `false` 时 `monitor` 与 skill 照常工作，只是模型看不到这个工具。 |
-| `monitorEnabled` | `true` | 是否注册 `monitor` 工具。与 `decisionEnabled` 相互独立，可单独关闭任一个。 |
+| `baseUrl` | http://localhost:11434 | Ollama 地址；路径前缀会被保留；GUI 可改。 |
+| `defaultModel` | tev1:0.8b | 工具行没有 modelOverride 时使用的模型；GUI 可改。 |
+| `timeoutMs` | 120000 | 单次请求预算，含冷加载；GUI 可改。 |
+| `keepAlive` | unset | 透传为 keep_alive；未设用服务端默认；GUI 可改。 |
+| `escalationEnabled` | true | 上下文溢出时允许自动升档；GUI 可改。 |
+| `ladder` | unset (DEFAULT_LADDER) | 有序的 {model,numCtx}[]；仅 YAML；改后重载核心行。 |
+| `toolName` | decision | decision 工具的模型可见名；改后重载 decision 行。 |
+| `monitorToolName` | monitor | monitor 工具的模型可见名；改后重载核心行。 |
+| `spillDirCap` | unset (16 MiB) | 插件转储目录的字节上限；仅 YAML。 |
 
-`softBodyBytes` 会被**静默钳到** `LIMITS.maxBodyBytes`（65536）—— 高于该字节硬上限的阈值
-永远不可能触发；而把阈值设到模型**真实**容量（其 `num_ctx`）之上会让告警**静默失效**，
-插件内部无从检测这一点 —— 权威守卫始终是服务端的 token 检查。
+### decision 行 — decision-tools-decision
 
-`minConfidence` **只加旗、不清障**：所有答案原样返回，插件绝不因置信度低而删除、改写或
-拒绝任何一个。`0` 表示**关闭**该门限（注意与 `softBodyBytes: 0` 的语义**相反** —— 那里是
-「每次都告警」），大于 `1` 的取值会被钳到 `1`。默认值 0.25 只在一份小样本上标定过
-（`tev1:0.8b`，4 题 × 6 个候选排列）；不同模型的 confidence 尺度差约一个量级（同批题上
-`tev1:0.8b` 实测 0.04–0.62，而**所有 4B 及以上的模型**恒在 0.77–0.99）⇒ **换模型必须重新
-标定**；并且请注意：**在这些更大的模型上门限是惰性的** —— 它们的 confidence 从不会低于
-0.25。它也不是安全保证：跨会话调研里唯一那次顺序翻转发生在 `confidence = 0.357`，高于本
-阈值；且 `confidence` 是分布集中度，不是校准正确率。另：**选项顺序效应本身已查明是
-0.8B 独有现象** —— 跨 6 个候选排列，`tev1:latest`(4B)、`clef-flash`(9.1B)、`nimble`(9B)、
-`clef`(27B) 在全部 4 题上都给出完全相同的标签。
+| Key | Default | Meaning |
+|---|---|---|
+| `modelOverride` | unset (core default) | 留空使用核心行的 defaultModel；GUI 可改。 |
+| `defaultDepth` | normal | quick | normal | deep；调用省略 depth 时使用；GUI 可改。 |
+| `bodyWarning` | unset (on) | false 时不再返回体积/文本形状提示；GUI 可改。 |
+| `softBodyBytes` | unset (4096) | 超过该字节数会在 notes[] 带体积提示；0 表示每次都告警；GUI 可改。 |
+| `minConfidence` | unset (0.25) | confidence 低于该值（或缺失）的 choice/score 项会被点名；0 关闭；GUI 可改。 |
+| `maxChoiceOptions` | unset (255) | choice 选项数上限；GUI 可改。 |
+| `escalationMaxAttempts` | 3 | 升档尝试次数上限；GUI 可改。 |
+| `scanFirstChunkBytes` | unset (4096) | 首块字节预算；GUI 可改。 |
+| `scanMaxChunks` | unset (32) | 单次扫描的块数上限；GUI 可改。 |
+| `scanMaxTotalBytes` | unset (4 MiB) | 单次扫描的累计字节上限；GUI 可改。 |
+| `scanDeadlineMs` | unset (180000) | 单次扫描的墙钟预算；GUI 可改。 |
+| `scanAggregate` | none | none | any；any 会给跨块答案加一个暂定的最大概率；GUI 可改。 |
 
-在 `cordis.patch.yml` 里**覆盖既有行**要用**裸 `id`、不带 `insert`**，并把字段写在行的
-`config:` 键**下**。把字段**平铺在行上**会被静默忽略，也没有任何告警 —— 插件只会按默认值运行。
+### monitor 行 — decision-tools-monitor
 
-    - id: decision-tools-tool
+| Key | Default | Meaning |
+|---|---|---|
+| `modelOverride` | unset (core default) | 留空使用核心行的 defaultModel；GUI 可改。 |
+| `minProbeIntervalMs` | unset (1000) | monitor 探测间隔下限；GUI 可改。 |
+| `notifyCoalesceWindowMs` | unset (5000) | 同类通知合并窗口；0 表示不合并；GUI 可改。 |
+| `maxNotificationsPerMinute` | unset (6) | 每分钟通知上限；GUI 可改。 |
+
+覆盖既有行要用裸 id、不带 insert，字段写在 config 键下。config 是整块替换、不做深合并，所以覆盖时必须重述该行用到的全部字段。
+
+    - id: decision-tools-plugin
       config:
         baseUrl: 'http://localhost:11434'
         defaultModel: 'tev1:0.8b'
         timeoutMs: 180000
-        toolName: 'decision'
         keepAlive: '30m'
+    - id: decision-tools-decision
+      config:
+        modelOverride: 'tev1:0.8b'
+        defaultDepth: normal
+    - id: decision-tools-monitor
+      config:
+        modelOverride: 'nimble:latest'
 
-`config` 是**整块替换**、不做深合并，所以覆盖时必须重述该行用到的全部字段 —— 照抄上面
-这一整块即可；行自己的键只有 `id`、`name`、`config`、`disabled`、`inject`、`intercept`
-与 `isolate`。`insert:` 用于**新增一行**（本 bundle 自己的 patch 就是这么做的）；**覆盖既有行**
-用裸 `id`、**不带 `insert`**。
-上表默认值取自 `lib/tool.js` 的 `Config`。
+三条 Config schema 在 lib/configs.js。
 
 ## 常见问题
 
