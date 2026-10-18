@@ -362,7 +362,7 @@ RowConfigCard 的形态：
 
 - 词典命名空间 settings.decision-tools；zh / en 的**值全部是字符串**。
 - CSS 类前缀 dshdt-；style 标签带 data-plugin="dsh-decision-tools" 与 data-plugin-css="dsh-decision-tools/client.js"，卸载时移除。
-- 缺 React / primitives：不注册任何贡献；日志 warn；不抛。
+- 缺 React：不注册任何贡献；日志 warn；不抛。缺 primitives（或单个导出）：用 honest HTML 控件兜底，照常注册三个 page + core note；日志 warn。真实部署 profile 里没有 `@deepseek-ai/dsh-client-ui-primitives`，这是默认路径。
 - 缺 configForms：浏览器半不激活（required inject），host 工具不受影响。
 - plugins.detail.section：只在 subject 是本包的 bundle 或 decision-tools-plugin 核心行时渲染一段说明：“核心行承载模型配置与 Configure 页；两个工具行可独立开关；核心行关闭后工具回退默认值”。
 
@@ -468,7 +468,7 @@ model 传 "auto" 等价于省略（走容量选档、允许升档），不再被
 
 ### 10.4 回归
 
-- 全量套件（当前 425 例：424 pass / 1 skip / 0 fail）全绿；test/tool.test.mjs / test/monitor-tool.test.mjs 的入口改为 test/helpers/apply-all.mjs 的测试组合器。
+- 全量套件（当前 426 例：425 pass / 1 skip / 0 fail）全绿；test/tool.test.mjs / test/monitor-tool.test.mjs 的入口改为 test/helpers/apply-all.mjs 的测试组合器。
 - npm test 全量；docs-numbers 守卫更新模块/测试计数（在提交点重新测量）。
 
 ## 11. 风险与缓解

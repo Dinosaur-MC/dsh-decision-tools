@@ -82,9 +82,20 @@ test('apply 注册三行 page + core note，并保持 key/whileServed 契约', (
   assert.equal(notes.length, 1);
 });
 
-test('缺 React / primitives / 单个导出：不注册任何贡献，apply 只 warn', () => {
+test('缺 React：不注册任何贡献，apply 只 warn', () => {
+  const client = loadClient((name) => {
+    if (name === 'react') throw new Error('missing');
+    throw new Error('unexpected: ' + name);
+  });
+  assert.equal(typeof client.apply, 'function');
+  const { ctx, registered, warnings } = fakeCtx();
+  client.apply(ctx);
+  assert.equal(registered.length, 0);
+  assert.ok(warnings.some((message) => message.includes('client disabled')));
+});
+
+test('缺 primitives / 单个导出：用 HTML 兜底继续注册，并 warn', () => {
   const cases = [
-    ['react missing', (name) => { if (name === 'react') throw new Error('missing'); throw new Error('unexpected'); }],
     ['primitives missing', (name) => { if (name === 'react') return react(); throw new Error('missing'); }],
     ['primitive export missing', (name) => {
       if (name === 'react') return react();
@@ -95,11 +106,10 @@ test('缺 React / primitives / 单个导出：不注册任何贡献，apply 只 
   ];
   for (const [label, requireFn] of cases) {
     const client = loadClient(requireFn);
-    assert.equal(typeof client.apply, 'function', label);
     const { ctx, registered, warnings } = fakeCtx();
     client.apply(ctx);
-    assert.equal(registered.length, 0, label + ' must not register');
-    assert.ok(warnings.some((message) => message.includes('client disabled')), label + ' must warn');
+    assert.equal(registered.filter((entry) => entry.kind === 'slot').length, 4, label + ' must register');
+    assert.ok(warnings.some((message) => message.includes('HTML fallback')), label + ' must warn');
   }
 });
 
