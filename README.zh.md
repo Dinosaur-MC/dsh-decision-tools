@@ -125,6 +125,7 @@
 - **时间戳只作记录**（`at`、`atIso`、`firstAt`、`lastAt`）—— 不参与命中判定。
 - `intervalMs` 会被抬到部署下限（`Config.minProbeIntervalMs`）；`timeoutMs` 是**自管** deadline（宿主不抢占阻塞调用），被抬到不小于 `intervalMs`。两处钳制都写进 `notes`。
 - `background: true` 注册宿主作业并立刻返回 `jobId`（之后用 `job_output` 读）。`notify: "inbox"` 在达到门槛时发通知（**仅 `background: true`**；前台传它会被当场拒绝），带合并 + 每分钟上限 + 唤醒预算 —— inbox 自身没有任何背压。
+- **空源立即返回**：`samples: 1`、`emptySource: true`、`hit: false` —— 不调模型、也不等 deadline；`events.types` 按固定词表校验，拼错即 `source_invalid`。
 - `source.kind` 取 `job` / `file` / `glob` / `command` / `events` 之一。`file` 与 `glob` 走**与 `decision` 同一个 reader**（工作区相对、同一道 containment 闸）；`command` 走插件自己的上游管道（与 `decision` 的 `material.tool` 同一条）：`argv[0]` 选解释器（`pwsh`/`powershell`、`git_bash`/`bash`/`sh`/`zsh`），其余**按空格拼接**、解释器自身前导标志（`-c`/`-lc`/`-Command`/`-NoProfile`…）会被剥掉 —— **带空格的参数要自己加引号**。`events` 读插件的作业事件环形缓冲（`job.registered` / `job.settled` / `job.completed` / `job.failed` / `job.killed` …），没有缓冲时退到本会话**当前**作业列表。
 - **命中只通知**。它绝不 kill、重试、派发或取消任何东西 —— 那由你决定。计数只在内存：每次调用从 0 起算，宿主重启即丢。
 - **不适合**需要多轮推理、或候选要边想边发现的复杂目标 —— 它只回答你**现在就能写清**的有界问题。

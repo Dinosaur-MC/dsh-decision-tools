@@ -76,6 +76,12 @@ test('描述里必须写明两模式互斥（items 与 questions 同时给出即
   assert.match(TOOL_DESCRIPTION, /Giving both, or neither, is an error/);
 });
 
+test('skill 必须覆盖 material.tool（否则模型永远不知道能委托工具）且不得说 noul 不带 criteria', () => {
+  assert.match(SKILL_BODY, /tool: \{ name, arguments\? \}/, 'skill 必须写明 material.tool 形态');
+  assert.match(SKILL_BODY, /material\.spillPath/, 'skill 必须说明原始输出会落盘并回传 spillPath');
+  assert.doesNotMatch(SKILL_BODY, /noul` takes none|`noul` takes none/, 'noul 接受 {false,true} 描述，不能再说「takes none」');
+});
+
 test('描述里必须点明 noul 不是布尔、confidence 不是正确率', () => {
   const text = `${TOOL_DESCRIPTION} ${SKILL_BODY} ${PARAMETERS.questions.items.properties.type.description}`;
   assert.match(text, /not a boolean|not `boolean`/);
@@ -188,7 +194,8 @@ test('注入预算守卫：常驻 description 与 skill 正文各自有上限，
   const schemaBytes = Buffer.byteLength(JSON.stringify(PARAMETERS), 'utf8');
   assert.ok(descBytes <= 1900, `常驻 description ${descBytes}B 超过 1900B：每轮注入的内容必须精打细算`);
   assert.ok(schemaBytes <= 3600, `参数 schema ${schemaBytes}B 超过 3600B：常驻 schema 才是注入成本的主体（压缩后 3402B）`);
-  assert.ok(skillBytes <= 4000, `skill 正文 ${skillBytes}B 超过 4000B：按需加载的内容也要简练`);
+  // 2026-10-18 用户裁定：skill 必须把功能写全 ⇒ 上限由 4000B 提到 8000B（按需加载，不在每轮注入里）。
+  assert.ok(skillBytes <= 8000, `skill 正文 ${skillBytes}B 超过 8000B`);
 });
 
 test('能投影成 JSON Schema，且 required 只剩 material（模式必给性在校验层）', () => {
@@ -199,4 +206,19 @@ test('能投影成 JSON Schema，且 required 只剩 material（模式必给性�
   }
   assert.deepEqual(json.required, ['material'],
     'depth 可选（缺省 normal）；模式内的必给字段由 assertModeExclusive 把关');
+});
+
+test('skill 必须写全两个工具的**全部参数名与 source.kind**（用户裁定：功能写全）', async () => {
+  const { PARAMETERS: DECISION_PARAMS } = await import('../lib/parameters.js');
+  const { PARAMETERS: MONITOR_PARAMS } = await import('../lib/monitor-tool.js');
+  const { EVENT_TYPES } = await import('../lib/event-log.js');
+  const body = SKILL_BODY;
+  const missing = [];
+  for (const key of Object.keys(DECISION_PARAMS)) if (!body.includes('`' + key + '`')) missing.push('decision.' + key);
+  for (const key of Object.keys(MONITOR_PARAMS)) if (!body.includes('`' + key + '`')) missing.push('monitor.' + key);
+  for (const kind of ['job', 'file', 'glob', 'command', 'events']) if (!body.includes('`' + kind + '`')) missing.push('source.kind=' + kind);
+  for (const type of EVENT_TYPES) if (!body.includes(type)) missing.push('event:' + type);
+  assert.deepEqual(missing, [], 'skill 未写明这些功能：' + JSON.stringify(missing));
+  assert.match(body, /emptySource/, '空源短路必须写明');
+  assert.match(body, /job_output/, '后台结果读取方式必须写明');
 });

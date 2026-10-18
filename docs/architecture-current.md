@@ -164,9 +164,9 @@ JSON Schema 的 `required` **只有 `material`**；模式内部必填由校验�
 
 ### 3.5 skill 接口
 
-`{name:'decision-usage', provider:'dsh-decision-tools', source:'bundled', rank:600, invocation:{modelInvocable:true, userInvocable:true}, resourceBase:{kind:'directory', path:<assets 目录>}}`；正文来自 `assets/decision-usage/SKILL.md`（3945 B，frontmatter 必须含 `description`）。
+`{name:'decision-usage', provider:'dsh-decision-tools', source:'bundled', rank:600, invocation:{modelInvocable:true, userInvocable:true}, resourceBase:{kind:'directory', path:<assets 目录>}}`；正文来自 `assets/decision-usage/SKILL.md`（**6758 B**，frontmatter 必须含 `description`（**可路由性硬约束**：两个工具名与主要触发词必须落在**前 200 字符**内 —— 技能目录只展示这段前缀，超出即被截断；长度 ≤400 字符）；正文覆盖**两个工具的全部功能**：`decision` 的八键/四形态/三档 depth/五键读法/confidence/错误 kind，`monitor` 的 14 个参数、五类 source（含 `command` 的 argv 规则与 `events` 的全词表）、空源短路、后台 + `job_output`、通知三件套与输出字段）。
 
-**裁定（2026-10-17）：不在这个 skill 里增加 Monitor 用法段。** 三条理由：① `monitor` 自带 **1830 B 的常驻 description**（模型面可见），用法指引已自包含 —— skill 存在的理由是 `decision` 的常驻描述必须瘦身，monitor 没有这个问题；② skill 正文当前 **3945 B / 上限 4000 B**（余 55 B，守卫在 `test/parameters.test.mjs:191`），加一段必然要牺牲 `decision` 的既有指引；③ skill 的 `name`/`description` 明确是 `decision-usage`，跨工具指引会模糊它的作用域。⇒ **模型发现 `monitor` 靠工具面本身（description），不靠 `decision` 的 skill**；若要给 Monitor 写长指引，正确位置是 `docs/` 与 monitor 自己的 description。
+**裁定变更（2026-10-18，用户指令）：Skill 必须把功能写全。** 原 2026-10-17 裁定「不在 skill 里增加 Monitor 用法段」被**取代**：skill 是模型了解本插件能力的唯一按需入口，遗漏功能等于能力未交付。现在正文同时覆盖 `decision` 与 `monitor`，预算上限由 4000 B 提到 **8000 B**（按需加载，不进每轮注入）。约束只剩一条：**参数名必须与工具面同步**（守卫 `test/parameters.test.mjs` 逐个比对 `PARAMETERS` 的键、五类 `source.kind` 与 `EVENT_TYPES` 全词表）。
 
 ### 3.6 monitor 工具面（第二个模型可见工具）
 
@@ -243,13 +243,13 @@ JSON Schema 的 `required` **只有 `material`**；模式内部必填由校验�
 | `decision` | 1809 B | 3487 B（归一后投影；守卫口径的紧凑串 3465 B） | 841 B |
 | `monitor` | 1830 B | 2726 B（紧凑串 2692 B） | 1995 B（P0 修复后；修前 1878 B） |
 
-  合计 **12688 B ≈ 3810 token/轮**（英文 3.33 B/token 折算）；skill 正文 3945 B（≤4000）只在首次使用时到达。⇒ 常驻成本比 v2 末期（5653 B ≈ 1698 token/轮）**涨了**：省的是每次调用的请求体与计费，不是常驻。
+  合计 **12688 B ≈ 3810 token/轮**（英文 3.33 B/token 折算）；skill 正文 **6758 B（≤8000）**只在首次使用时到达（2026-10-18 用户要求功能写全后由 4000 提到 8000）。⇒ 常驻成本比 v2 末期（5653 B ≈ 1698 token/轮）**涨了**：省的是每次调用的请求体与计费，不是常驻。
 
 ## 5. 测试与门禁
 
-- 套件 `node --test test/*.test.mjs` = **387 例**（2026-10-18 代码态实跑核对）= 顶层 `test(` 声明 **363** 条（`grep -c '^test('` 逐文件相加）+ 循环内生成的表驱动用例 **24** 条（§4.9 锚点 10 + skill 锚点 14）；共 **22** 个测试文件（`ls test/*.test.mjs | wc -l` = 18）；另有装置 `test/fake-ollama.mjs`（不匹配 `test/*.test.mjs` 这个 glob，不算例）。
+- 套件 `node --test test/*.test.mjs` = **397 例**（2026-10-18 代码态实跑核对）= 顶层 `test(` 声明 **373** 条（`grep -c '^test('` 逐文件相加）+ 循环内生成的表驱动用例 **24** 条（§4.9 锚点 10 + skill 锚点 14）；共 **24** 个测试文件（`ls test/*.test.mjs | wc -l` = 24）；另有装置 `test/fake-ollama.mjs`（不匹配 `test/*.test.mjs` 这个 glob，不算例）。
 - **墙钟纪律（精确版）**：**不得用真实计时派生判定**（如按 deadline 计数、按耗时决定分支）。deep 的多轮重切预算用可注入时钟 + 纯函数 `scanRoundBudget` 断言（曾有一条用服务端忙等 60 ms 的用例在并行负载下抖红，已重写）。**已登记的例外**：`test/client.test.mjs` 用 `Date.now()` 做 `elapsed < 2000 ms` 的粗上限兜底、`test/escalate.test.mjs` 有一处 10 ms 等待用于让承诺沉降 —— 这两处不派生判定结果，保留并登记（见 §6 #21）。
-- 守卫：§4.9 判别性锚点、skill 锚点（十四条 v3 读法 + 词表负例）、README 配置表与 `Config` 投影一致（**22 键**，两份 README 的键集与顺序 == `Config.dict`）、注入预算上限（`decision` description ≤1900 / 参数 schema ≤3600 / skill ≤4000；`monitor` description ≤1900 / 参数 schema ≤3600）、`COMPANION_SKILL === SKILL_NAME`、缺 skill 拒服务、首次交付 skill 正文；Monitor/管道新增：**零真实墙钟**（clock/sleep/decide/deliver 全注入）、通知三件套（合并 + 限频 + 唤醒预算）、`material.tool` 双形状对齐（模型面 `{name,arguments}` ↔ 校验层 `{tool,arguments}`）、禁自递归（名单含生效的 `toolName` 与 `monitorToolName`）、模型可见文案词表（v2 参数名负例，含 `stateSource`）、**output schema 与返回值键集一致**（monitor 侧 `7a3c104`、decision 侧 `b55b942`，两边都用宿主的 `valueSchemaSpecToJsonSchema` + `validateJsonSchemaValue` 钉住）。
+- 守卫：§4.9 判别性锚点、skill 锚点（十四条 v3 读法 + 词表负例）、README 配置表与 `Config` 投影一致（**22 键**，两份 README 的键集与顺序 == `Config.dict`）、注入预算上限（`decision` description ≤1900 / 参数 schema ≤3600 / skill ≤8000；`monitor` description ≤1900 / 参数 schema ≤3600）、`COMPANION_SKILL === SKILL_NAME`、缺 skill 拒服务、首次交付 skill 正文；Monitor/管道新增：**零真实墙钟**（clock/sleep/decide/deliver 全注入）、通知三件套（合并 + 限频 + 唤醒预算）、`material.tool` 双形状对齐（模型面 `{name,arguments}` ↔ 校验层 `{tool,arguments}`）、禁自递归（名单含生效的 `toolName` 与 `monitorToolName`）、模型可见文案词表（v2 参数名负例，含 `stateSource`）、**output schema 与返回值键集一致**（monitor 侧 `7a3c104`、decision 侧 `b55b942`，两边都用宿主的 `valueSchemaSpecToJsonSchema` + `validateJsonSchemaValue` 钉住）。
 - 另有：`node --check lib/*.js`、CR 字节 = 0、变异自检（累计 30+ 定点变异全杀）、隔离实例真机冒烟。
 - **装置不变量**（`cee0baa` 之后）：假服务永不交出 fetch 禁用端口；并发负载下错误分类不退化为 `unreachable`。
 - **冒烟必须真断言**（`fca5d2f`）：`smoke/live.mjs` 必须按**工具的五键形状**组装 value 再渲染，并断言「有 answers / 有 `usage.input_tokens` / 渲染文本非空占位 / 无 `undefined|NaN`」，任一不成立即**非 0 退出**并打印拿到了什么。历史教训：该脚本曾把原始回包（`{model,answers,usage}`）当五键喂 `renderAnswers` ⇒ 永远打印 `(no results returned)` 且 exit 0（假绿，见 §6 #21）。

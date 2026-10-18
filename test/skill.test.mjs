@@ -114,3 +114,19 @@ test('parseSkill：缺 frontmatter 或缺 description 一律抛错（不静默�
   assert.equal(ok.description, 'Use when x.');
   assert.equal(ok.content, '# Body');
 });
+
+/**
+ * 目录里展示的是 description 的**前 ~200 字符**（超出截断为 …）。它决定模型是否会加载本 skill，
+ * 所以两个工具名与主要触发词必须出现在这段前缀里 —— 只写在正文里等于不可发现。
+ */
+test('description 是可路由的：两个工具名与触发词都在前 200 字符内，且长度受限', () => {
+  const { description } = parseSkill(readFileSync(ASSET, 'utf8'), ASSET);
+  const head = description.slice(0, 200);
+  assert.match(head, /`decision`|decision/, '前 200 字符必须提到 decision');
+  assert.match(head, /`monitor`|monitor/, '前 200 字符必须提到 monitor（否则目录里被截掉）');
+  for (const trigger of ['routing', 'classify', 'relevance', 'scoring', 'wait']) {
+    assert.ok(head.includes(trigger), '前 200 字符缺少触发词：' + trigger);
+  }
+  assert.ok(description.length <= 400, 'description ' + description.length + ' 字符过长（目录条目要短）');
+  assert.doesNotMatch(description, /Use when a bounded judgment/, '旧的可读性差的写法不得回归');
+});
