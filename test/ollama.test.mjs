@@ -33,6 +33,20 @@ test('listModels：映射 /api/tags 的字段；空列表返回 []', async () =>
   assert.deepEqual(empty, []);
 });
 
+test('listModels：modelsPath / apiKey / OpenAI data 形状', async () => {
+  const calls = [];
+  const models = await listModels({
+    baseUrl: 'http://x:1', modelsPath: '/v1/models', apiKey: 'k',
+    fetchImpl: async (url, init) => {
+      calls.push({ url, headers: init.headers });
+      return response({ data: [{ id: 'remote-model' }] });
+    },
+  });
+  assert.equal(calls[0].url, 'http://x:1/v1/models');
+  assert.equal(calls[0].headers.authorization, 'Bearer k');
+  assert.deepEqual(models.map((m) => m.name), ['remote-model']);
+});
+
 test('listModels：连接失败 / HTTP 错 / 坏 JSON 各自给出稳定 kind', async () => {
   await assert.rejects(() => listModels({ fetchImpl: async () => { throw new Error('connect ECONNREFUSED'); } }), (e) => e.kind === 'transport' && /无法连接/.test(e.message));
   await assert.rejects(() => listModels({ fetchImpl: async () => failing(500) }), (e) => e.kind === 'http_error');

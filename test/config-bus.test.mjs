@@ -1,9 +1,24 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  publishSharedConfig, clearSharedConfig, readSharedConfig, live, SHARED_DEFAULTS,
+  publishSharedConfig, clearSharedConfig, readSharedConfig, live, orderLadder, SHARED_DEFAULTS,
 } from '../lib/config-bus.js';
 import { resolveDecisionConfig, resolveMonitorConfig } from '../lib/tool.js';
+
+test('orderLadder：按 modelOrder 重排已有阶梯，未列出的保持相对顺序', () => {
+  const ladder = [
+    { model: 'a', numCtx: 1 },
+    { model: 'b', numCtx: 2 },
+    { model: 'c', numCtx: 3 },
+  ];
+  assert.deepEqual(orderLadder(ladder, 'c, a'), [ladder[2], ladder[0], ladder[1]]);
+  assert.deepEqual(orderLadder(ladder, ''), ladder);
+  assert.deepEqual(orderLadder(ladder, 'missing, b'), [
+    { model: 'missing', numCtx: 8192 },
+    ladder[1], ladder[0], ladder[2],
+  ]);
+  assert.equal(orderLadder(ladder, 'c@4096')[0].numCtx, 4096);
+});
 
 test('共享总线：未发布时回落内置默认；发布后可读普通值与活句柄', () => {
   clearSharedConfig();

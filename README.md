@@ -130,6 +130,10 @@ The plugin is four rows: a core row, a decision row, a monitor row and a skill r
 | `defaultModel` | tev1:0.8b | Model used when a tool row has no modelOverride; GUI-editable. |
 | `timeoutMs` | 120000 | Per-request budget, including cold model load; GUI-editable. |
 | `keepAlive` | unset | Passed as keep_alive; unset uses the server default; GUI-editable. |
+| `apiKey` | unset | Optional Bearer token for remote / System One-compatible endpoints; GUI-editable. |
+| `modelsPath` | /api/tags | Model discovery path; use `/v1/models` for OpenAI-compatible endpoints; GUI-editable. |
+| `systemOnePath` | v1/systemone | Judgement endpoint path relative to baseUrl; GUI-editable. |
+| `modelOrder` | unset | Comma-separated model priority; `model@numCtx` sets context; unknown models use 8192; GUI-editable. |
 | `escalationEnabled` | true | Allow automatic escalation on context overflow; GUI-editable. |
 | `ladder` | unset (DEFAULT_LADDER) | Ordered {model,numCtx}[]; YAML only; reload the core row after editing. |
 | `toolName` | decision | Model-visible decision tool name; reload the decision row after editing. |

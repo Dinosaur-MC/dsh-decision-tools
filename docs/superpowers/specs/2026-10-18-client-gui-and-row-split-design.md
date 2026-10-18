@@ -469,7 +469,7 @@ model 传 "auto" 等价于省略（走容量选档、允许升档），不再被
 
 ### 10.4 回归
 
-- 全量套件（当前 427 例：426 pass / 1 skip / 0 fail）全绿；test/tool.test.mjs / test/monitor-tool.test.mjs 的入口改为 test/helpers/apply-all.mjs 的测试组合器。
+- 全量套件（当前 430 例：429 pass / 1 skip / 0 fail）全绿；test/tool.test.mjs / test/monitor-tool.test.mjs 的入口改为 test/helpers/apply-all.mjs 的测试组合器。
 - npm test 全量；docs-numbers 守卫更新模块/测试计数（在提交点重新测量）。
 
 ## 11. 风险与缓解

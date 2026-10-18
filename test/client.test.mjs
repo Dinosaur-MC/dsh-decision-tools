@@ -257,6 +257,24 @@ test('缺 answers 字段 → bad_response', async () => {
   });
 });
 
+test('apiKey 以 Bearer 发送，systemOnePath 可改', async () => {
+  let seen;
+  const fetchImpl = async (url, init) => {
+    seen = { url, init };
+    return new Response(JSON.stringify(OK), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  await callSystemOne({
+    baseUrl: 'http://example.invalid:1',
+    body: BODY,
+    timeoutMs: 5000,
+    apiKey: 'secret-key',
+    path: 'custom/systemone',
+    fetchImpl,
+  });
+  assert.equal(seen.url, 'http://example.invalid:1/custom/systemone');
+  assert.equal(seen.init.headers.authorization, 'Bearer secret-key');
+});
+
 test('fetchImpl 可注入（单测无需真实网络）', async () => {
   let seen;
   const fetchImpl = async (url, init) => {

@@ -130,6 +130,10 @@ node scripts/list-models.mjs --json   # { models, ladder }
 | `defaultModel` | tev1:0.8b | 工具行没有 modelOverride 时使用的模型；GUI 可改。 |
 | `timeoutMs` | 120000 | 单次请求预算，含冷加载；GUI 可改。 |
 | `keepAlive` | unset | 透传为 keep_alive；未设用服务端默认；GUI 可改。 |
+| `apiKey` | 未设 | 可选；作为 Bearer token 发给远程 / System One 兼容接口；GUI 可改。 |
+| `modelsPath` | /api/tags | 模型发现路径；OpenAI 兼容接口可用 `/v1/models`；GUI 可改。 |
+| `systemOnePath` | v1/systemone | 判定接口路径（相对 baseUrl）；GUI 可改。 |
+| `modelOrder` | 未设 | 逗号分隔的模型优先级；`model@numCtx` 可指定上下文；未知模型按 8192；GUI 可改。 |
 | `escalationEnabled` | true | 上下文溢出时允许自动升档；GUI 可改。 |
 | `ladder` | unset (DEFAULT_LADDER) | 有序的 {model,numCtx}[]；仅 YAML；改后重载核心行。 |
 | `toolName` | decision | decision 工具的模型可见名；改后重载 decision 行。 |
