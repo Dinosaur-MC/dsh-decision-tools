@@ -1,6 +1,6 @@
 # 阈值标定、粘滞优先级与运行时能力发现
 
-> 口径文档（2026-10-16）。依据：`docs/architecture-current.md` §4（成本与容量口径，含 §8 r6 真机数字）、
+> 口径文档（2026-10-16）。依据：`docs/architecture.md` §4（成本与容量口径，含 §8 r6 真机数字）、
 > `docs/superpowers/plans/2026-10-16-v3-improvement-plan.md` Task 17、用户裁定 R1（显式 model 与成功升档都写粘滞）。
 > 本文只写**方法与口径**：任何阈值都必须在你自己的标注集与业务上重新标定，本文不给「通用阈值」。
 
@@ -54,7 +54,7 @@
   换模型必须重标。
 - 跨会话研究里唯一一次顺序诱发的标签翻转落在 `confidence = 0.357`（**高于** 0.25）⇒ 该门限
   **不是**安全保证，只是「把最差的那些点出来」的旗。
-- 出处：`docs/architecture-current.md` §4 与 `README.md` 的 `minConfidence` 段；这些数字属于**当时样本**，换模型/换业务要重测。
+- 出处：`docs/architecture.md` §4 与 `README.md` 的 `minConfidence` 段；这些数字属于**当时样本**，换模型/换业务要重测。
 
 ## 3. 粘滞：三层优先级与失效条件
 
@@ -96,7 +96,7 @@
 
 - **口径注（官方文档自身不一致）**：官方决策指南写 `choice` **2–26 named options**，官方 API 参考写
   `SystemOneChoiceQuestion.criteria` 的 `maxProperties: 255` 并注明 *"The option limit depends on the model"*
-  （抓取件与行号见 `docs/architecture-current.md` §4 的口径注）。⇒ **不得声称插件能本地探测题型上限**；
+  （抓取件与行号见 `docs/architecture.md` §4 的口径注）。⇒ **不得声称插件能本地探测题型上限**；
   也不要把 255 或 26 当跨版本 / 跨模型契约。
 - `score` 的 2–10 是与 `choice` **相互独立**的约束，不可共用一个常量。
 - 顺序固定为：**运行时能力 > 静态常量**。探测成功即用探测值；探测失败才回退，且回退值必须标注为快照。

@@ -20,6 +20,7 @@
 - 已启用本插件的 DSH 桌面版（见「安装」）。
 - 本地 Ollama 提供 decision 模型 —— 默认 `tev1:0.8b`，可用 `model` 单次覆盖。
 - 无需 API Key；判定本身不出网。
+- 图片 material 需要视觉模型（`clef` / `clef-flash`）；`tev1` / `nimble` 会回 `does not support vision`。
 
 ## 安装
 
@@ -80,7 +81,12 @@ node scripts/list-models.mjs --json   # { models, ladder }
 { "material": { "tool": { "name": "git_bash", "arguments": { "command": "npm test" } } },
   "rubric": "Did the test suite pass?", "items": ["the test suite output"], "type": "noul" }
 
-// 4) 等后台作业结束，并让插件通知你
+// 4) 判图片（需要视觉模型）
+{ "material": { "images": ["screenshots/checkout-error.png"] },
+  "model": "clef-flash:latest",
+  "questions": [ { "name": "has_error", "type": "noul", "instructions": "Does this screenshot show an error state?" } ] }
+
+// 5) 等后台作业结束，并让插件通知你
 { "source": { "kind": "job", "id": "<jobId>" },
   "rubric": "Did the job finish successfully?", "background": true, "notify": "inbox" }
 ```
@@ -96,16 +102,18 @@ node scripts/list-models.mjs --json   # { models, ladder }
 
 | 参数 | 必填 | 说明 |
 |---|---|---|
-| `material` | 是 | 内联字符串 / `{file}` / `{glob}` / `{tool}` |
+| `material` | 是 | 内联字符串 / `{file}` / `{glob}` / `{tool}` / `{images}` / `{text, images}` |
 | `rubric` | 批量 | 唯一共享判据；线格式会替模型重复它 |
 | `items` | 批量 | 1–64 个自包含项；直接传字符串也合法 |
 | `questions` | 混合 | 1–64 个 `{name, type, instructions, criteria?}` |
 | `type` | 批量 | `choice` / `noul` / `score`（混合模式逐题给） |
 | `criteria` | choice/score | 标签集只写一次：批量走顶层，混合走每题 |
-| `depth` | 否 | `quick`（不升档不分批）、`normal`（默认）、`deep`（可切块） |
+| `depth` | 否 | `quick`（不升档不分批）、`normal`（默认）、`deep`（可切块）；图片请求忽略 |
 | `model` | 否 | 固定模型；关闭容量选择与升档 |
 
-**材料四形态**：内联文本 · `{ file: { path, startLine?, endLine? } }` · `{ glob: { pattern, limit? } }` · `{ tool: { name, arguments? } }`。工具输出**不进上下文**，全文落盘、路径回传为 `material.spillPath`；`tool` 不能与 `file`/`glob` 同时给，插件自身工具会被拒。
+**材料形态**：内联文本 · `{ file: { path, startLine?, endLine? } }` · `{ glob: { pattern, limit? } }` · `{ images: ["a.png"] }`（或 `{ text, images }`）· `{ tool: { name, arguments? } }`。工具输出**不进上下文**，全文落盘、路径回传为 `material.spillPath`；`text`/`file`/`glob` 可与 `images` 组合，`tool` 不能与其它形态组合，插件自身工具会被拒。
+
+**图片**：工作区内 PNG/JPEG/WebP 路径（1–8 张；单张 ≤16 MiB、总量 ≤24 MiB base64 前、请求体 ≤32 MiB）。插件读盘、按 magic 校验并 base64 编码，**图片字节不进你的上下文**。图片请求需要视觉模型，且只发一次——`depth` 被忽略（不升档/不分批/不扫描）。输出里会带 `material.images`（`count`/`bytes`/`encodedBytes`/`formats`）。
 
 **读结果**：`results[]`（`id`/`type`/`value`/`probabilities?`/`confidence?`）· `coverage`（`requested`/`answered`/`batches`/`truncated`/`truncatedBy`/`failed`/`aborted`）· `cost`（`model`/`inputTokens`/`bodyBytes`/`wallMs`/`escalated`/`attempts`）· `notes`（首行是选档结论）。
 
@@ -232,4 +240,4 @@ MIT —— 见 [LICENSE](./LICENSE)。
 
 ## 无兼容层
 
-这是一次性结构升级，不是版本过渡。旧行 id（`decision-tools-tool`）与旧配置键（`decisionEnabled` / `monitorEnabled`）不再被接受；使用上面的四行与三张 Config 表。契约见 [docs/architecture-current.md](./docs/architecture-current.md)，用例见 [docs/use-cases.md](./docs/use-cases.md)。
+这是一次性结构升级，不是版本过渡。旧行 id（`decision-tools-tool`）与旧配置键（`decisionEnabled` / `monitorEnabled`）不再被接受；使用上面的四行与三张 Config 表。契约见 [docs/architecture.md](./docs/architecture.md)，用例见 [docs/use-cases.md](./docs/use-cases.md)。

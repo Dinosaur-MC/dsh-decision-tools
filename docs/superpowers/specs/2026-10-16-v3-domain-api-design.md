@@ -2,7 +2,7 @@
 
 > 状态：**已定稿**（2026-10-16）。实现见 `docs/superpowers/plans/2026-10-16-v3-improvement-plan.md` 的 Phase 3（Task 8–14）。
 > 上游依据：ADR-1..6（`2026-10-04-dsh-decision-tools-design.md`）、ADR-7..10（`2026-10-12-auto-strategy-design.md`）、
-> 事实与实测：`docs/architecture-current.md`（含 §8 r6 真机数字）、`docs/use-cases.md`（五类判定形状）。
+> 事实与实测：`docs/architecture.md`（含 §8 r6 真机数字）、`docs/use-cases.md`（五类判定形状）。
 > 本规格只覆盖**工具面与适配层**；P0 正确性修复（计划 Phase 2）与可靠性增强（Phase 5）不在本文件。
 
 ## 0. 问题陈述（为什么必须改）
@@ -101,7 +101,7 @@ material: string                          // 内联材料
 - **扫描（分块）在 v3 是内部行为，不是调用方可选模式**：只有 `depth='deep'` 允许插件在「材料装不下」或「问题本身可定位」时走分块；`normal` 只允许分批（同一份材料切成多次请求），不切块。`coverage` 如实报告是否走了分块（`truncated`/`truncatedBy`/`failed`/`aborted`）。**逐块最大聚合只是定位线索，不是文档级结论** —— 这条语义保留（技能文档必须继续写），但不再暴露成参数。
 - `model` 保留为**高级逃生口**：显式给出即关闭本次容量分派与升档（既有语义不变，R1 裁定保留）。
 
-**依据**：外部评审 §4.1；`docs/architecture-current.md` 已知偏差 #1（`aggregate` 被忽略）。
+**依据**：外部评审 §4.1；`docs/architecture.md` 已知偏差 #1（`aggregate` 被忽略）。
 
 **验收**：三档各有测试（`quick` 超预算必须报错而**不是**悄悄分批）；`strategy`/`aggregate` 两个参数名不再存在。
 
@@ -122,7 +122,7 @@ keep_alive 只在此处透传；model 由 client 传入，不进 state
 - **判据写在材料之后**：r6 实测位置会移动概率（mean|ΔP| 0.0208、max 0.2236），而 `B-结尾` 对已按旧形状校准的调用方更平滑（ρ 0.904 vs 0.587）⇒ 位置是**契约**，不是实现细节。
 - `choice`/`score` 的 `criteria` 在批量模式下**复制到每个问题**（上游逐题要求），但只在 wire 层发生，调用方只写一次。
 
-**依据**：r6（`docs/architecture-current.md` §8）；外部评审 §4.1（协议细节集中一处）。
+**依据**：r6（`docs/architecture.md` §8）；外部评审 §4.1（协议细节集中一处）。
 
 **验收**：`test/wire.test.mjs` 断言 `body.state` 恰含一次判据且位于材料之后、`questions` 的键与项一一对应；并用检索确认上游词汇除 `wire.js`（及显示用途的 `render.js`）外无命中。
 

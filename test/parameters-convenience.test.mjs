@@ -35,7 +35,7 @@ test('questions 里的 criteria 同样归一', () => {
 });
 
 test('material 简写：{file:"…"} / {glob:"…"} 等价于对象形态', () => {
-  assert.deepEqual(normalizeMaterial({ file: 'README.md' }), { kind: 'file', fields: { path: 'README.md', startLine: undefined, endLine: undefined } });
-  assert.deepEqual(normalizeMaterial({ glob: 'docs/*.md' }), { kind: 'glob', fields: { pattern: 'docs/*.md', limit: undefined } });
-  assert.deepEqual(normalizeMaterial({ file: { path: 'a.md', startLine: 2 } }), { kind: 'file', fields: { path: 'a.md', startLine: 2, endLine: undefined } });
+  assert.deepEqual(normalizeMaterial({ file: 'README.md' }), { kind: 'file', fields: { path: 'README.md', startLine: undefined, endLine: undefined }, images: [] });
+  assert.deepEqual(normalizeMaterial({ glob: 'docs/*.md' }), { kind: 'glob', fields: { pattern: 'docs/*.md', limit: undefined }, images: [] });
+  assert.deepEqual(normalizeMaterial({ file: { path: 'a.md', startLine: 2 }, images: ['shot.png'] }), { kind: 'file', fields: { path: 'a.md', startLine: 2, endLine: undefined }, images: ['shot.png'] });
 });

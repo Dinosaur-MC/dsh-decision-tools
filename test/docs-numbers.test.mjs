@@ -4,13 +4,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 /**
- * 防复发守卫：`docs/architecture-current.md` §1.2 的「模块数 / 总行数」与模块表，必须与 `lib/*.js` 实测一致。
+ * 防复发守卫：`docs/architecture.md` §1.2 的「模块数 / 总行数」与模块表，必须与 `lib/*.js` 实测一致。
  *
  * 为什么需要它：docs-writer 与 verifier 两轮独立审查都发现同一类漂移（17/5906 → 18/6353 → 20/6483），
  * 每次都是「代码加了模块、文档忘了改」，而且没有任何测试会红。这里把它变成一次性检查。
  */
 const ROOT = new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
-const DOC = path.join(ROOT, 'docs', 'architecture-current.md');
+const DOC = path.join(ROOT, 'docs', 'architecture.md');
 
 const libFiles = fs.readdirSync(path.join(ROOT, 'lib')).filter((f) => f.endsWith('.js')).sort();
 const actualLines = new Map(libFiles.map((f) => [f, fs.readFileSync(path.join(ROOT, 'lib', f), 'utf8').split('\n').length - 1]));

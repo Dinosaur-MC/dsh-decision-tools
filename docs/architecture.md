@@ -1,7 +1,7 @@
 # dsh-decision-tools — 现状盘点（架构 / 功能 / 接口）
 
-> 快照时点：代码 HEAD 2026-10-19（monitor 流式/通知/EP 收口后）· 套件 **455 例**（455 pass / 0 skip / 0 fail） · 工作树干净（本轮文档提交在其上）。已过一轮三人交叉对抗复审（task-12/13/14）与 Lead 终检、四轮修复（`3475758` / `588015d` / `5dba57d`+`2540e30` / `a0ad872`）；其后新增 Monitor 与上游委托管道（`b1485e6`→`fcc1d86`），修掉一条真机 P0（`7a3c104`，见 §6 #22），并由 task-31 给 `decision` 补了同类宿主校验守卫（`b55b942`），本文已回填。
-> 本文描述 **v3 + 四行/GUI 现状**（as-is）：`decision` 工具面为 material/rubric/items/questions/type/criteria/depth/model 八键，输出统一五键；同时注册第二个模型可见工具 `monitor`。
+> 快照时点：代码 HEAD 2026-10-19（monitor 流式/通知/EP 收口后）· 套件 **460 例**（460 pass / 0 skip / 0 fail） · 工作树干净（本轮文档提交在其上）。已过一轮三人交叉对抗复审（task-12/13/14）与 Lead 终检、四轮修复（`3475758` / `588015d` / `5dba57d`+`2540e30` / `a0ad872`）；其后新增 Monitor 与上游委托管道（`b1485e6`→`fcc1d86`），修掉一条真机 P0（`7a3c104`，见 §6 #22），并由 task-31 给 `decision` 补了同类宿主校验守卫（`b55b942`），本文已回填。
+> 本文描述 **v3 + 四行/GUI 现状**（as-is）：`decision` 工具面为 material/rubric/items/questions/type/criteria/depth/model 八键（`material` 内含 text/file/glob/images/tool），输出统一五键；同时注册第二个模型可见工具 `monitor`。
 
 ## 0. 一句话
 
@@ -24,30 +24,30 @@
 | `decision-tools-skill` | `dsh-decision-tools/skill`（`lib/skill.js`） | `['skills']` | 注册随包 skill `decision-usage` |
 
 - 无运行时依赖；peer 依赖 `dsh-tools` / `dsh-skill` / `cordis` / `schemastery`（`package.json`）。
-- 打包白名单：`lib/**/*.js`、`assets/**`、`cordis.patch.yml`、两份 README、`LICENSE`、`THIRD_PARTY_NOTICES`；`npm pack --dry-run` 实测 **32 files**（大小以实跑为准；`docs/`、`test/`、`smoke/` 在 git 里被跟踪但**不入包**）。
+- 打包白名单：`lib/**/*.js`、`assets/**`、`docs/*.md`、`scripts/*.mjs`、`cordis.patch.yml`、两份 README、`CHANGELOG.md`、`LICENSE`、`THIRD_PARTY_NOTICES`；`npm pack --dry-run` 实测 **39 files**（大小以实跑为准；`docs/superpowers/`、`test/`、`smoke/`、`.temp/` 在 git 里被跟踪但**不入包**）。
 - 运行态通过 profile 的 `link:` symlink 指向工作区 ⇒ 磁盘代码即运行代码，**改码后要重载宿主**才生效。
 
-### 1.2 模块图（25 个模块 / 8480 行，`wc -l lib/*.js` 实测于 2026-10-19 代码态）
+### 1.2 模块图（25 个模块 / 8687 行，`wc -l lib/*.js` 实测于 2026-10-19 代码态）
 
 | 模块 | 行 | 职责 |
 |---|---|---|
-| `tool.js` | 1330 | 装配与编排中枢：decision/monitor 两条工具行共用的引擎（参数解析、分批 / depth 三档 / 内部扫描、输出五键与渲染接线）；source reader 由两条行各自创建 |
+| `tool.js` | 1457 | 装配与编排中枢：decision/monitor 两条工具行共用的引擎（参数解析、分批 / depth 三档 / 内部扫描、输出五键与渲染接线）；source reader 由两条行各自创建 |
 | `monitor.js` | 1232 | Monitor 内核：五类采样源适配、探测循环、按探测结果计数、前台 deadline/取消、后台作业注册与进度 |
-| `validate.js` | 934 | 校验层：LIMITS / MONITOR_LIMITS、两模式互斥、material 归一（含 file/glob 字符串简写）、depth 解析、逐题校验、criteria 归一（choice string[] / score {min,max}）、analyzeBody、validateMonitorArgs / validateUpstream |
+| `validate.js` | 986 | 校验层：LIMITS / MONITOR_LIMITS、两模式互斥、material 归一（text/file/glob/images，含字符串简写）、depth 解析、逐题校验、criteria 归一（choice string[] / score {min,max}）、analyzeBody、validateMonitorArgs / validateUpstream |
 | `pipe.js` | 525 | 上游委托管道：runUpstream（同时带 agent 与 parent）、原始输出提取、无条件转储 spillWrite、白名单读取器、委托深度上限 |
 | `monitor-tool.js` | 648 | monitor 的模型可见面：紧凑方言参数契约、全函数 render（返回内容块数组）、注册 |
-| `source.js` | 361 | 引用式材料：描述符校验、行范围切片、chunk 分块、glob 匹配器 |
+| `source.js` | 376 | 引用式材料：描述符校验、行范围切片、chunk 分块、glob 匹配器 |
 | `client.js` | 352 | HTTP 层：callSystemOne、错误分类（含溢出与 fetch blocked port 分支）、SystemOneError |
 | `escalate.js` | 328 | 阶梯、选档、单飞、容量分派 selectByCapacity、终态 describeExhausted |
 | `render.js` | 193 | 把结果渲染成给模型看的文本（零 import 的纯函数） |
 | `notify.js` | 209 | 通知策略：合并窗、限频、唤醒预算、投递（绝不调用 agent.cancel） |
-| `parameters.js` | 183 | 模型可见参数契约（八键，含 material 简写分支）+ 常驻 TOOL_DESCRIPTION |
+| `parameters.js` | 191 | 模型可见参数契约（八键，含 material 简写与 images 分支）+ 常驻 TOOL_DESCRIPTION |
 | `ollama.js` | 198 | 模型发现（Ollama /api/tags 或 OpenAI /v1/models + /api/show）：名称/上下文长度/参数量；支持 modelsPath 与 Bearer apiKey |
 | `scan.js` | 151 | 分块扫描编排、MAX_CONCURRENCY、聚合 aggregateNoul |
 | `event-log.js` | 158 | monitor 的 events 源生产者：定长环形缓冲 + 从 ctx.jobs 事件流映射 job.<status>（只读不写、故障隔离） |
 | `density.js` | 88 | 语言密度层：CJK 占比 → 2.32 / 3.33 B per token，softBytesFor(窗口 × 0.6 × 密度) |
 | `skill.js` | 88 | 注册随包 skill（provider、frontmatter 解析、资产定位） |
-| `wire.js` | 76 | 线格式唯一产地：WIRE_TYPES、toWireRequest（判据写在材料之后） |
+| `wire.js` | 81 | 线格式唯一产地：WIRE_TYPES、toWireRequest（判据写在材料之后） |
 | `plan.js` | 73 | 决策表：planAction（send/scan/escalate/fail）—— depth=deep 分块的唯一入口 |
 | `deliver.js` | 43 | 通知的最后一跳：deliverNotice(agents, mode, payload, info)（followup/inject 二分、绝不 cancel、失败静默） |
 | `index.js` | 75 | 核心行入口：发布共享模型/运行时配置；裸包名承载 dsh.client 与浏览器半 |
@@ -62,9 +62,9 @@
 
 1. **入口**：`execute(args, exec)`；先 `ctx.skills.get('decision-usage')`，拿不到 ⇒ 抛 `kind=skill_missing` **拒绝服务**。
 2. **模式与参数校验**：`assertModeExclusive` —— `items`（批量）与 `questions`（异质）**恰有其一**，同给即 `mode_conflict`、都不给即 `mode_missing`；`resolveDepth` 解析三档（缺省 `normal`）；逐题校验（题名唯一、题型合法、选项/档位按题型各自的 LIMITS）。
-3. **材料物化**：`normalizeMaterial` 归一**三形态**（内联字符串 / `file` / `glob`）；`tool` 由 `execute` 走 `resolveUpstreamMaterial` 旁路（不经 `normalizeMaterial`，故 `{tool,file}` 这类双给由 `execute` 显式报 `material_conflict`）。三种由 `resolveMaterial` 经 `source.js` 读盘（三道闸：描述符校验 / `ctx.fs.contains(root)` / `readBytes` 上限）：**单文件超限报错**；**glob 总量超限截断**并报 `coverage.truncated`/`truncatedBy`。第四种 `material:{tool:{name,arguments?}}` 走 `resolveUpstreamMaterial`：在**插件内**委托执行上游工具（`ctx.tools.execute`，**必须同时带 `agent` 与 `parent`**）、取**原始输出**、**无条件**转储到自建目录，并把 `material.spillPath`/`bytes`/`fullBytes`/`truncated`(/`exitCode`) 回传 —— **原始输出不被吞掉**；禁自递归（名单含生效的 `toolName` 与 `monitorToolName`）。材料一律**不进模型上下文**。
+3. **材料物化**：`normalizeMaterial` 归一 `text` / `file` / `glob` / `images`（`text`/`file`/`glob` 可与 `images` 组合）；`tool` 由 `execute` 走 `resolveUpstreamMaterial` 旁路（不经 `normalizeMaterial`，故 `{tool,...}` 双给由 `execute` 显式报 `material_conflict`）。`file`/`glob` 由 `resolveMaterial` 经 `source.js` 读盘（三道闸：描述符校验 / `ctx.fs.contains(root)` / `readBytes` 上限）：**单文件超限报错**；**glob 总量超限截断**并报 `coverage.truncated`/`truncatedBy`。`images` 由 `tool.js` 的 image reader 逐张读盘、按 magic 识别 PNG/JPEG/WebP、base64 编码；单张 ≤16 MiB、总量 ≤24 MiB（base64 前）。`material:{tool:{...}}` 走 `resolveUpstreamMaterial`：在**插件内**委托执行上游工具（`ctx.tools.execute`，**必须同时带 `agent` 与 `parent`**）、取**原始输出**、**无条件**转储到自建目录，并把 `material.spillPath`/`bytes`/`fullBytes`/`truncated`(/`exitCode`) 回传 —— **原始输出不被吞掉**；禁自递归（名单含生效的 `toolName` 与 `monitorToolName`）。材料一律**不进模型上下文**。
 4. **模型选择**：`selectByCapacity` —— 显式 `model` 优先 → 估算字节（`softBytesFor`，按窗口与语言密度）≤ 默认档阈值走默认档 → 否则取阶梯里容量足够的最小档 → 都不够取最大档 → 阶梯空/容量未知才用粘滞兜底。选档结论以 `notes` 首行对外可见。
-5. **线格式组装**：`wire.js` 的 `toWireRequest` 把 `material + rubric + items/questions + type + criteria + model + keepAlive` 组装成 `{model, state, questions}`：**`state` = 材料 + 两换行 + 判据块**（判据只出现一次、位于材料之后），`questions` 为对象映射（键为题名或 1-based 序号，值不含 name）。
+5. **线格式组装**：`wire.js` 的 `toWireRequest` 把 `material + rubric + items/questions + type + criteria + model + keepAlive + images` 组装成 `{model, state, questions, images?}`：**`state` = 材料 + 两换行 + 判据块**（判据只出现一次、位于材料之后；图片-only 时 state 可为空串），`questions` 为对象映射（键为题名或 1-based 序号，值不含 name），`images` 仅在非空时出现。
 6. **请求与提升**：单飞闸 `createSingleFlight`（互斥，不共享结果）；命中 `context_overflow` 且未显式指定模型 ⇒ 沿阶梯逐档重试（`escalationMaxAttempts`：额外升档次数，不含首次；默认 3，deep 再 +2）；**只有容量类错误才升档**，**只有成功才写粘滞**；用尽时抛统一终态 `escalation_exhausted`（附 `attempts`）。
 7. **分批与内部扫描**（按 `depth`）：`quick` 只用默认档、不升档不分批（超预算报错）；`normal` 允许按 body 预算**分批**（只改请求次数，不改返回结构）；`deep` 额外允许**内部分块扫描**（`planAction` 定；失败隔离、可中断、有 deadline）。调用方看到的永远是 `results[]`，分批/分块是内部实现。
 8. **输出与渲染**：写**五键**结果（`results` / `coverage` / `material` / `cost` / `notes`），`render` 生成模型看到的文本（**只呈现概率、不呈现阈值化判定**；阈值比较只在 `tool.js` 一处）；**首次使用**把 skill 正文一并交付。
@@ -76,7 +76,7 @@
 - **两模式互斥**（取代 v2 的「state 与 stateSource 恰有其一」）；`results` 与批次解耦；结果五键的 own value 一律是无损 JSON（宿主会强校验）。
 - **工具返回值必须与自己的 `output.schema` 逐键一致（宿主运行时硬校验）**：宿主 `createSuccessResult` 会 `validateJsonSchemaValue(output.schema, value, 'value')`，**有 violation 就 `throw ToolOutputError`** —— 顶层 `additionalProperties:false` 下**少声明一个真会返回的键**就等于**每次成功都失败**。⚠️ **本地测试直呼 `definition.execute` 会绕过这条 dispatch 校验**，所以「返回值键集 == schema 键集」必须由守卫钉住，不能靠「套件全绿」判断。2026-10-17 的真实事故与修法：`monitor` 前台分支返回 `probability` 而 `OUTPUT_SCHEMA` 未声明它 ⇒ 真机每次前台成功返回都会被判失败（当时 343/343 全绿也看不见）；`7a3c104` **补 schema 而不删字段**（render 一直在打印它，且它是与 `hitThreshold` 直接比较的第一性量），并在 monitor 侧加「用宿主 `validateJsonSchemaValue` 钉住两边键集」的守卫；decision 侧的同类守卫随 `b55b942`（task-31）落地。**边界**：真机 `createSuccessResult` 的**整条 dispatch 尚未跑过**（只跑了同一校验函数、同一入参）⇒ 「修后真机前台可用」是**推断**，真机验收归 task-26。
 - **Monitor 只记录、不阻断、不持久化**：计数只在内存（每次运行从 0 起算，故**没有重置通道**），`at`/`atIso`/`firstAt`/`lastAt` 毫秒只作记录、不参与命中判定；命中只**通知**，插件绝不 kill/cancel/retry/派发。被设计性删除的参数（`minGapMs` / `persistCount` / `resetCount`）**显式报错**而不是静默忽略 —— 静默忽略会让调用方以为冷却生效了。
-- 安全边界不变量：工作区内、读取上限、「单文件报错 / glob 截断」两种语义不可混同、截断的材料不得当完整材料用。
+- 安全边界不变量：工作区内、读取上限、「单文件报错 / glob 截断」两种语义不可混同、截断的材料不得当完整材料用。图片另有边界：仅 PNG/JPEG/WebP（magic 判据）、1–8 张、单张 ≤16 MiB、总量 ≤24 MiB（base64 前）、整包 ≤32 MiB；图片请求**单次发出**，不升档/不分批/不扫描，`depth` 被忽略；`model` 或 decision 行 `modelOverride` 必须指向 vision 模型。
 
 ## 2. 功能清单
 
@@ -104,7 +104,7 @@
 
 | 参数 | 必填 | 形状 | 说明 |
 |---|---|---|---|
-| `material` | **是** | `string` 或 `{file:{path,startLine?,endLine?}}` 或 `{glob:{pattern,limit?}}` 或 `{tool:{name,arguments?}}` | 共享材料；后三种是引用式形态，**不进上下文**；`tool` 见 §3.6 |
+| `material` | **是** | `string` 或 `{text,images}` 或 `{file:{path,startLine?,endLine?}}` 或 `{glob:{pattern,limit?}}` 或 `{images:["a.png"]}` 或 `{tool:{name,arguments?}}` | 共享材料；引用式形态**不进上下文**；`text`/`file`/`glob` 可与 `images` 组合；图片需视觉模型，且禁用升档/分批/扫描 |
 | `rubric` | 批量模式必填 | `string` | 共享判据，**只写一次**；wire 层放在材料之后 |
 | `items` | 批量模式必填 | 数组（≤64） | 每项是**自带完整待判对象**的短文本或标识；schema 允许任意 JSON，非字符串项**原样透传**给上游 |
 | `questions` | 异质模式必填 | `[{name,type,instructions,criteria?}]`（1–64） | 与 `items` **互斥**；每题自己的判据/选项 |
@@ -121,7 +121,7 @@ JSON Schema 的 `required` **只有 `material`**；模式内部必填由校验�
 |---|---|
 | `results` | `[{id,type,value,probabilities?,confidence?}]`：`noul` 的 `value` 为布尔（上游不回 `confidence`），`choice`/`score` 为所选标签 |
 | `coverage` | `{requested,answered,batches,truncated,truncatedBy?,failed,aborted}`。`truncated` = **材料自身截断（glob 总量超 `maxSourceBytes`）或扫描截断**；`truncatedBy` 取值 `material` / `chunks` / `totalBytes` / `deadline`（未截断为 null）；`aborted` = 调用方取消（含最后一块因取消失败）；**`batches` 只数单元级分批、不含 deep 的内部分块**（真机实测：12 块时 `batches` 仍为 1 ⇒ 分块只体现在 `notes` 与 `cost`，不要拿 `batches` 当分块信号）；未答项在 `results` 里以 `value:null` **占位**（保持 `results.length === requested`） |
-| `material` | `{source,bytes,descriptor?}`（`source` ∈ `inline`/`file`/`glob`）；**上游委托**时为 `{source:'tool',upstreamTool,bytes,fullBytes,truncated,spillPath,exitCode?}`（`exitCode` 仅进程型工具） |
+| `material` | `{source,bytes,descriptor?}`（`source` ∈ `inline`/`file`/`glob`，带图时另有 `images:{count,bytes,encodedBytes,formats}`）；**上游委托**时为 `{source:'tool',upstreamTool,bytes,fullBytes,truncated,spillPath,exitCode?}`（`exitCode` 仅进程型工具） |
 | `cost` | `{model,inputTokens,bodyBytes,wallMs,escalated,attempts[]}`。`inputTokens`/`bodyBytes` = 本次调用**实际发出的全部请求**之和（含分批、deep 内部分块、失败尝试）；`attempts` 只记**选档/升档**尝试（`{model,failureKind}`，成功项 `failureKind=null`），同档内的分批/分块不逐条记 |
 | `notes` | `string[]`：**首行是选档结论**（模型选择：<model>（<原因>）），其后是体积归因、低置信点名、扫描提示 |
 
@@ -180,9 +180,9 @@ JSON Schema 的 `required` **只有 `material`**；模式内部必填由校验�
 
 ### 3.5 skill 接口
 
-`{name:'decision-usage', provider:'dsh-decision-tools', source:'bundled', rank:600, invocation:{modelInvocable:true, userInvocable:true}, resourceBase:{kind:'directory', path:<assets 目录>}}`；正文来自 `assets/decision-usage/SKILL.md`（**7663 B**，frontmatter 必须含 `description`（**可路由性硬约束**：两个工具名与主要触发词必须落在**前 200 字符**内 —— 技能目录只展示这段前缀，超出即被截断；长度 ≤400 字符）；正文覆盖**两个工具的全部功能**：`decision` 的八键/四形态/三档 depth/五键读法/confidence/错误 kind，`monitor` 的 17 个参数、五类 source（含 `command` 的 argv 规则与 `events` 的全词表）、空源短路、后台 + `job_output`、通知三件套与输出字段）。
+`{name:'decision-usage', provider:'dsh-decision-tools', source:'bundled', rank:600, invocation:{modelInvocable:true, userInvocable:true}, resourceBase:{kind:'directory', path:<assets 目录>}}`；正文来自 `assets/decision-usage/SKILL.md`（**8475 B**，frontmatter 必须含 `description`（**可路由性硬约束**：两个工具名与主要触发词必须落在**前 200 字符**内 —— 技能目录只展示这段前缀，超出即被截断；长度 ≤400 字符）；正文覆盖**两个工具的全部功能**：`decision` 的八键/五种 material 形态（含 images）/三档 depth/五键读法/confidence/错误 kind，`monitor` 的 17 个参数、五类 source（含 `command` 的 argv 规则与 `events` 的全词表）、空源短路、后台 + `job_output`、通知三件套与输出字段）。
 
-**裁定变更（2026-10-18，用户指令）：Skill 必须把功能写全。** 原 2026-10-17 裁定「不在 skill 里增加 Monitor 用法段」被**取代**：skill 是模型了解本插件能力的唯一按需入口，遗漏功能等于能力未交付。现在正文同时覆盖 `decision` 与 `monitor`，预算上限由 4000 B 提到 **8000 B**（按需加载，不进每轮注入）。约束只剩一条：**参数名必须与工具面同步**（守卫 `test/parameters.test.mjs` 逐个比对 `PARAMETERS` 的键、五类 `source.kind` 与 `EVENT_TYPES` 全词表）。
+**裁定变更（2026-10-18，用户指令）：Skill 必须把功能写全。** 原 2026-10-17 裁定「不在 skill 里增加 Monitor 用法段」被**取代**：skill 是模型了解本插件能力的唯一按需入口，遗漏功能等于能力未交付。现在正文同时覆盖 `decision` 与 `monitor`，预算上限由 4000 B 提到 **8000 B**，2026-10-19 因 image material 说明再提到 **9000 B**（按需加载，不进每轮注入）。约束只剩一条：**参数名必须与工具面同步**（守卫 `test/parameters.test.mjs` 逐个比对 `PARAMETERS` 的键、五类 `source.kind` 与 `EVENT_TYPES` 全词表）。
 
 ### 3.6 monitor 工具面（第二个模型可见工具）
 
@@ -240,7 +240,7 @@ JSON Schema 的 `required` **只有 `material`**；模式内部必填由校验�
 
 ### 3.8 常量与阈值（`LIMITS` 及独立的 Monitor/管道常量）
 
-`maxQuestions:64` · `maxItems:64` · `minOptions:2` · `maxChoiceOptions:255` · `maxScoreLevels:10` · `maxBodyBytes:65536` · `maxSourceBytes:61440` · `scanMaxChunks:32` · `scanMaxTotalBytes:4194304` · `scanDeadlineMs:180000` · `scanMaxAdaptRounds:2` · `softBodyBytes:4096` · `minConfidence:0.25`
+`maxQuestions:64` · `maxItems:64` · `minOptions:2` · `maxChoiceOptions:255` · `maxScoreLevels:10` · `maxBodyBytes:65536` · `maxImageBodyBytes:33554432` · `maxImages:8` · `maxImageBytes:16777216` · `maxTotalImageBytes:25165824` · `maxSourceBytes:61440` · `scanMaxChunks:32` · `scanMaxTotalBytes:4194304` · `scanDeadlineMs:180000` · `scanMaxAdaptRounds:2` · `softBodyBytes:4096` · `minConfidence:0.25`
 
 另有**独立常量对象**（与 `LIMITS` 分开；数值只有一处来源，`Config` 里只放覆盖点、不复制数字）：
 
@@ -264,16 +264,16 @@ JSON Schema 的 `required` **只有 `material`**；模式内部必填由校验�
 
 | 工具 | description（≤1900） | 参数 schema（≤3600） | 输出 schema |
 |---|---|---|---|
-| `decision` | 1809 B | 3487 B（归一后投影；守卫口径的紧凑串 3465 B） | 841 B |
-| `monitor` | 1830 B | 2726 B（紧凑串 2692 B） | 1995 B（P0 修复后；修前 1878 B） |
+| `decision` | 1863 B | 3803 B（归一后投影；含 image material） | 841 B |
+| `monitor` | 1833 B | 3167 B（归一后投影） | 1995 B（P0 修复后；修前 1878 B） |
 
-  合计 **13027 B ≈ 3912 token/轮**（英文 3.33 B/token 折算）；skill 正文 **6758 B（≤8000）**只在首次使用时到达（2026-10-18 用户要求功能写全后由 4000 提到 8000）。⇒ 常驻成本比 v2 末期（5653 B ≈ 1698 token/轮）**涨了**：省的是每次调用的请求体与计费，不是常驻。
+  合计 **13502 B ≈ 4055 token/轮**（英文 3.33 B/token 折算）；skill 正文 **8475 B（≤9000）**只在首次使用时到达（2026-10-18 用户要求功能写全后由 4000 提到 8000；2026-10-19 image material 说明后提到 9000）。⇒ 常驻成本比 v2 末期（5653 B ≈ 1698 token/轮）**涨了**：省的是每次调用的请求体与计费，不是常驻。
 
 ## 5. 测试与门禁
 
-- 套件 `node --test --experimental-test-isolation=none "test/*.test.mjs"` = **455 例**（2026-10-19 代码态实跑核对；455 pass / 0 skip / 0 fail）= 顶层 `test(` 声明 **431** 条（`grep -c '^test('` 逐文件相加）+ 循环内生成的表驱动用例 **24** 条；共 **32** 个测试文件（`ls test/*.test.mjs | wc -l` = 32）；另有装置 `test/fake-ollama.mjs`（不匹配 `test/*.test.mjs` 这个 glob，不算例）。
+- 套件 `node --test --experimental-test-isolation=none "test/*.test.mjs"` = **460 例**（2026-10-19 代码态实跑核对；460 pass / 0 skip / 0 fail）= 顶层 `test(` 声明 **436** 条（`grep -c '^test('` 逐文件相加）+ 循环内生成的表驱动用例 **24** 条；共 **32** 个测试文件（`ls test/*.test.mjs | wc -l` = 32）；另有装置 `test/fake-ollama.mjs`（不匹配 `test/*.test.mjs` 这个 glob，不算例）。
 - **墙钟纪律（精确版）**：**不得用真实计时派生判定**（如按 deadline 计数、按耗时决定分支）。deep 的多轮重切预算用可注入时钟 + 纯函数 `scanRoundBudget` 断言（曾有一条用服务端忙等 60 ms 的用例在并行负载下抖红，已重写）。**已登记的例外**：`test/client.test.mjs` 用 `Date.now()` 做 `elapsed < 2000 ms` 的粗上限兜底、`test/escalate.test.mjs` 有一处 10 ms 等待用于让承诺沉降 —— 这两处不派生判定结果，保留并登记（见 §6 #21）。
-- 守卫：§4.9 判别性锚点、skill 锚点（十四条 v3 读法 + 词表负例）、README 配置表与 `Config` 投影一致（**29 键，按行计**；两份 README 的三张表键集与顺序 == 三条 `Config.dict`）、注入预算上限（`decision` description ≤1900 / 参数 schema ≤3600 / skill ≤8000；`monitor` description ≤1900 / 参数 schema ≤3600）、`COMPANION_SKILL === SKILL_NAME`、缺 skill 拒服务、首次交付 skill 正文；Monitor/管道新增：**零真实墙钟**（clock/sleep/decide/deliver 全注入）、通知三件套（合并 + 限频 + 唤醒预算）、`material.tool` 双形状对齐（模型面 `{name,arguments}` ↔ 校验层 `{tool,arguments}`）、禁自递归（名单含生效的 `toolName` 与 `monitorToolName`）、模型可见文案词表（v2 参数名负例，含 `stateSource`）、**output schema 与返回值键集一致**（monitor 侧 `7a3c104`、decision 侧 `b55b942`，两边都用宿主的 `valueSchemaSpecToJsonSchema` + `validateJsonSchemaValue` 钉住）。
+- 守卫：§4.9 判别性锚点、skill 锚点（十四条 v3 读法 + 词表负例）、README 配置表与 `Config` 投影一致（**29 键，按行计**；两份 README 的三张表键集与顺序 == 三条 `Config.dict`）、注入预算上限（`decision` description ≤1900 / 参数 schema ≤4000（image material 计入）/ skill ≤9000；`monitor` description ≤1900 / 参数 schema ≤3600）、`COMPANION_SKILL === SKILL_NAME`、缺 skill 拒服务、首次交付 skill 正文；Monitor/管道新增：**零真实墙钟**（clock/sleep/decide/deliver 全注入）、通知三件套（合并 + 限频 + 唤醒预算）、`material.tool` 双形状对齐（模型面 `{name,arguments}` ↔ 校验层 `{tool,arguments}`）、禁自递归（名单含生效的 `toolName` 与 `monitorToolName`）、模型可见文案词表（v2 参数名负例，含 `stateSource`）、**output schema 与返回值键集一致**（monitor 侧 `7a3c104`、decision 侧 `b55b942`，两边都用宿主的 `valueSchemaSpecToJsonSchema` + `validateJsonSchemaValue` 钉住）。
 - 另有：`node --check lib/*.js`、CR 字节 = 0、变异自检（累计 30+ 定点变异全杀）、隔离实例真机冒烟。
 - **装置不变量**（`cee0baa` 之后）：假服务永不交出 fetch 禁用端口；并发负载下错误分类不退化为 `unreachable`。
 - **冒烟必须真断言**（`fca5d2f`）：`smoke/live.mjs` 必须按**工具的五键形状**组装 value 再渲染，并断言「有 answers / 有 `usage.input_tokens` / 渲染文本非空占位 / 无 `undefined|NaN`」，任一不成立即**非 0 退出**并打印拿到了什么。历史教训：该脚本曾把原始回包（`{model,answers,usage}`）当五键喂 `renderAnswers` ⇒ 永远打印 `(no results returned)` 且 exit 0（假绿，见 §6 #21）。

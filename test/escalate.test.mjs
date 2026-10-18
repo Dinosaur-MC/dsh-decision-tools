@@ -321,7 +321,7 @@ test('selectByCapacity：字节数未知仍走最大档，但 capacityBytes 必�
 
 test('createSingleFlight 的公开 JSDoc 必须是「互斥、不共享结果」语义（防止照旧注释复活 r3 P0）', async () => {
   // 复审 P1/任务 task-16 必修 1：注释曾经写「后来者搭同一趟」「fn 同步调用、不丢进微任务」，
-  // 与实现（微任务串行互斥）和真源 architecture-current.md §1.3 第 6 步相反。照那种注释去「修」
+  // 与实现（微任务串行互斥）和真源 architecture.md §1.3 第 6 步相反。照那种注释去「修」
   // 就会把并发调用者拿到**别人的 answers** 的 r3 P0 复活 ⇒ 这条守卫读源码把话说死。
   const { readFile } = await import('node:fs/promises');
   const src = await readFile(new URL('../lib/escalate.js', import.meta.url), 'utf8');

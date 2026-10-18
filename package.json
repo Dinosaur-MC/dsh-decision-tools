@@ -1,6 +1,6 @@
 {
   "name": "dsh-decision-tools",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "DSH agent tools for local Ollama System One decision models: classify, answer yes/no, and score against a rubric in one batched request.",
   "keywords": [
     "dsh-plugin",

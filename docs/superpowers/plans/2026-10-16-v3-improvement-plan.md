@@ -1,6 +1,6 @@
 # dsh-decision-tools v3 与正确性改进 实施计划
 
-> ⚠️ 历史档：本文是当时的计划/规格。其中引用的 `.temp/` 探测产物已于 2026-10-16 随 v3 交付清理；**当前 as-is 事实以 `docs/architecture-current.md` 为准**。
+> ⚠️ 历史档：本文是当时的计划/规格。其中引用的 `.temp/` 探测产物已于 2026-10-16 随 v3 交付清理；**当前 as-is 事实以 `docs/architecture.md` 为准**。
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -14,7 +14,7 @@
 - `docs/superpowers/specs/2026-10-04-dsh-decision-tools-design.md`（ADR-1..6，基础设计）
 - `docs/superpowers/specs/2026-10-12-auto-strategy-design.md`（ADR-7..10，引用式材料/提升/扫描）
 - `docs/superpowers/specs/2026-10-16-v3-domain-api-design.md`（**本计划 Task 1 产出**，ADR-11..16）
-- `docs/architecture-current.md`（现状事实，含 §8 r6 真机数字）
+- `docs/architecture.md`（现状事实，含 §8 r6 真机数字）
 - `docs/use-cases.md`（五类判定形状 = 本计划的验收用例）
 - `.temp/gpt-review.md`（外部评审，P0 清单来源）
 
@@ -53,7 +53,7 @@
 
 **Interfaces:** 无代码接口；产出是本计划其余任务引用的规格文本。
 
-- [ ] **Step 1:** 按 ADR-11..16 写规格，每条含：决策、依据（引用 `architecture-current.md` §8 / `use-cases.md` / 外部评审节号）、被取代的旧条目、**验收指标**。ADR 编号与内容：ADR-11 两模式互斥（D1+D2）；ADR-12 `material` 抽象与安全边界不变量（保留：工作区内、读取上限、单文件超限报错 vs glob 截断、截断不可当完整）；ADR-13 输出统一与硬切（D3）；ADR-14 `depth` 三档语义（D4；含每档的升档上限与是否允许分批）；ADR-15 线格式适配层与 wire 形状（判据在材料之后；`questions` 为对象映射；`keep_alive` 只在此处）；ADR-16 容量与语言密度（D7）。
+- [ ] **Step 1:** 按 ADR-11..16 写规格，每条含：决策、依据（引用 `architecture.md` §8 / `use-cases.md` / 外部评审节号）、被取代的旧条目、**验收指标**。ADR 编号与内容：ADR-11 两模式互斥（D1+D2）；ADR-12 `material` 抽象与安全边界不变量（保留：工作区内、读取上限、单文件超限报错 vs glob 截断、截断不可当完整）；ADR-13 输出统一与硬切（D3）；ADR-14 `depth` 三档语义（D4；含每档的升档上限与是否允许分批）；ADR-15 线格式适配层与 wire 形状（判据在材料之后；`questions` 为对象映射；`keep_alive` 只在此处）；ADR-16 容量与语言密度（D7）。
 - [ ] **Step 2:** 在规格里放一张「旧键 → 新键」迁移表（逐键写「消失 / 改名 / 语义变化」），供 Task 13/14 直接照抄。
 - [ ] **Step 3:** 自检：核对 ADR-11..16 各自都能指到本计划的一个任务（互斥 → Task 9/10；material → Task 11；输出 → Task 12；depth → Task 9/11；wire → Task 8；容量 → Task 6）。
 - [ ] **Step 4:** Commit
@@ -303,7 +303,7 @@ test('判据写在材料之后，且只出现一次', () => {
 - [ ] **Step 1:** 按 Task 1 的迁移表写「旧 → 新」逐键对照，标注**破坏性**（旧键不再返回）。
 - [ ] **Step 2:** 写明「本次改动对调用方要不要动手」：需要（字段改名 + 单选 `depth`）。
 - [ ] **Step 3:** 修正 `docs/use-cases.md` 的反场景措辞：把「图片/视觉判定」写成**当前 DSH 扩展不支持**，不要让人读成整个 System One 不支持（Clef / Clef Flash 支持 `images`）。
-- [ ] **Step 4:** 在 `docs/architecture-current.md` 给 `choice 2–255` 加口径注：**本机实测值、非跨版本契约**（官方文档仍写 2–26）；运行时能力优先于静态常量。
+- [ ] **Step 4:** 在 `docs/architecture.md` 给 `choice 2–255` 加口径注：**本机实测值、非跨版本契约**（官方文档仍写 2–26）；运行时能力优先于静态常量。
 - [ ] **Step 5:** Commit — `git commit -m 'docs: 旧→新迁移表（破坏性变更）+ 两处口径修正'`
 
 ---
@@ -312,14 +312,14 @@ test('判据写在材料之后，且只出现一次', () => {
 
 ### Task 15: 真机收益实测（10 / 35 / 64 三档）
 
-**Files:** Create: `.temp/v3-eval/probe-v3.mjs`（不入库）；Modify: `docs/architecture-current.md` §8（回填数字）
+**Files:** Create: `.temp/v3-eval/probe-v3.mjs`（不入库）；Modify: `docs/architecture.md` §8（回填数字）
 
 **Interfaces:** 复用 r6 的合成集与探针结构（`.temp/review-v2/probe-r6.mjs`），把 A（旧工具面）与 v3 工具面在同一进程、交替顺序、5 次取中位。
 
 - [ ] **Step 1:** 探针产出每个档位的：请求体字节、`usage.input_tokens`、墙钟、标签一致率、准确率（合成集含 ground truth）。
 - [ ] **Step 2:** **形状断言**：把 v3 实际发出的 wire body 与 r6 的 B 形状逐字比对（判据在材料之后、`questions` 为对象映射）——不一致则该任务判失败，不允许用「工具面更简洁」替代。
 - [ ] **Step 3:** 判据：`input_tokens` 必须显著低于旧形状（r6 的 35 项基准为 −45.3%）；若达不到，先查 wire 形状，再查分批，最后才改设计。r6 遗留的未解机制（A 与 B 的单 prompt token 数 7230 vs 3940）若在 v3 复现 B 形状后仍拿不到同等降幅，回到该机制查因，**不得靠改设计绕开**。
-- [ ] **Step 4:** 把数字写进 `docs/architecture-current.md` §8 与规格（口径：**字节与计费两项收益才算收益，墙钟不作为卖点**）。
+- [ ] **Step 4:** 把数字写进 `docs/architecture.md` §8 与规格（口径：**字节与计费两项收益才算收益，墙钟不作为卖点**）。
 - [ ] **Step 5:** Commit — `git commit -m 'docs: v3 真机收益实测回填（10/35/64）'`
 
 ---
@@ -349,7 +349,7 @@ test('判据写在材料之后，且只出现一次', () => {
 
 ### Task 17: 阈值标定 + 粘滞边界 + 运行时能力发现
 
-**Files:** Create: `docs/threshold-calibration.md`；Modify: `docs/architecture-current.md`、`lib/escalate.js`（注释）
+**Files:** Create: `docs/threshold-calibration.md`；Modify: `docs/architecture.md`、`lib/escalate.js`（注释）
 
 - [ ] **Step 1:** 写清粘滞的三个层级与优先级：**显式 model（本次调用）> 会话/进程粘滞（上次显式或成功升档）> 默认档**，并写明失效条件（模型不存在 / 溢出 / 用户显式指定）。
 - [ ] **Step 2:** 写标定方法（不写数字结论）：用带标注的小集，按 `(model, question type, 业务)` 报告错误率与阈值曲线；区分「漏判高风险」与「误选无害」两类成本。

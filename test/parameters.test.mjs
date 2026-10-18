@@ -28,7 +28,9 @@ test('参数契约的结构不变量（DSL 的硬性要求）', () => {
   assert.equal(PARAMETERS.material.oneOf.length, 2);
   const reference = PARAMETERS.material.oneOf.find((branch) => branch.type === 'object');
   assert.equal(typeof reference.additionalProperties, 'boolean');
-  assert.deepEqual(Object.keys(reference.properties), ['file', 'glob', 'tool']);
+  assert.deepEqual(Object.keys(reference.properties), ['text', 'images', 'file', 'glob', 'tool']);
+  assert.equal(reference.properties.text.type, 'string');
+  assert.equal(reference.properties.images.type, 'json');
   assert.equal(reference.properties.file.oneOf.length, 2, 'file 接受字符串简写或对象');
   assert.equal(reference.properties.glob.oneOf.length, 2, 'glob 接受字符串简写或对象');
   const fileObject = reference.properties.file.oneOf.find((branch) => branch.type === 'object');
@@ -201,9 +203,11 @@ test('注入预算守卫：常驻 description 与 skill 正文各自有上限，
   const skillBytes = Buffer.byteLength(SKILL_BODY, 'utf8');
   const schemaBytes = Buffer.byteLength(JSON.stringify(PARAMETERS), 'utf8');
   assert.ok(descBytes <= 1900, `常驻 description ${descBytes}B 超过 1900B：每轮注入的内容必须精打细算`);
-  assert.ok(schemaBytes <= 3600, `参数 schema ${schemaBytes}B 超过 3600B：常驻 schema 才是注入成本的主体（压缩后 3402B）`);
-  // 2026-10-18 用户裁定：skill 必须把功能写全 ⇒ 上限由 4000B 提到 8000B（按需加载，不在每轮注入里）。
-  assert.ok(skillBytes <= 8000, `skill 正文 ${skillBytes}B 超过 8000B`);
+  // 2026-10-19：material.images / text 使 schema 增加约 400B；上限从 3600B 调到 4000B。
+  assert.ok(schemaBytes <= 4000, `参数 schema ${schemaBytes}B 超过 4000B：常驻 schema 才是注入成本的主体（image material 已计入预算）`);
+  // 2026-10-18 用户裁定：skill 必须把功能写全 ⇒ 上限由 4000B 提到 8000B。
+  // 2026-10-19：image material 说明使其增加约 500B；上限提到 9000B（按需加载，不在每轮注入里）。
+  assert.ok(skillBytes <= 9000, `skill 正文 ${skillBytes}B 超过 9000B`);
 });
 
 test('能投影成 JSON Schema，且 required 只剩 material（模式必给性在校验层）', () => {

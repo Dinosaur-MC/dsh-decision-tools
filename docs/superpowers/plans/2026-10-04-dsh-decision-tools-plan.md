@@ -1,6 +1,6 @@
 # dsh-decision-tools Implementation Plan
 
-> ⚠️ 历史档：本文是当时的计划/规格。其中引用的 `.temp/` 探测产物已于 2026-10-16 随 v3 交付清理；**当前 as-is 事实以 `docs/architecture-current.md` 为准**。
+> ⚠️ 历史档：本文是当时的计划/规格。其中引用的 `.temp/` 探测产物已于 2026-10-16 随 v3 交付清理；**当前 as-is 事实以 `docs/architecture.md` 为准**。
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

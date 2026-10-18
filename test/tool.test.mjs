@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { name, inject } from '../lib/index.js';
 import { Config, applyAll as apply } from './helpers/apply-all.mjs';
-import { resolveSoftBodyBytes, resolveMinConfidence, collectLowConfidence, scanRoundBudget, OUTPUT_SCHEMA, OUTPUT_JSON_SCHEMA, COMPANION_SKILL } from '../lib/tool.js';
+import { resolveSoftBodyBytes, resolveMinConfidence, collectLowConfidence, scanRoundBudget, OUTPUT_SCHEMA, OUTPUT_JSON_SCHEMA, COMPANION_SKILL, sniffImageMime } from '../lib/tool.js';
 import { SKILL_NAME } from '../lib/skill.js';
 import { name as decisionName, inject as decisionInject } from '../lib/decision-entry.js';
 import { name as monitorName, inject as monitorInject } from '../lib/monitor-entry.js';
@@ -52,7 +52,8 @@ function treeFs(files) {
       return [...seen.values()];
     },
     async readBytes(t, _signal, maxBytes) {
-      const raw = Buffer.from(files[norm(t.key)] ?? '', 'utf8');
+      const stored = files[norm(t.key)];
+      const raw = Buffer.isBuffer(stored) ? stored : Buffer.from(stored ?? '', 'utf8');
       if (raw.byteLength > maxBytes) throw new Error('FS_TOO_LARGE');
       return raw;
     },
@@ -905,7 +906,7 @@ test('§4.11：collectLowConfidence 跳过 noul、缺失按低计、<=0 关闭�
 });
 
 test('material 截断必须进 coverage：glob 总量超限 ⇒ truncatedBy=material（task-13 复审 P1）', async () => {
-  // 契约：docs/architecture-current.md §1.3 步骤 3 / §1.4 / 规格 ADR-12 —— 「glob 总量超限截断并报
+  // 契约：docs/architecture.md §1.3 步骤 3 / §1.4 / 规格 ADR-12 —— 「glob 总量超限截断并报
   // coverage.truncated/truncatedBy」「截断的材料不得当完整材料用」。程序化调用方读的就是 coverage。
   const fake = await startFakeOllama(echoNoul());
   try {
@@ -1017,4 +1018,71 @@ test('宿主契约：真实 execute 的返回必须通过 OUTPUT_SCHEMA 的强�
   } finally {
     await fake.close();
   }
+});
+
+const PNG_1PX = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nQAAAABJRU5ErkJggg==',
+  'base64',
+);
+
+test('material{images}：读盘、magic 识别、base64 上送、vision 模型与 notes', async () => {
+  const fake = await startFakeOllama(echoNoul());
+  try {
+    const fs = treeFs({ 'notes.md': 'ticket body', 'shots/probe.png': PNG_1PX });
+    const { registered, ctx } = fakeCtx({ fs });
+    apply(ctx, Config({ baseUrl: fake.baseUrl, modelOverride: 'clef-flash:latest' }));
+    const value = await registered[0].execute(
+      { material: { file: 'notes.md', images: ['shots/probe.png'] }, questions: [Q('q')] },
+      EXEC,
+    );
+    assert.equal(value.material.images.count, 1);
+    assert.equal(value.material.images.bytes, PNG_1PX.length);
+    assert.equal(value.material.images.formats[0], 'image/png');
+    assert.match(value.notes[1], /图片：1 张/);
+    const body = fake.requests.at(-1).json;
+    assert.equal(body.model, 'clef-flash:latest');
+    assert.deepEqual(body.images, [PNG_1PX.toString('base64')]);
+    assert.equal(body.state, 'ticket body');
+  } finally {
+    await fake.close();
+  }
+});
+
+test('material{images}：image-only state 为空；缺视觉模型时报错且零请求；非图片格式有可行动报错', async () => {
+  const fake = await startFakeOllama(echoNoul());
+  try {
+    const fs = treeFs({ 'shots/probe.png': PNG_1PX, 'shots/bad.png': Buffer.from('not an image') });
+    const withModel = fakeCtx({ fs });
+    apply(withModel.ctx, Config({ baseUrl: fake.baseUrl }));
+    const value = await withModel.registered[0].execute(
+      { material: { images: ['shots/probe.png'] }, model: 'clef-flash:latest', questions: [Q('q')] },
+      EXEC,
+    );
+    assert.equal(value.material.source, 'inline');
+    assert.equal(value.material.bytes, 0);
+    assert.equal(fake.requests.at(-1).json.state, '');
+
+    const noModel = fakeCtx({ fs });
+    apply(noModel.ctx, Config({ baseUrl: fake.baseUrl }));
+    const before = fake.requests.length;
+    await assert.rejects(
+      noModel.registered[0].execute({ material: { images: ['shots/probe.png'] }, questions: [Q('q')] }, EXEC),
+      /视觉模型/,
+    );
+    assert.equal(fake.requests.length, before, '缺视觉模型必须在发请求前拒绝');
+
+    await assert.rejects(
+      withModel.registered[0].execute({ material: { images: ['shots/bad.png'] }, model: 'clef-flash:latest', questions: [Q('q')] }, EXEC),
+      /PNG \/ JPEG \/ WebP/,
+    );
+  } finally {
+    await fake.close();
+  }
+});
+
+test('sniffImageMime：PNG / JPEG / WebP 文件头；未知格式返回 undefined', () => {
+  assert.equal(sniffImageMime(PNG_1PX), 'image/png');
+  assert.equal(sniffImageMime(Buffer.from([0xff, 0xd8, 0xff, 0x00])), 'image/jpeg');
+  assert.equal(sniffImageMime(Buffer.from('RIFF0000WEBP', 'ascii')), 'image/webp');
+  assert.equal(sniffImageMime(Buffer.from('GIF89a')), undefined);
 });

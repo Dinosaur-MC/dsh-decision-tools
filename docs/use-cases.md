@@ -1,12 +1,12 @@
 # `decision` 工具：使用场景（use cases）
 
-> 与 `docs/architecture-current.md` 配套：那篇讲**是什么**，这篇讲**什么场景该用、怎么调、成本与边界在哪**。
-> 事实基线：2026-10-19 代码态 · 套件 455/455 绿 · 本包注册**两个**模型可见工具：`decision`（八键：`material`/`rubric`/`items`/`questions`/`type`/`criteria`/`depth`/`model`）与 `monitor`（探测式等待原语，见 §7）。
+> 与 `docs/architecture.md` 配套：那篇讲**是什么**，这篇讲**什么场景该用、怎么调、成本与边界在哪**。
+> 事实基线：2026-10-19 代码态 · 套件 460/460 绿 · 本包注册**两个**模型可见工具：`decision`（八键：`material`/`rubric`/`items`/`questions`/`type`/`criteria`/`depth`/`model`）与 `monitor`（探测式等待原语，见 §7）。
 
 ## 0. 判定形状（决定它适配哪些场景）
 
 - 输入 = **一份共享材料** + **1–64 个有界问题**；输出 = 每题的概率 / 标签 / 分档。
-- **不产文字**、不做推理链、**本扩展不带图片输入**（上游 System One 支持 `images`，见 §5 口径注）。
+- **不产文字**、不做推理链；**支持图片 material**（PNG/JPEG/WebP，需视觉模型 `clef` / `clef-flash`），见 §2 与 §5。
 - 适用前提三条：**候选集已知且有限**、**判据能写清**、**答案能用概率表达**。
 - **`monitor` 是另一个工具、不是本工具的档位**：它把同一份判定能力用在「对同一个问题反复问」上（等一个事件发生），见 §7。
 
@@ -20,7 +20,7 @@
 | 4 | **一材料多异质问题** | 一份合同问 5 个不同问题 · 一份报告问是否合规/是否含某字段/是否需复核 | 混合 | 材料=那一份；每题自己的 `instructions` | 2–10 | 手感尚可（本来就该每题一句） |
 | 5 | **长材料定位**（哪些块提到 X） | 跨长文或多文件找相关段 · 大文档初筛候选段 | `noul` | `material` 的 file/glob；材料装不下时 `depth: 'deep'` 允许内部按块扫描 | 1–8 | 分块只答**可定位**问题；材料过大时装不下就报错，不会自动分块 |
 
-## 2. `material` 的四种形态
+## 2. `material` 的形态
 
 | 形态 | 何时用 | 注意 |
 |---|---|---|
@@ -28,8 +28,9 @@
 | `{ file: { path, startLine?, endLine? } }` | 材料在工作区文件里、**不想进自己的上下文** | `path` 必须**工作区相对**（绝对路径 / `..` / 逃逸符号链接一律拒）；行范围 1-based 闭区间；单文件超上限**报错**，不截断 |
 | `{ glob: { pattern, limit? } }` | 一批文件要一起判 | `*` 不跨目录、`**` 任意深度；总量超上限**截断**，并在 `coverage.truncated` / `coverage.truncatedBy` 如实报告 —— **截断的材料不得当完整材料用** |
 | `{ tool: { name, arguments? } }` | 材料是**另一个工具的输出**：既不想把它拉进自己的上下文，又要判它 | 插件在**进程内**委托执行（**始终**带 `agent` 与 `parent`）、取**原始输出**、**无条件**转储，并把 `spillPath`/`bytes`/`fullBytes`/`truncated`(/`exitCode`) 回传到 `material` —— 原始输出**不被吞掉**。**禁自递归**（名单含生效的 `toolName` 与 `monitorToolName`）。缺 `agent` 会让作用域外工具名报 unknown tool；缺 `parent` 会让模型面 content 被截断 |
+| `{ images: ["a.png", "b.jpg"] }` 或 `{ text: "...", images: [...] }` | 图片判定：截图是否含错误、UI 是否异常、票据字段、图表读数 | 图片由插件读盘并 base64 编码，**不进你的上下文**；仅支持 PNG/JPEG/WebP；1–8 张，单张 ≤16 MiB、总量 ≤24 MiB；需要视觉模型（`clef` / `clef-flash`），用 `model` 或 decision 行 `modelOverride` 指定。图片请求**不分批/不升档/不扫描**（32 MiB body 上限），`depth` 被忽略 |
 
-四种形态由 `material` **一个参数**承载（取代旧版的 `state` + `stateSource`），且后三种引用式形态都由插件自己取料、**永不进你的上下文**。`material` 是**必填**。
+这些形态由 `material` **一个参数**承载（取代旧版的 `state` + `stateSource`），且引用式形态都由插件自己取料、**永不进你的上下文**。`material` 是**必填**。`text` / `file` / `glob` 可以与 `images` 组合；`tool` 不能与其它形态组合。
 
 ## 3. 场景 → 调用骨架
 
@@ -67,7 +68,19 @@ v3 形状 —— 判据只写一次，N 项各自只带自己的短对象：
     { name: '风险', type: 'score', instructions: '风险等级', criteria: [ '低', '中', '高' ] } ] }
 ```
 
-### 3.3 长材料定位（深档 + `coverage` 读法）
+### 3.3 图片判定（vision）
+
+```jsonc
+{
+  material: { images: ['screenshots/checkout-error.png'] },
+  model: 'clef-flash:latest',
+  questions: [ { name: 'has_error', type: 'noul', instructions: 'Does this screenshot show an error state?' } ]
+}
+```
+
+也可以把文字上下文与图片一起给：`material: { text: 'Checkout fails after clicking Pay.', images: ['a.png'] }`。`state` 为空是合法的（图片-only），判据由 `questions` 的 `instructions` 或批量 `rubric` 提供。
+
+### 3.4 长材料定位（深档 + `coverage` 读法）
 
 ```jsonc
 {
@@ -95,14 +108,12 @@ v3 形状 —— 判据只写一次，N 项各自只带自己的短对象：
 | 需要**可读判据**作为证据存档 | tev1 系只回概率 | 生成式模型，或人写结论 |
 | 路由 / 放行的**最终判据**（fail-open/closed） | 概率不是证明；模型坏了会连带坏掉路由 | 确定性规则；本工具只做初筛 |
 | 对整篇长文问**整体**结论并交给深档内部分块 | 逐块最大 ≠ 文档级概率 | 先分块定位候选段（`depth: 'deep'`），再对候选段单发提问 |
-| 图片 / 视觉判定 | **当前 DSH 扩展不支持**（`decision` 工具面没有 `images` 参数） | 直接用 Ollama `/v1/systemone` 的 `images` 字段（本扩展未包），或另用视觉模型/工具 |
+| 用 `tev1` / `nimble` 判图 | 这两个模型不支持 vision，服务端会回 400 `does not support vision` | 改用 `clef` / `clef-flash`，并显式给 `model` 或在 decision 行设置 `modelOverride` |
 | 把结果当**正确性证据** | 概率是提示不是证据 | 产物级证据 |
 
-> **口径注（图片，2026-10-16）**：**上游 System One 支持图片** —— `/v1/systemone` 请求体有 `images` 字段
-> （base64 编码的 PNG/JPEG/WebP，被该次请求的所有问题共享），**Clef / Clef Flash 可判图**
-> （官方决策指南原文：「Clef and Clef Flash read images alongside the state」）。本仓库的 `decision` 扩展
-> **没有把 `images` 暴露成工具参数**，所以上表记「不支持」——这是**本扩展的缺口，不是上游或 System One 的限制**。
-> 本地请求体限制也因此分两档：文本与 schema（不含图）≤64 KiB，整包（含 base64 与 JSON）≤32 MiB。
+> **图片口径（2026-10-19）**：`material.images` 已暴露；插件只接受工作区内的 PNG/JPEG/WebP 路径，按 magic bytes 识别后 base64 上送。
+> 官方决策指南确认 **Clef / Clef Flash 可读图**（「Clef and Clef Flash read images alongside the state」）；`tev1` / `nimble` 不支持 vision。
+> 本地请求体限制分两档：**文本 ≤64 KiB**，**含图整包 ≤32 MiB**。图片请求不分批/不升档/不扫描，`depth` 被忽略；一次最多 8 张、单张 ≤16 MiB、总量 ≤24 MiB（base64 前）。
 
 ## 6. 场景 × API 适配度（v3 的验收标准）
 

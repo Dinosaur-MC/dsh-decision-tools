@@ -1,6 +1,6 @@
 ---
 name: decision-usage
-description: Use for probability judgements on local material — `decision` (routing, classify/filter/rank, relevance, yes-no, 1–N scoring; inline/file/glob/tool input) and `monitor` (wait for a background job, file, command output or job event; polling, not a scheduler). Both return probabilities, not prose.
+description: Use for probability judgements on local material — `decision` (routing, classify/filter/rank, relevance, yes-no, 1–N scoring; inline/file/glob/tool and PNG/JPEG/WebP image input) and `monitor` (wait for a background job, file, command output or job event; polling, not a scheduler). Both return probabilities, not prose.
 ---
 
 # Using the local decision model (`decision`) and `monitor`
@@ -20,20 +20,21 @@ Each `item` is the complete short string or object to judge; the plugin never in
 
 Other parameters: `depth`, `model` (see §3). Invalid calls fail with a stable `kind` (`mode_invalid` for mode/count/shape problems, `invalid_request` for field-level ones, `material_*`/`source_*`/`upstream_*` for the rest) — read the message, it lists the legal values.
 
-## 2. `material`: inline, file, glob, or tool
+## 2. `material`: inline, file, glob, images, or tool
 
 - a string (inline material);
 - `{ file: { path, startLine?, endLine? } }` — `path` is workspace-root-relative (absolute, `..`, escaping symlinks refused); ranges are 1-based inclusive;
 - `{ glob: { pattern, limit? } }`;
-- `{ tool: { name, arguments? } }` — judge a host tool's **raw output**: it never enters your context, full text at `material.spillPath`; not with `file`/`glob` (`material_conflict`); the plugin's own tools are refused (`upstream_self_recursion`).
+- `{ tool: { name, arguments? } }` — judge a host tool's **raw output**: it never enters your context, full text at `material.spillPath`; not with any other form (`material_conflict`); the plugin's own tools are refused (`upstream_self_recursion`).
+- `{ images: ["a.png", "b.jpg"] }` — 1–8 workspace-relative PNG/JPEG/WebP paths, read and base64-encoded by the plugin; no image bytes enter your context. Combine with text via `{ text, images }` or `{ file/glob, images }`. **Requires a vision model**: pass `model: "clef-flash:latest"` (or `clef`), or set the decision row `modelOverride`; `tev1`/`nimble` return `does not support vision`. Per-image ≤16 MiB, total raw ≤24 MiB, request body ≤32 MiB. Image calls are a **single request**: no escalation, batching or scanning; `depth` is ignored.
 
-A file over the cap **fails**; a glob over the total cap is **truncated** (never complete). `material` reports the source, byte counts and `truncated`; `coverage.truncated`/`truncatedBy` mirror it.
+A file over the cap **fails**; a glob over the total cap is **truncated** (never complete). `material` reports the source, byte counts and `truncated`; image returns add `material.images` (`count`/`bytes`/`encodedBytes`/`formats`); `coverage.truncated`/`truncatedBy` mirror text truncation.
 
 ## 3. `depth`: how much work the plugin may do
 
 - `quick` — default model only; over budget it **fails**. `normal` (default) — smallest fitting model, escalates on overflow. Batching never changes `results[]`: one entry per item. `deep` — starts bigger, may chunk the material.
 
-An explicit `model` disables capacity choice/escalation. Escalation switches to a different base model, so thresholds calibrated for one may not carry over (`cost.escalated`). Any Ollama model answering System One works: `model` pins a call, `defaultModel` changes the session default, `ladder` controls escalation, `node scripts/list-models.mjs` lists installed models.
+An explicit `model` disables capacity choice/escalation. Escalation switches to a different base model, so thresholds calibrated for one may not carry over (`cost.escalated`). Any Ollama model answering System One works: `model` pins a call, `defaultModel` changes the session default, `ladder` controls escalation, `node scripts/list-models.mjs` lists installed models. For images, `model`/`modelOverride` must name a vision model (`clef`/`clef-flash`); `depth` is ignored and the call is sent once.
 
 ## 4. Read `results`, `coverage`, `cost`, `notes`
 

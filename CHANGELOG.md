@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0 — 2026-10-19
+
+- Image material: `material.images` accepts 1–8 workspace-relative PNG/JPEG/WebP paths; `material.text` combines inline text with images; images are magic-checked, base64-encoded, and never enter the agent context.
+- Image calls use a vision model (`clef` / `clef-flash`, passed via `model` or the decision row `modelOverride`), a 32 MiB body limit, and a single request (no escalation/batching/scanning; `depth` ignored).
+- Output `material.images` reports count/bytes/encodedBytes/formats.
+- Renamed `docs/architecture-current.md` to `docs/architecture.md` and updated references.
+- CI test dependencies are devDependencies; `npm install --ignore-scripts` now installs them on both Node 22.19 and 24.
+
 ## 0.3.0 — 2026-10-19
 
 First public release.

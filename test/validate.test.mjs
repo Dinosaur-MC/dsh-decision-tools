@@ -169,6 +169,10 @@ test('LIMITS 冻结：服务端硬限 + 本地阈值（体积/置信度/引用�
     maxChoiceOptions: 255,
     maxScoreLevels: 10,
     maxBodyBytes: 65536,
+    maxImageBodyBytes: 33554432,
+    maxImages: 8,
+    maxImageBytes: 16777216,
+    maxTotalImageBytes: 25165824,
     // v2 新增（ADR-7 / ADR-9）：引用式读取上限 + 扫描的三重预算与自适应轮数。
     // maxSourceBytes 必须 < maxBodyBytes（65536），否则 state 会先被 body 守卫拒掉。
     maxSourceBytes: 61440,
@@ -265,11 +269,11 @@ test('analyzeBody 的模型可见提示只称 v3 参数名（rubric，不再是�
 });
 
 test('normalizeMaterial：内联 / file / glob 三形态归一，形状错误给结构化拒绝', () => {
-  assert.deepEqual(normalizeMaterial('材料'), { kind: 'inline', text: '材料' });
+  assert.deepEqual(normalizeMaterial('材料'), { kind: 'inline', text: '材料', images: [] });
   assert.deepEqual(normalizeMaterial({ file: { path: 'docs/a.md', startLine: 2, endLine: 3 } }),
-    { kind: 'file', fields: { path: 'docs/a.md', startLine: 2, endLine: 3 } });
+    { kind: 'file', fields: { path: 'docs/a.md', startLine: 2, endLine: 3 }, images: [] });
   assert.deepEqual(normalizeMaterial({ glob: { pattern: 'docs/*.md', limit: 5 } }),
-    { kind: 'glob', fields: { pattern: 'docs/*.md', limit: 5 } });
+    { kind: 'glob', fields: { pattern: 'docs/*.md', limit: 5 }, images: [] });
   assert.throws(() => normalizeMaterial(''), (error) => error.kind === 'material_invalid');
   assert.throws(() => normalizeMaterial(42), (error) => error.kind === 'material_invalid');
   assert.throws(() => normalizeMaterial({}), (error) => error.kind === 'material_invalid');
@@ -283,7 +287,7 @@ test('normalizeMaterial：内联 / file / glob 三形态归一，形状错误给
 
 test('resolveMaterial：内联不读盘；引用形态交给注入的读取器（本模块零 I/O）', async () => {
   const inline = await resolveMaterial('内联', { read: () => { throw new Error('不该被调用'); } });
-  assert.deepEqual(inline, { text: '内联', source: undefined });
+  assert.deepEqual(inline, { text: '内联', source: undefined, images: [] });
 
   const calls = [];
   const read = async (descriptor, options) => {
@@ -338,14 +342,14 @@ test('批量 criteria 的报错定位是 criteria（…），不得再拼成 cri
 test('normalizeMaterial：顶层未知键 fail-closed（不再静默丢弃），合法形状不受影响', () => {
   assert.throws(() => normalizeMaterial({ file: { path: 'a.txt' }, extra: 1 }), (error) => {
     assert.equal(error.kind, 'material_invalid');
-    assert.match(error.message, /只接受 file 或 glob/);
+    assert.match(error.message, /只接受 text \/ file \/ glob \/ images/);
     assert.match(error.message, /"extra"/);
     return true;
   });
-  assert.throws(() => normalizeMaterial({ glob: { pattern: 'a/*' }, stateSource: {} }), /只接受 file 或 glob/);
+  assert.throws(() => normalizeMaterial({ glob: { pattern: 'a/*' }, stateSource: {} }), /只接受 text \/ file \/ glob \/ images/);
   assert.deepEqual(normalizeMaterial({ file: { path: 'a.txt', startLine: 1, endLine: 3 } }),
-    { kind: 'file', fields: { path: 'a.txt', startLine: 1, endLine: 3 } });
-  assert.deepEqual(normalizeMaterial('材料'), { kind: 'inline', text: '材料' });
+    { kind: 'file', fields: { path: 'a.txt', startLine: 1, endLine: 3 }, images: [] });
+  assert.deepEqual(normalizeMaterial('材料'), { kind: 'inline', text: '材料', images: [] });
 });
 // ——— Monitor 与上游委托管道（规格 2026-10-17）———
 import { validateMonitorArgs, validateUpstream, MONITOR_LIMITS } from '../lib/validate.js';
@@ -451,4 +455,27 @@ test('monitor：严格化后的参数不许静默降级', () => {
   assert.equal(big.tailBytes, MONITOR_LIMITS.maxTailBytes);
   assert.equal(big.hitThreshold, 1);
   assert.equal(big.clampNotes.length, 3, '三处钳制都必须留痕');
+});
+
+test('normalizeMaterial：images 可与 text/file/glob 组合，路径安全与上限在本地拒绝', async () => {
+  assert.deepEqual(normalizeMaterial({ images: ['a.png', 'b.jpg'] }),
+    { kind: 'inline', text: '', images: ['a.png', 'b.jpg'] });
+  assert.deepEqual(normalizeMaterial({ text: 'context', images: 'a.png' }),
+    { kind: 'inline', text: 'context', images: ['a.png'] });
+  assert.deepEqual(normalizeMaterial({ file: 'a.md', images: ['a.png'] }),
+    { kind: 'file', fields: { path: 'a.md', startLine: undefined, endLine: undefined }, images: ['a.png'] });
+  assert.throws(() => normalizeMaterial({ text: 'x', file: 'a.md' }), (e) => e.kind === 'material_conflict');
+  assert.throws(() => normalizeMaterial({ images: [] }), (e) => e.kind === 'material_invalid');
+  assert.throws(() => normalizeMaterial({ images: ['../x.png'] }), (e) => e.kind === 'material_invalid');
+  assert.throws(() => normalizeMaterial({ images: Array.from({ length: LIMITS.maxImages + 1 }, (_, i) => `${i}.png`) }),
+    (e) => e.kind === 'material_invalid');
+
+  const calls = [];
+  const read = async (descriptor) => {
+    calls.push(descriptor);
+    return { state: 'text', source: { kind: 'file', path: 'a.md', bytes: 4 } };
+  };
+  const loaded = await resolveMaterial({ file: 'a.md', images: ['a.png'] }, { read });
+  assert.deepEqual(loaded.images, ['a.png']);
+  assert.deepEqual(calls[0], { kind: 'file', path: 'a.md', startLine: undefined, endLine: undefined });
 });

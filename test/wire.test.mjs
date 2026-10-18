@@ -67,3 +67,17 @@ test('纯函数：不改入参、不 import 任何东西（wire.js 是唯一知�
   assert.deepEqual(questions, [{ name: 'q', type: 'noul', instructions: 'x', extra: 'ignored' }], '入参不得被修改');
   assert.equal('extra' in body.questions.q, false, '未声明的字段不得进 wire body');
 });
+
+test('images：有图才出现；图片-only 的 state 不以前导换行开头', () => {
+  const body = toWireRequest({
+    material: '', rubric: '判据X', items: ['甲'], type: 'noul', model: 'clef-flash:latest', images: ['AAA', 'BBB'],
+  });
+  assert.equal(body.state, '判据：判据X');
+  assert.deepEqual(body.images, ['AAA', 'BBB']);
+  assert.deepEqual(Object.keys(body.questions), ['1']);
+  const noImages = toWireRequest({ material: 'm', rubric: 'r', items: ['甲'], type: 'noul', model: 'x' });
+  assert.equal('images' in noImages, false);
+  const textOnlyState = toWireRequest({ material: '材料', rubric: 'r', items: ['甲'], type: 'noul', model: 'x', images: [] });
+  assert.equal(textOnlyState.state, '材料' + LF2 + '判据：r');
+  assert.equal('images' in textOnlyState, false);
+});

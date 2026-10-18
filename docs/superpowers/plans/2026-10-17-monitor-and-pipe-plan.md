@@ -39,7 +39,7 @@
 | `test/notify.test.mjs` | 新建 | 合并/限频/唤醒预算（注入 deliver，零真实 inbox） |
 | `test/pipe.test.mjs` | 新建 | 委托参数、原始输出提取、转储与白名单读取器、禁自递归 |
 | `test/tool.test.mjs` · `test/validate.test.mjs` | 修改 | 新参数校验与输出契约 |
-| `docs/architecture-current.md` · `README.md` · `docs/use-cases.md` | 修改 | as-is 真源、工具清单、用例 |
+| `docs/architecture.md` · `README.md` · `docs/use-cases.md` | 修改 | as-is 真源、工具清单、用例 |
 
 ---
 
@@ -199,7 +199,7 @@
 ### Task 10: 文档与打包门禁
 
 **Files:**
-- Modify: `docs/architecture-current.md`、`README.md`、`docs/use-cases.md`
+- Modify: `docs/architecture.md`、`README.md`、`docs/use-cases.md`
 
 **Steps:**
 - [ ] 更新 as-is 真源：模块数/行数、工具清单（`decision` + `monitor`）、新增 Config 键、`upstream` 入口与 tee 语义、未验清单。

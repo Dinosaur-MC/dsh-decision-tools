@@ -20,6 +20,7 @@ Judgements run on **your own Ollama** (`/v1/systemone`). Nothing goes to a cloud
 - DSH desktop with this plugin enabled (see Install).
 - A local Ollama serving the decision model — default `tev1:0.8b`, override per call with `model`.
 - No API key; the judgement itself makes no outbound call.
+- For image material: a vision-capable model (`clef` / `clef-flash`). `tev1` / `nimble` return `does not support vision`.
 
 ## Install
 
@@ -80,7 +81,12 @@ node scripts/list-models.mjs --json   # { models, ladder }
 { "material": { "tool": { "name": "git_bash", "arguments": { "command": "npm test" } } },
   "rubric": "Did the test suite pass?", "items": ["the test suite output"], "type": "noul" }
 
-// 4) Wait for a background job, and get a notice on a hit
+// 4) Judge an image (needs a vision model)
+{ "material": { "images": ["screenshots/checkout-error.png"] },
+  "model": "clef-flash:latest",
+  "questions": [ { "name": "has_error", "type": "noul", "instructions": "Does this screenshot show an error state?" } ] }
+
+// 5) Wait for a background job, and get a notice on a hit
 { "source": { "kind": "job", "id": "<jobId>" },
   "rubric": "Did the job finish successfully?", "background": true, "notify": "inbox" }
 ```
@@ -96,16 +102,18 @@ Give `material` plus **exactly one** mode:
 
 | Parameter | Required | Notes |
 |---|---|---|
-| `material` | yes | Inline string, `{file}`, `{glob}`, or `{tool}` |
+| `material` | yes | Inline string, `{file}`, `{glob}`, `{tool}`, `{images}`, or `{text, images}` |
 | `rubric` | batch | The one shared criterion; the wire layer repeats it for the model |
 | `items` | batch | 1–64 self-contained items; plain strings are valid |
 | `questions` | mixed | 1–64 `{name, type, instructions, criteria?}` |
 | `type` | batch | `choice` / `noul` / `score` (mixed: per question) |
 | `criteria` | choice/score | Labels once: top-level in batch, per question in mixed |
-| `depth` | no | `quick` (no escalation/batching), `normal` (default), `deep` (may chunk) |
+| `depth` | no | `quick` (no escalation/batching), `normal` (default), `deep` (may chunk); ignored for images |
 | `model` | no | Pin a model; disables capacity choice and escalation |
 
-**Material forms**: inline text · `{ file: { path, startLine?, endLine? } }` · `{ glob: { pattern, limit? } }` · `{ tool: { name, arguments? } }`. A tool's raw output never enters your context; the full text is spilled and returned as `material.spillPath`. `tool` cannot be combined with `file`/`glob`, and the plugin's own tools are refused.
+**Material forms**: inline text · `{ file: { path, startLine?, endLine? } }` · `{ glob: { pattern, limit? } }` · `{ images: ["a.png"] }` (or `{ text, images }`) · `{ tool: { name, arguments? } }`. A tool's raw output never enters your context; the full text is spilled and returned as `material.spillPath`. `text`/`file`/`glob` may be combined with `images`; `tool` cannot be combined with any other form, and the plugin's own tools are refused.
+
+**Images**: workspace-relative PNG/JPEG/WebP paths (1–8; ≤16 MiB each, ≤24 MiB total raw, request body ≤32 MiB). The plugin reads, magic-checks and base64-encodes them; the bytes never enter your context. Image requests require a vision model and run as a single request — `depth` is ignored (no escalation, batching or scanning). Output includes `material.images` (`count`/`bytes`/`encodedBytes`/`formats`).
 
 **Read the result**: `results[]` (`id`, `type`, `value`, `probabilities?`, `confidence?`) · `coverage` (`requested`/`answered`/`batches`/`truncated`/`truncatedBy`/`failed`/`aborted`) · `cost` (`model`/`inputTokens`/`bodyBytes`/`wallMs`/`escalated`/`attempts`) · `notes` (first line = model-selection decision).
 
@@ -232,4 +240,4 @@ MIT — see [LICENSE](./LICENSE).
 
 ## No compatibility layer
 
-This is a one-time structural upgrade, not a version transition. Old row ids (`decision-tools-tool`) and old config keys (`decisionEnabled` / `monitorEnabled`) are not accepted; use the four rows and three Config tables above. See [docs/architecture-current.md](./docs/architecture-current.md) for the as-is contract and [docs/use-cases.md](./docs/use-cases.md) for worked examples.
+This is a one-time structural upgrade, not a version transition. Old row ids (`decision-tools-tool`) and old config keys (`decisionEnabled` / `monitorEnabled`) are not accepted; use the four rows and three Config tables above. See [docs/architecture.md](./docs/architecture.md) for the as-is contract and [docs/use-cases.md](./docs/use-cases.md) for worked examples.

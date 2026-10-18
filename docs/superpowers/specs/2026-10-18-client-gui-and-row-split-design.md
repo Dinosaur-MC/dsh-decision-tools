@@ -508,7 +508,7 @@ model 传 "auto" 等价于省略（走容量选档、允许升档），不再被
 - lib/validate.js — choice string[]、score {min,max}、material 简写。
 - lib/monitor-tool.js — 适配 resolveConfig 的活读取。
 - README.md / README.zh.md — 三张配置表 + GUI 说明（无迁移段）。
-- docs/architecture-current.md — 四行结构、客户端半、模块/用例数字。
+- docs/architecture.md — 四行结构、客户端半、模块/用例数字。
 - test/tool.test.mjs / test/monitor-tool.test.mjs — 入口改测试组合器。
 - test/parameters.test.mjs / test/validate.test.mjs — 新契约。
 - test/docs-numbers.test.mjs — 数字守卫（未改断言，只更新文档数字）。
