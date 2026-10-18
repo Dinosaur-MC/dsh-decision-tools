@@ -3,7 +3,15 @@ import assert from 'node:assert/strict';
 import {
   publishSharedConfig, clearSharedConfig, readSharedConfig, live, orderLadder, SHARED_DEFAULTS,
 } from '../lib/config-bus.js';
+import { DecisionConfig } from '../lib/configs.js';
 import { resolveDecisionConfig, resolveMonitorConfig } from '../lib/tool.js';
+
+test('escalationMaxAttempts 不写 schema 默认：空值可清空，生效值由 resolver 回落 3', () => {
+  const json = DecisionConfig.toJSON();
+  const node = json.refs[json.uid].dict.escalationMaxAttempts;
+  assert.equal(node.meta && node.meta.default, undefined, 'schema 不应写 default，否则清空会被 inherited 盖回');
+  assert.equal(resolveDecisionConfig({}).escalationMaxAttempts, 3);
+});
 
 test('orderLadder：按 modelOrder 重排已有阶梯，未列出的保持相对顺序', () => {
   const ladder = [

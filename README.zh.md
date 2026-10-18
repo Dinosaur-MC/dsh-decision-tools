@@ -150,7 +150,7 @@ node scripts/list-models.mjs --json   # { models, ladder }
 | `softBodyBytes` | unset (4096) | 超过该字节数会在 notes[] 带体积提示；0 表示每次都告警；GUI 可改。 |
 | `minConfidence` | unset (0.25) | confidence 低于该值（或缺失）的 choice/score 项会被点名；0 关闭；GUI 可改。 |
 | `maxChoiceOptions` | unset (255) | choice 选项数上限；GUI 可改。 |
-| `escalationMaxAttempts` | 3 | 升档尝试次数上限；GUI 可改。 |
+| `escalationMaxAttempts` | 3 | 额外升档次数（不含首次；deep +2；留空 = 3）；GUI 可改。 |
 | `scanFirstChunkBytes` | unset (4096) | 首块字节预算；GUI 可改。 |
 | `scanMaxChunks` | unset (32) | 单次扫描的块数上限；GUI 可改。 |
 | `scanMaxTotalBytes` | unset (4 MiB) | 单次扫描的累计字节上限；GUI 可改。 |

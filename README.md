@@ -150,7 +150,7 @@ The plugin is four rows: a core row, a decision row, a monitor row and a skill r
 | `softBodyBytes` | unset (4096) | Body size above which notes[] carries a size note; 0 warns every call; GUI-editable. |
 | `minConfidence` | unset (0.25) | choice/score confidence below this (or missing) is named in notes[]; 0 disables; GUI-editable. |
 | `maxChoiceOptions` | unset (255) | Upper bound on choice options; GUI-editable. |
-| `escalationMaxAttempts` | 3 | Maximum escalation attempts; GUI-editable. |
+| `escalationMaxAttempts` | 3 | Extra escalation attempts after the first call; `deep` adds 2; blank = 3; GUI-editable. |
 | `scanFirstChunkBytes` | unset (4096) | First scan chunk byte budget; GUI-editable. |
 | `scanMaxChunks` | unset (32) | Maximum chunks per scan; GUI-editable. |
 | `scanMaxTotalBytes` | unset (4 MiB) | Cumulative byte cap per scan; GUI-editable. |

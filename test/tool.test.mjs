@@ -108,7 +108,8 @@ test('插件导出形状与默认配置（核心 + 两条工具行）', () => {
   assert.equal(defaults.toolName, 'decision');
   assert.equal(defaults.monitorToolName, 'monitor');
   assert.equal(defaults.escalationEnabled, true);
-  assert.equal(defaults.escalationMaxAttempts, 3);
+  // 这一项不写 schema 默认（否则 GUI 清空会被 inherited 盖回）；生效默认由 resolver 回落 3。
+  assert.equal(defaults.escalationMaxAttempts, undefined);
   assert.equal(defaults.defaultDepth, 'normal');
   assert.deepEqual(defaults.ladder, []);
   // 旧的双布尔开关已经删除：行开关是唯一启停机制。

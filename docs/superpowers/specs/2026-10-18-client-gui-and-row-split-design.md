@@ -346,7 +346,7 @@ RowConfigCard 的形态：
 | softBodyBytes | number | 是 | 0 = 每次告警；空 = 默认 |
 | minConfidence | number | 是 | 0 = 关闭置信度告警 |
 | maxChoiceOptions | number | 是 | choice 选项上限 |
-| escalationMaxAttempts | number | 是 | 升档尝试上限 |
+| escalationMaxAttempts | number | 是 | 额外升档次数（不含首次；deep +2；空 = 3） |
 | scanFirstChunkBytes / scanMaxChunks / scanMaxTotalBytes / scanDeadlineMs | number | 是 | 平铺在 decision 页 |
 | scanAggregate | segmented none/any | 是 | 暂定聚合策略 |
 
@@ -469,7 +469,7 @@ model 传 "auto" 等价于省略（走容量选档、允许升档），不再被
 
 ### 10.4 回归
 
-- 全量套件（当前 431 例：430 pass / 1 skip / 0 fail）全绿；test/tool.test.mjs / test/monitor-tool.test.mjs 的入口改为 test/helpers/apply-all.mjs 的测试组合器。
+- 全量套件（当前 432 例：431 pass / 1 skip / 0 fail）全绿；test/tool.test.mjs / test/monitor-tool.test.mjs 的入口改为 test/helpers/apply-all.mjs 的测试组合器。
 - npm test 全量；docs-numbers 守卫更新模块/测试计数（在提交点重新测量）。
 
 ## 11. 风险与缓解
