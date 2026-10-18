@@ -134,13 +134,18 @@ test('浏览器半：数字格式与空值语义', () => {
 
 test('浏览器半：空值仍投影出生效默认（字段下方的默认值）', () => {
   const client = loadClient();
-  const { RowConfigForm, ROWS, FIELD_DEFAULTS } = client.__internals;
+  const { RowConfigForm, ROWS, FIELD_DEFAULTS, zh, en } = client.__internals;
   const scope = fakeScope({ status: 'ready', writable: true, revision: 1, value: {}, base: {}, user: {} });
   const core = new RowConfigForm(scope, ROWS[0]);
   for (const row of ROWS) {
     for (const field of row.fields) {
       assert.ok(FIELD_DEFAULTS[field.key] && FIELD_DEFAULTS[field.key].text, 'missing default for ' + field.key);
+      assert.ok(zh[field.key + '.label'], 'missing zh label for ' + field.key);
+      assert.ok(en[field.key + '.label'], 'missing en label for ' + field.key);
     }
+  }
+  for (const group of ['connection', 'runtime', 'models', 'behavior', 'scan', 'probe']) {
+    assert.ok(zh['group.' + group] && en['group.' + group], 'missing group label ' + group);
   }
   const coreFields = core.project().fields;
   assert.equal(coreFields.find((entry) => entry.key === 'defaultModel').defaultText, 'tev1:0.8b');
