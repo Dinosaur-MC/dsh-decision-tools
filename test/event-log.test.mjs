@@ -75,6 +75,7 @@ test('attachJobEvents：监听器内部的异常被隔离，不影响订阅者�
 });
 // ── events 源：内置投影（无环形缓冲时从 ctx.jobs.list 派生）────────────────────────
 import { createSources } from '../lib/monitor.js';
+import { validateMonitorArgs } from '../lib/validate.js';
 
 const ROWS = [
   { id: 'monitor-1', kind: 'monitor', label: 'monitor file', status: 'completed', startedAt: 10, finishedAt: 20 },
@@ -167,4 +168,29 @@ test('events 无数据源时报错文案必须完整（历史 bug：行首一元
       return error.kind === 'invalid_request';
     },
   );
+});
+// ── 审查 task-35 的三条 P1 的守卫（2026-10-18）────────────────────────────
+test('monitor 只接受 noul：choice/score 当场拒绝（不是被吞成 errors=1）', () => {
+  for (const type of ['choice', 'score']) {
+    assert.throws(
+      () => validateMonitorArgs({ rubric: 'x', source: { kind: 'file', path: 'a' }, type }),
+      (e) => e.kind === 'monitor_invalid' && /noul/.test(e.message),
+      type + ' 必须当场拒绝',
+    );
+  }
+  assert.doesNotThrow(() => validateMonitorArgs({ rubric: 'x', source: { kind: 'file', path: 'a' }, type: 'noul' }));
+});
+
+test('coalesce:false 被归一保留（此前是死参数，归一后无人读）', () => {
+  const on = validateMonitorArgs({ rubric: 'x', source: { kind: 'file', path: 'a' }, background: true, notify: 'inbox' });
+  const off = validateMonitorArgs({ rubric: 'x', source: { kind: 'file', path: 'a' }, background: true, notify: 'inbox', coalesce: false });
+  assert.equal(on.coalesce, true, '缺省合并');
+  assert.equal(off.coalesce, false, 'coalesce:false 必须保留到归一结果里');
+  assert.ok(on.coalesceWindowMs > 0, '缺省窗口 > 0');
+});
+
+test('timeoutMs 超上限会被钳制并写进 clampNotes（不再静默）', () => {
+  const out = validateMonitorArgs({ rubric: 'x', source: { kind: 'file', path: 'a' }, timeoutMs: 10000000 });
+  assert.ok(out.timeoutMs < 10000000);
+  assert.ok(out.clampNotes.some((n) => /timeoutMs 被钳制/.test(n)), '钳制必须有可读说明：' + JSON.stringify(out.clampNotes));
 });
