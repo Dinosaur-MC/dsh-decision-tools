@@ -14,9 +14,9 @@ Give `material` plus exactly one mode; **giving both is an error**:
 - `rubric` + `items` + `type` — one shared rubric judges N items independently. Write the rubric **once**.
 - `questions` — M different questions on the same material: `{ name, type, instructions, criteria? }`.
 
-Ask up to 64 items/questions in ONE call. **NEVER loop one call per item** — every call re-sends all `material` (cost ≈ count × body). `type` is `choice`, `noul` or `score`. `noul` returns a NUMBER, not a boolean: 0.475 means a 47.5% chance of yes. `score` is reported on the 0..N-1 level scale, not normalised to 0-1. For `choice`/`score` write the label set **once**: top-level `criteria` in batch mode, per-question in mixed mode. `noul` takes only optional `{ false, true }` string descriptions.
+Ask up to 64 items/questions in ONE call. **NEVER loop one call per item** — every call re-sends all `material` (cost ≈ count × body). `type` is `choice`, `noul` or `score`. `noul` returns a BOOLEAN `value`, not a probability number: its P(true) is in `probabilities.true` (0.475 = 47.5% chance of yes). `score` is reported on the 0..N-1 level scale, not normalised to 0-1. For `choice`/`score` write the label set **once**: top-level `criteria` in batch mode, per-question in mixed mode. `noul` takes only optional `{ false, true }` string descriptions.
 
-Each `item` is the complete short object to judge; the plugin never infers what it refers to in `material`.
+Each `item` is the complete short string or object to judge; the plugin never infers what it refers to in `material`.
 
 Other parameters: `depth`, `model` (see §3). Invalid calls fail with a stable `kind` (`mode_invalid` for mode/count/shape problems, `invalid_request` for field-level ones, `material_*`/`source_*`/`upstream_*` for the rest) — read the message, it lists the legal values.
 

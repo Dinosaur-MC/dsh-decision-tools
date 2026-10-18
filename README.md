@@ -66,7 +66,7 @@ node scripts/list-models.mjs --json   # { models, ladder }
 
 // 3) Judge another tool's output without reading it
 { "material": { "tool": { "name": "git_bash", "arguments": { "command": "npm test" } } },
-  "rubric": "Did the test suite pass?" }
+  "rubric": "Did the test suite pass?", "items": ["the test suite output"], "type": "noul" }
 
 // 4) Wait for a background job, and get a notice on a hit
 { "source": { "kind": "job", "id": "<jobId>" },
@@ -86,7 +86,7 @@ Give `material` plus **exactly one** mode:
 |---|---|---|
 | `material` | yes | Inline string, `{file}`, `{glob}`, or `{tool}` |
 | `rubric` | batch | The one shared criterion; the wire layer repeats it for the model |
-| `items` | batch | 1–64 self-contained short objects |
+| `items` | batch | 1–64 self-contained items; plain strings are valid |
 | `questions` | mixed | 1–64 `{name, type, instructions, criteria?}` |
 | `type` | batch | `choice` / `noul` / `score` (mixed: per question) |
 | `criteria` | choice/score | Labels once: top-level in batch, per question in mixed |
@@ -97,7 +97,7 @@ Give `material` plus **exactly one** mode:
 
 **Read the result**: `results[]` (`id`, `type`, `value`, `probabilities?`, `confidence?`) · `coverage` (`requested`/`answered`/`batches`/`truncated`/`truncatedBy`/`failed`/`aborted`) · `cost` (`model`/`inputTokens`/`bodyBytes`/`wallMs`/`escalated`/`attempts`) · `notes` (first line = model-selection decision).
 
-`noul` returns a **number** (0.475 = 47.5% yes); `score` is on the 0..N-1 scale; `choice` returns the chosen label. `confidence` is concentration, **not accuracy** — when `notes` flags low-confidence items, read `probabilities` instead of the label.
+`noul` returns a **boolean** `value`; its P(true) is in `probabilities.true` (0.475 = 47.5% yes). `score` is on the 0..N-1 scale; `choice` returns the chosen label. `confidence` is concentration, **not accuracy** — when `notes` flags low-confidence items, read `probabilities` instead of the label.
 
 ## `monitor`: wait for an event
 
@@ -133,7 +133,7 @@ The plugin is four rows: a core row, a decision row, a monitor row and a skill r
 | `escalationEnabled` | true | Allow automatic escalation on context overflow; GUI-editable. |
 | `ladder` | unset (DEFAULT_LADDER) | Ordered {model,numCtx}[]; YAML only; reload the core row after editing. |
 | `toolName` | decision | Model-visible decision tool name; reload the decision row after editing. |
-| `monitorToolName` | monitor | Model-visible monitor tool name; reload the core row after editing. |
+| `monitorToolName` | monitor | Model-visible monitor tool name; reload the monitor row and the decision row after editing (both snapshot the name). |
 | `spillDirCap` | unset (16 MiB) | Byte cap for the plugin's spill directory; YAML only. |
 
 ### decision row — decision-tools-decision
@@ -141,8 +141,8 @@ The plugin is four rows: a core row, a decision row, a monitor row and a skill r
 | Key | Default | Meaning |
 |---|---|---|
 | `modelOverride` | unset (core default) | Blank uses the core defaultModel; GUI-editable. |
-| `defaultDepth` | normal | quick | normal | deep; used when the call omits depth; GUI-editable. |
-| `bodyWarning` | unset (on) | false suppresses size/text-shape notes; GUI-editable. |
+| `defaultDepth` | normal | quick / normal / deep; used when the call omits depth; GUI-editable. |
+| `bodyWarning` | true | false suppresses size/text-shape notes; GUI-editable. |
 | `softBodyBytes` | unset (4096) | Body size above which notes[] carries a size note; 0 warns every call; GUI-editable. |
 | `minConfidence` | unset (0.25) | choice/score confidence below this (or missing) is named in notes[]; 0 disables; GUI-editable. |
 | `maxChoiceOptions` | unset (255) | Upper bound on choice options; GUI-editable. |
@@ -151,7 +151,7 @@ The plugin is four rows: a core row, a decision row, a monitor row and a skill r
 | `scanMaxChunks` | unset (32) | Maximum chunks per scan; GUI-editable. |
 | `scanMaxTotalBytes` | unset (4 MiB) | Cumulative byte cap per scan; GUI-editable. |
 | `scanDeadlineMs` | unset (180000) | Wall-clock budget per scan; GUI-editable. |
-| `scanAggregate` | none | none | any; any adds a provisional cross-chunk max probability; GUI-editable. |
+| `scanAggregate` | none | none / any; any adds a provisional cross-chunk max probability; GUI-editable. |
 
 ### monitor row — decision-tools-monitor
 
@@ -213,6 +213,6 @@ After editing `lib/`, reload the plugin in DSH before drawing conclusions from r
 
 MIT — see [LICENSE](./LICENSE).
 
-## Migrating from the earlier API
+## No compatibility layer
 
-The v2 top-level keys (`state`, `answers`, `usage`, `strategy`, `aggregate`, …) are gone; `material` plus one mode replaces them. See [docs/architecture-current.md](./docs/architecture-current.md) for the as-is contract and [docs/use-cases.md](./docs/use-cases.md) for worked examples.
+This is a one-time structural upgrade, not a version transition. Old row ids (`decision-tools-tool`) and old config keys (`decisionEnabled` / `monitorEnabled`) are not accepted; use the four rows and three Config tables above. See [docs/architecture-current.md](./docs/architecture-current.md) for the as-is contract and [docs/use-cases.md](./docs/use-cases.md) for worked examples.

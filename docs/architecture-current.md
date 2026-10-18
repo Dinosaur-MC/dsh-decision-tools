@@ -1,6 +1,6 @@
 # dsh-decision-tools — 现状盘点（架构 / 功能 / 接口）
 
-> 快照时点：代码 HEAD 2026-10-18（本轮三人交叉审查修复后）· 套件 **422 例**（421 pass / 1 skip / 0 fail） · 工作树干净（本轮文档提交在其上）。已过一轮三人交叉对抗复审（task-12/13/14）与 Lead 终检、四轮修复（`3475758` / `588015d` / `5dba57d`+`2540e30` / `a0ad872`）；其后新增 Monitor 与上游委托管道（`b1485e6`→`fcc1d86`），修掉一条真机 P0（`7a3c104`，见 §6 #22），并由 task-31 给 `decision` 补了同类宿主校验守卫（`b55b942`），本文已回填。
+> 快照时点：代码 HEAD 2026-10-18（本轮三人交叉审查修复后）· 套件 **425 例**（424 pass / 1 skip / 0 fail） · 工作树干净（本轮文档提交在其上）。已过一轮三人交叉对抗复审（task-12/13/14）与 Lead 终检、四轮修复（`3475758` / `588015d` / `5dba57d`+`2540e30` / `a0ad872`）；其后新增 Monitor 与上游委托管道（`b1485e6`→`fcc1d86`），修掉一条真机 P0（`7a3c104`，见 §6 #22），并由 task-31 给 `decision` 补了同类宿主校验守卫（`b55b942`），本文已回填。
 > 本文描述 **v3 + 四行/GUI 现状**（as-is）：`decision` 工具面为 material/rubric/items/questions/type/criteria/depth/model 八键，输出统一五键；同时注册第二个模型可见工具 `monitor`。
 
 ## 0. 一句话
@@ -24,18 +24,18 @@
 | `decision-tools-skill` | `dsh-decision-tools/skill`（`lib/skill.js`） | `['skills']` | 注册随包 skill `decision-usage` |
 
 - 无运行时依赖；peer 依赖 `dsh-tools` / `dsh-skill` / `cordis` / `schemastery`（`package.json`）。
-- 打包白名单：`lib/**/*.js`、`assets/**`、`cordis.patch.yml`、两份 README、`LICENSE`、`THIRD_PARTY_NOTICES`；`npm pack --dry-run` 实测 **24 files / 120.3 kB**（unpacked 341.3 kB；`docs/`、`test/`、`smoke/` 在 git 里被跟踪但**不入包**）。
+- 打包白名单：`lib/**/*.js`、`assets/**`、`cordis.patch.yml`、两份 README、`LICENSE`、`THIRD_PARTY_NOTICES`；`npm pack --dry-run` 实测 **32 files**（大小以实跑为准；`docs/`、`test/`、`smoke/` 在 git 里被跟踪但**不入包**）。
 - 运行态通过 profile 的 `link:` symlink 指向工作区 ⇒ 磁盘代码即运行代码，**改码后要重载宿主**才生效。
 
-### 1.2 模块图（25 个模块 / 7510 行，`wc -l lib/*.js` 实测于 2026-10-18 代码态）
+### 1.2 模块图（25 个模块 / 7522 行，`wc -l lib/*.js` 实测于 2026-10-18 代码态）
 
 | 模块 | 行 | 职责 |
 |---|---|---|
 | `tool.js` | 1311 | 装配与编排中枢：decision/monitor 两条工具行共用的引擎（参数解析、分批 / depth 三档 / 内部扫描、输出五键与渲染接线）；source reader 由两条行各自创建 |
 | `monitor.js` | 988 | Monitor 内核：五类采样源适配、探测循环、按探测结果计数、前台 deadline/取消、后台作业注册与进度 |
-| `validate.js` | 900 | 校验层：LIMITS / MONITOR_LIMITS、两模式互斥、material 归一（含 file/glob 字符串简写）、depth 解析、逐题校验、criteria 归一（choice string[] / score {min,max}）、analyzeBody、validateMonitorArgs / validateUpstream |
+| `validate.js` | 905 | 校验层：LIMITS / MONITOR_LIMITS、两模式互斥、material 归一（含 file/glob 字符串简写）、depth 解析、逐题校验、criteria 归一（choice string[] / score {min,max}）、analyzeBody、validateMonitorArgs / validateUpstream |
 | `pipe.js` | 525 | 上游委托管道：runUpstream（同时带 agent 与 parent）、原始输出提取、无条件转储 spillWrite、白名单读取器、委托深度上限 |
-| `monitor-tool.js` | 580 | monitor 的模型可见面：紧凑方言参数契约、全函数 render（返回内容块数组）、注册 |
+| `monitor-tool.js` | 578 | monitor 的模型可见面：紧凑方言参数契约、全函数 render（返回内容块数组）、注册 |
 | `source.js` | 361 | 引用式材料：描述符校验、行范围切片、chunk 分块、glob 匹配器 |
 | `client.js` | 346 | HTTP 层：callSystemOne、错误分类（含溢出与 fetch blocked port 分支）、SystemOneError |
 | `escalate.js` | 328 | 阶梯、选档、单飞、容量分派 selectByCapacity、终态 describeExhausted |
@@ -51,7 +51,7 @@
 | `plan.js` | 73 | 决策表：planAction（send/scan/escalate/fail）—— depth=deep 分块的唯一入口 |
 | `deliver.js` | 43 | 通知的最后一跳：deliverNotice(agents, mode, payload, info)（followup/inject 二分、绝不 cancel、失败静默） |
 | `index.js` | 42 | 核心行入口：发布共享模型/运行时配置；裸包名承载 dsh.client 与浏览器半 |
-| `browser.js` | 570 | 浏览器半：Plugins 页三个 Configure 表单（plugins.row.config）、locale / CSS、staged save + revision fence；缺 React/primitives 时安静降级 |
+| `browser.js` | 579 | 浏览器半：Plugins 页三个 Configure 表单（plugins.row.config）、locale / CSS、staged save + revision fence；缺 React/primitives 时安静降级 |
 | `config-bus.js` | 83 | 共享活配置总线：核心行发布 baseUrl/defaultModel/timeoutMs/keepAlive/escalationEnabled/ladder/toolName/monitorToolName/spillDirCap 的句柄，工具行每次读取 |
 | `configs.js` | 52 | 三条行的 Config schema：SharedConfig / DecisionConfig / MonitorConfig（GUI 字段 .volatile()） |
 | `decision-entry.js` | 15 | decision 行入口：Config + 只注册 decision 工具 |
@@ -125,7 +125,7 @@ JSON Schema 的 `required` **只有 `material`**；模式内部必填由校验�
 | `cost` | `{model,inputTokens,bodyBytes,wallMs,escalated,attempts[]}`。`inputTokens`/`bodyBytes` = 本次调用**实际发出的全部请求**之和（含分批、deep 内部分块、失败尝试）；`attempts` 只记**选档/升档**尝试（`{model,failureKind}`，成功项 `failureKind=null`），同档内的分批/分块不逐条记 |
 | `notes` | `string[]`：**首行是选档结论**（模型选择：<model>（<原因>）），其后是体积归因、低置信点名、扫描提示 |
 
-硬切说明：v2 的 `answers`/`usage`/`state_bytes`/`body_bytes`/`body_warning`/`confidence_warning`/`source`/`escalated`/`plan`/`chunks`/`scan` 与 `strategy`/`aggregate` 参数**全部不再存在**（迁移见两份 README 的「旧→新」表）。
+硬切说明：v2 的 `answers`/`usage`/`state_bytes`/`body_bytes`/`body_warning`/`confidence_warning`/`source`/`escalated`/`plan`/`chunks`/`scan` 与 `strategy`/`aggregate` 参数**全部不再存在**；这是一次性结构升级，不保留兼容层（见两份 README 的「无兼容层」段）。
 
 ### 3.3 线格式（上游）与解耦
 
@@ -146,17 +146,19 @@ JSON Schema 的 `required` **只有 `material`**；模式内部必填由校验�
 
 **变更记录（2026-10-18）**：`questions` 数量与形态错误由默认 `invalid_request` 改为 `mode_invalid`（与 batch 模式 `items` 对齐）。这是**有意的契约变更**：依赖该 kind 的调用方需同步。
 
-### 3.4 配置接口（22 键）
+### 3.4 配置接口（25 键，按行计；modelOverride 在 decision/monitor 各一次）
 
 | 键 | 默认 | 说明 |
 |---|---|---|
 | `baseUrl` | `http://localhost:11434` | Ollama 地址 |
 | `defaultModel` | `tev1:0.8b` | 默认档 |
 | `timeoutMs` | `120000` | 单请求超时 |
-| `toolName` | `decision` | 模型看到的工具名 |
+| `toolName` | `decision` | 模型看到的 decision 工具名（注册期） |
+| `monitorToolName` | `monitor` | 模型看到的 monitor 工具名（注册期；改后重载 monitor + decision 行） |
 | `keepAlive` | 未设（服务端默认 5 min） | 透传上游（只在 wire 层出现） |
 | `softBodyBytes` | 未设 ⇒ 按窗口×0.6×语言密度算；`LIMITS.softBodyBytes`(4096) 为兜底 | 体积告警阈值 |
-| `bodyWarning` | 未设（开） | `false` 关闭体积告警 |
+| `bodyWarning` | `true` | `false` 关闭体积告警 |
+| `defaultDepth` | `normal` | 调用方省略 depth 时使用 |
 | `minConfidence` | 未设 ⇒ `LIMITS.minConfidence`(0.25) | 置信度门限 |
 | `maxChoiceOptions` | 未设 ⇒ `LIMITS.maxChoiceOptions`(255) | 选项数**宽松默认**；权威是服务端 400 |
 | `escalationEnabled` | `true` | 是否自动提升 |
@@ -170,22 +172,25 @@ JSON Schema 的 `required` **只有 `material`**；模式内部必填由校验�
 | `notifyCoalesceWindowMs` | 未设 ⇒ `MONITOR_LIMITS.defaultNotifyCoalesceWindowMs`(5000) | 同类 `monitor` 通知的合并窗口 —— inbox 自身**没有背压** |
 | `maxNotificationsPerMinute` | 未设 ⇒ `MONITOR_LIMITS.defaultMaxNotificationsPerMinute`(6) | `monitor` 通知的每分钟上限（硬上限 600） |
 | `spillDirCap` | 未设 ⇒ `DEFAULT_SPILL_MAX_BYTES`(16 MiB) | 上游委托转储目录（插件自建）的总量上限 |
+| `modelOverride` | 未设 ⇒ 核心 defaultModel | decision / monitor 各自的模型覆盖（两行各一个） |
+
+- **模型发现**：`lib/ollama.js` + `scripts/list-models.mjs` 读本机 `/api/tags` 与 `/api/show`，输出 `{models, ladder}`；`numCtx` 取**声明的** context_length（上限），实际 `num_ctx` 可能更小（本机实测 tev1 声明 262144 / 实际 8192）。`model_missing` / `model_broken` 的 hint 也指向这个脚本。
 
 ### 3.5 skill 接口
 
-`{name:'decision-usage', provider:'dsh-decision-tools', source:'bundled', rank:600, invocation:{modelInvocable:true, userInvocable:true}, resourceBase:{kind:'directory', path:<assets 目录>}}`；正文来自 `assets/decision-usage/SKILL.md`（**6758 B**，frontmatter 必须含 `description`（**可路由性硬约束**：两个工具名与主要触发词必须落在**前 200 字符**内 —— 技能目录只展示这段前缀，超出即被截断；长度 ≤400 字符）；正文覆盖**两个工具的全部功能**：`decision` 的八键/四形态/三档 depth/五键读法/confidence/错误 kind，`monitor` 的 14 个参数、五类 source（含 `command` 的 argv 规则与 `events` 的全词表）、空源短路、后台 + `job_output`、通知三件套与输出字段）。
+`{name:'decision-usage', provider:'dsh-decision-tools', source:'bundled', rank:600, invocation:{modelInvocable:true, userInvocable:true}, resourceBase:{kind:'directory', path:<assets 目录>}}`；正文来自 `assets/decision-usage/SKILL.md`（**7102 B**，frontmatter 必须含 `description`（**可路由性硬约束**：两个工具名与主要触发词必须落在**前 200 字符**内 —— 技能目录只展示这段前缀，超出即被截断；长度 ≤400 字符）；正文覆盖**两个工具的全部功能**：`decision` 的八键/四形态/三档 depth/五键读法/confidence/错误 kind，`monitor` 的 14 个参数、五类 source（含 `command` 的 argv 规则与 `events` 的全词表）、空源短路、后台 + `job_output`、通知三件套与输出字段）。
 
 **裁定变更（2026-10-18，用户指令）：Skill 必须把功能写全。** 原 2026-10-17 裁定「不在 skill 里增加 Monitor 用法段」被**取代**：skill 是模型了解本插件能力的唯一按需入口，遗漏功能等于能力未交付。现在正文同时覆盖 `decision` 与 `monitor`，预算上限由 4000 B 提到 **8000 B**（按需加载，不进每轮注入）。约束只剩一条：**参数名必须与工具面同步**（守卫 `test/parameters.test.mjs` 逐个比对 `PARAMETERS` 的键、五类 `source.kind` 与 `EVENT_TYPES` 全词表）。
 
 ### 3.6 monitor 工具面（第二个模型可见工具）
 
-`monitor` 由 `lib/monitor-tool.js` 注册（工具名取 `Config.monitorToolName`，缺省 `monitor`；**注册在 `decision` 之后** —— 注册顺序是既有事实的一部分）。它是**探测式等待原语，不是调度器**：判据由调用模型给，插件按间隔反复采样并用同一个判定内核问「事件是否已发生」。
+`monitor` 由 `lib/monitor-tool.js` 注册（工具名取 `Config.monitorToolName`，缺省 `monitor`；行序由 composition 决定，生产已无 combined apply，不再有「monitor 必须在 decision 之后注册」的实现约束）。它是**探测式等待原语，不是调度器**：判据由调用模型给，插件按间隔反复采样并用同一个判定内核问「事件是否已发生」。
 
 | 参数 | 必填 | 形状 | 说明 |
 |---|---|---|---|
 | `rubric` | **是** | `string` | **唯一**共享判据：「什么算目标事件已发生」 |
 | `source` | **是** | 对象，`kind` ∈ `job`/ `file`/ `glob`/ `command`/ `events` | 每次探测采样的对象。`job`（`id`/`select`/`jobKind`）· `file`（`path`/`startLine`/`endLine`）· `glob`（`pattern`/`limit`）· `command`（`argv`）· `events`（`types`）；**每个 kind 只接受自己那组键**，多给报 `source_invalid` |
-| `type` / `criteria` | 否 | `noul`(缺省)/`choice`/`score` + 标签集 | 单次探测判定用的题型；`criteria` 语义与 `decision` 相同 |
+| `type` / `criteria` | 否 | `noul`（唯一支持）+ 可选 `{false,true}` 描述 | 单次探测判定用的题型；命中语义要求概率，choice/score 不支持 |
 | `hitThreshold` | 否 | `number`（缺省 0.5） | 单次探测 P(true) 达到该值记**一次命中** |
 | `tailBytes` | 否 | `number`（缺省 4096，硬上限 65536） | 每次采样读取的窗口（取尾部、不劈开多字节字符） |
 | `mode` | 否 | `once`(缺省)/`continuous` | `once` 达成即返回；`continuous` 跑到 deadline |
@@ -252,13 +257,13 @@ JSON Schema 的 `required` **只有 `material`**；模式内部必填由校验�
 | `decision` | 1809 B | 3487 B（归一后投影；守卫口径的紧凑串 3465 B） | 841 B |
 | `monitor` | 1830 B | 2726 B（紧凑串 2692 B） | 1995 B（P0 修复后；修前 1878 B） |
 
-  合计 **12688 B ≈ 3810 token/轮**（英文 3.33 B/token 折算）；skill 正文 **6758 B（≤8000）**只在首次使用时到达（2026-10-18 用户要求功能写全后由 4000 提到 8000）。⇒ 常驻成本比 v2 末期（5653 B ≈ 1698 token/轮）**涨了**：省的是每次调用的请求体与计费，不是常驻。
+  合计 **13027 B ≈ 3912 token/轮**（英文 3.33 B/token 折算）；skill 正文 **6758 B（≤8000）**只在首次使用时到达（2026-10-18 用户要求功能写全后由 4000 提到 8000）。⇒ 常驻成本比 v2 末期（5653 B ≈ 1698 token/轮）**涨了**：省的是每次调用的请求体与计费，不是常驻。
 
 ## 5. 测试与门禁
 
-- 套件 `node --test --experimental-test-isolation=none "test/*.test.mjs"` = **422 例**（2026-10-18 代码态实跑核对；421 pass / 1 skip / 0 fail）= 顶层 `test(` 声明 **398** 条（`grep -c '^test('` 逐文件相加）+ 循环内生成的表驱动用例 **24** 条；共 **30** 个测试文件（`ls test/*.test.mjs | wc -l` = 30）；另有装置 `test/fake-ollama.mjs`（不匹配 `test/*.test.mjs` 这个 glob，不算例）。
+- 套件 `node --test --experimental-test-isolation=none "test/*.test.mjs"` = **425 例**（2026-10-18 代码态实跑核对；424 pass / 1 skip / 0 fail）= 顶层 `test(` 声明 **401** 条（`grep -c '^test('` 逐文件相加）+ 循环内生成的表驱动用例 **24** 条；共 **31** 个测试文件（`ls test/*.test.mjs | wc -l` = 31）；另有装置 `test/fake-ollama.mjs`（不匹配 `test/*.test.mjs` 这个 glob，不算例）。
 - **墙钟纪律（精确版）**：**不得用真实计时派生判定**（如按 deadline 计数、按耗时决定分支）。deep 的多轮重切预算用可注入时钟 + 纯函数 `scanRoundBudget` 断言（曾有一条用服务端忙等 60 ms 的用例在并行负载下抖红，已重写）。**已登记的例外**：`test/client.test.mjs` 用 `Date.now()` 做 `elapsed < 2000 ms` 的粗上限兜底、`test/escalate.test.mjs` 有一处 10 ms 等待用于让承诺沉降 —— 这两处不派生判定结果，保留并登记（见 §6 #21）。
-- 守卫：§4.9 判别性锚点、skill 锚点（十四条 v3 读法 + 词表负例）、README 配置表与 `Config` 投影一致（**22 键**，两份 README 的键集与顺序 == `Config.dict`）、注入预算上限（`decision` description ≤1900 / 参数 schema ≤3600 / skill ≤8000；`monitor` description ≤1900 / 参数 schema ≤3600）、`COMPANION_SKILL === SKILL_NAME`、缺 skill 拒服务、首次交付 skill 正文；Monitor/管道新增：**零真实墙钟**（clock/sleep/decide/deliver 全注入）、通知三件套（合并 + 限频 + 唤醒预算）、`material.tool` 双形状对齐（模型面 `{name,arguments}` ↔ 校验层 `{tool,arguments}`）、禁自递归（名单含生效的 `toolName` 与 `monitorToolName`）、模型可见文案词表（v2 参数名负例，含 `stateSource`）、**output schema 与返回值键集一致**（monitor 侧 `7a3c104`、decision 侧 `b55b942`，两边都用宿主的 `valueSchemaSpecToJsonSchema` + `validateJsonSchemaValue` 钉住）。
+- 守卫：§4.9 判别性锚点、skill 锚点（十四条 v3 读法 + 词表负例）、README 配置表与 `Config` 投影一致（**25 键，按行计**；两份 README 的三张表键集与顺序 == 三条 `Config.dict`）、注入预算上限（`decision` description ≤1900 / 参数 schema ≤3600 / skill ≤8000；`monitor` description ≤1900 / 参数 schema ≤3600）、`COMPANION_SKILL === SKILL_NAME`、缺 skill 拒服务、首次交付 skill 正文；Monitor/管道新增：**零真实墙钟**（clock/sleep/decide/deliver 全注入）、通知三件套（合并 + 限频 + 唤醒预算）、`material.tool` 双形状对齐（模型面 `{name,arguments}` ↔ 校验层 `{tool,arguments}`）、禁自递归（名单含生效的 `toolName` 与 `monitorToolName`）、模型可见文案词表（v2 参数名负例，含 `stateSource`）、**output schema 与返回值键集一致**（monitor 侧 `7a3c104`、decision 侧 `b55b942`，两边都用宿主的 `valueSchemaSpecToJsonSchema` + `validateJsonSchemaValue` 钉住）。
 - 另有：`node --check lib/*.js`、CR 字节 = 0、变异自检（累计 30+ 定点变异全杀）、隔离实例真机冒烟。
 - **装置不变量**（`cee0baa` 之后）：假服务永不交出 fetch 禁用端口；并发负载下错误分类不退化为 `unreachable`。
 - **冒烟必须真断言**（`fca5d2f`）：`smoke/live.mjs` 必须按**工具的五键形状**组装 value 再渲染，并断言「有 answers / 有 `usage.input_tokens` / 渲染文本非空占位 / 无 `undefined|NaN`」，任一不成立即**非 0 退出**并打印拿到了什么。历史教训：该脚本曾把原始回包（`{model,answers,usage}`）当五键喂 `renderAnswers` ⇒ 永远打印 `(no results returned)` 且 exit 0（假绿，见 §6 #21）。

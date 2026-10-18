@@ -11,6 +11,10 @@ function loadClient() {
   const React = { createElement: () => ({}) };
   return loaded.factory((name) => {
     if (name === 'react') return React;
+    if (name === '@deepseek-ai/dsh-client-ui-primitives') return {
+      SettingsForm: function () {}, SettingsValueField: function () {}, Checkbox: function () {},
+      Button: function () {}, SegmentedControl: function () {},
+    };
     throw new Error('unexpected require: ' + name);
   });
 }

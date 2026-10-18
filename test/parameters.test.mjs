@@ -105,7 +105,7 @@ const POINT_ANCHORS = [
   [1, '何时用：候选集已知有界，要的是概率不是文字', /routing, classification, filtering, relevance judgement and scoring/],
   [2, '何时不用：开放式生成 / 需要推理链', /Not for open-ended generation or problems needing a chain of reasoning/],
   [3, '一批多题：ONE call，绝不逐题循环', /in ONE call[\s\S]*Never loop one call per item/],
-  [4, 'noul 返回数值不是布尔，含 0.475 例子', /`noul` returns a NUMBER, not a boolean[\s\S]*0\.475[\s\S]*47\.5% chance of yes/],
+  [4, 'noul 返回布尔 value，P(true) 含 0.475 例子', /`noul` returns a BOOLEAN[\s\S]*probabilities\.true[\s\S]*0\.475[\s\S]*47\.5% chance of yes/],
   [5, 'confidence 是集中度不是正确率，低置信度读 probabilities 并升级', /\(1 - H\/ln N\); it is NOT accuracy[\s\S]*read `probabilities`[\s\S]*escalate[\s\S]*your own reasoning/],
   [6, '概率不是证据：不得当正确性证据、不得单独决定放行，需产物级证据', /PROBABILITIES, not proof[\s\S]*never let it be\s+the sole basis for a pass\/allow decision[\s\S]*artifact-level evidence[\s\S]*triage only/],
   [7, '不得决定路由、不得做 fail-open / fail-closed 判据', /must NOT decide routing[\s\S]*fail-open or fail-closed[\s\S]*deterministic rules/],

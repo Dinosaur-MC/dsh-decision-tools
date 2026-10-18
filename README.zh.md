@@ -66,7 +66,7 @@ node scripts/list-models.mjs --json   # { models, ladder }
 
 // 3) 判另一个工具的输出，而不把它读进上下文
 { "material": { "tool": { "name": "git_bash", "arguments": { "command": "npm test" } } },
-  "rubric": "Did the test suite pass?" }
+  "rubric": "Did the test suite pass?", "items": ["the test suite output"], "type": "noul" }
 
 // 4) 等后台作业结束，并让插件通知你
 { "source": { "kind": "job", "id": "<jobId>" },
@@ -86,7 +86,7 @@ node scripts/list-models.mjs --json   # { models, ladder }
 |---|---|---|
 | `material` | 是 | 内联字符串 / `{file}` / `{glob}` / `{tool}` |
 | `rubric` | 批量 | 唯一共享判据；线格式会替模型重复它 |
-| `items` | 批量 | 1–64 个自包含的短对象 |
+| `items` | 批量 | 1–64 个自包含项；直接传字符串也合法 |
 | `questions` | 混合 | 1–64 个 `{name, type, instructions, criteria?}` |
 | `type` | 批量 | `choice` / `noul` / `score`（混合模式逐题给） |
 | `criteria` | choice/score | 标签集只写一次：批量走顶层，混合走每题 |
@@ -97,7 +97,7 @@ node scripts/list-models.mjs --json   # { models, ladder }
 
 **读结果**：`results[]`（`id`/`type`/`value`/`probabilities?`/`confidence?`）· `coverage`（`requested`/`answered`/`batches`/`truncated`/`truncatedBy`/`failed`/`aborted`）· `cost`（`model`/`inputTokens`/`bodyBytes`/`wallMs`/`escalated`/`attempts`）· `notes`（首行是选档结论）。
 
-`noul` 返回**数值**（0.475 = 47.5% 是）；`score` 落在 0..N-1 尺度；`choice` 返回所选标签。`confidence` 是分布集中度，**不是正确率** —— 当 `notes` 点名低置信项时，改读 `probabilities` 而不是标签。
+`noul` 返回**布尔** `value`；P(true) 在 `probabilities.true` 里（0.475 = 47.5% 是）。`score` 落在 0..N-1 尺度；`choice` 返回所选标签。`confidence` 是分布集中度，**不是正确率** —— 当 `notes` 点名低置信项时，改读 `probabilities` 而不是标签。
 
 ## `monitor`：等一个事件
 
@@ -133,7 +133,7 @@ node scripts/list-models.mjs --json   # { models, ladder }
 | `escalationEnabled` | true | 上下文溢出时允许自动升档；GUI 可改。 |
 | `ladder` | unset (DEFAULT_LADDER) | 有序的 {model,numCtx}[]；仅 YAML；改后重载核心行。 |
 | `toolName` | decision | decision 工具的模型可见名；改后重载 decision 行。 |
-| `monitorToolName` | monitor | monitor 工具的模型可见名；改后重载核心行。 |
+| `monitorToolName` | monitor | monitor 工具的模型可见名；改后重载 monitor 行与 decision 行（两行都快照该名）。 |
 | `spillDirCap` | unset (16 MiB) | 插件转储目录的字节上限；仅 YAML。 |
 
 ### decision 行 — decision-tools-decision
@@ -141,8 +141,8 @@ node scripts/list-models.mjs --json   # { models, ladder }
 | Key | Default | Meaning |
 |---|---|---|
 | `modelOverride` | unset (core default) | 留空使用核心行的 defaultModel；GUI 可改。 |
-| `defaultDepth` | normal | quick | normal | deep；调用省略 depth 时使用；GUI 可改。 |
-| `bodyWarning` | unset (on) | false 时不再返回体积/文本形状提示；GUI 可改。 |
+| `defaultDepth` | normal | quick / normal / deep；调用省略 depth 时使用；GUI 可改。 |
+| `bodyWarning` | true | false 时不再返回体积/文本形状提示；GUI 可改。 |
 | `softBodyBytes` | unset (4096) | 超过该字节数会在 notes[] 带体积提示；0 表示每次都告警；GUI 可改。 |
 | `minConfidence` | unset (0.25) | confidence 低于该值（或缺失）的 choice/score 项会被点名；0 关闭；GUI 可改。 |
 | `maxChoiceOptions` | unset (255) | choice 选项数上限；GUI 可改。 |
@@ -151,7 +151,7 @@ node scripts/list-models.mjs --json   # { models, ladder }
 | `scanMaxChunks` | unset (32) | 单次扫描的块数上限；GUI 可改。 |
 | `scanMaxTotalBytes` | unset (4 MiB) | 单次扫描的累计字节上限；GUI 可改。 |
 | `scanDeadlineMs` | unset (180000) | 单次扫描的墙钟预算；GUI 可改。 |
-| `scanAggregate` | none | none | any；any 会给跨块答案加一个暂定的最大概率；GUI 可改。 |
+| `scanAggregate` | none | none / any；any 会给跨块答案加一个暂定的最大概率；GUI 可改。 |
 
 ### monitor 行 — decision-tools-monitor
 
@@ -213,6 +213,6 @@ node --check lib/*.js          # 语法门
 
 MIT —— 见 [LICENSE](./LICENSE)。
 
-## 从旧版迁移
+## 无兼容层
 
-v2 的顶层键（`state`、`answers`、`usage`、`strategy`、`aggregate` 等）已全部移除，改用 `material` + 一种模式。契约见 [docs/architecture-current.md](./docs/architecture-current.md)，用例见 [docs/use-cases.md](./docs/use-cases.md)。
+这是一次性结构升级，不是版本过渡。旧行 id（`decision-tools-tool`）与旧配置键（`decisionEnabled` / `monitorEnabled`）不再被接受；使用上面的四行与三张 Config 表。契约见 [docs/architecture-current.md](./docs/architecture-current.md)，用例见 [docs/use-cases.md](./docs/use-cases.md)。

@@ -78,7 +78,7 @@ const ANCHORS = [
   ['⑦ 五键读法', /`results\[\]`[\s\S]*`coverage`[\s\S]*`cost`[\s\S]*`notes\[\]`/],
   ['⑧ confidence 是集中度不是正确率', /\(1 - H\/ln N\); it is NOT accuracy/],
   ['⑨ notes 点名是「旗」不是过滤器', /FLAG, not a filter[\s\S]*NOT thereby endorsed/],
-  ['⑩ noul 是数值不是布尔', /`noul` returns a NUMBER, not a boolean[\s\S]*0\.475[\s\S]*47\.5% chance of yes/],
+  ['⑩ noul 返回布尔 value，P(true) 在 probabilities.true', /`noul` returns a BOOLEAN[\s\S]*probabilities\.true[\s\S]*0\.475[\s\S]*47\.5% chance of yes/],
   ['⑪ score 报在 0..N-1 尺度（对应 probabilities 的键）', /0\.\.N-1 level scale, not normalised/],
   ['⑫ deep 的逐块最大只是定位线索，不是文档级结论', /locator, not a document-level probability/],
   ['⑬ 硬边界：概率不是证据、不得做 fail-open / fail-closed 判据', /artifact-level evidence[\s\S]*fail-open or fail-closed[\s\S]*deterministic rules/],

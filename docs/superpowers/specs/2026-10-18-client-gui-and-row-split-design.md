@@ -50,8 +50,8 @@
 | 行 id | 包入口 | 职责 | 默认 |
 |---|---|---|---|
 | decision-tools-plugin | dsh-decision-tools（裸包名） | 核心：浏览器半、共享模型/运行时配置、插件页说明；不注册模型工具 | 开 |
-| decision-tools-decision | dsh-decision-tools/decision | 注册 decision 工具（名字取本行 toolName） | 开 |
-| decision-tools-monitor | dsh-decision-tools/monitor | 注册 monitor 工具（名字取本行 monitorToolName） | 开 |
+| decision-tools-decision | dsh-decision-tools/decision | 注册 decision 工具（名字取核心行 toolName） | 开 |
+| decision-tools-monitor | dsh-decision-tools/monitor | 注册 monitor 工具（名字取核心行 monitorToolName） | 开 |
 | decision-tools-skill | dsh-decision-tools/skill | 随包 decision-usage skill，保持独立 | 开 |
 
 ### 3.2 为什么核心行必须是裸包名
@@ -89,7 +89,8 @@ DSH 的客户端模块发现按行的 name 解析包 package.json：裸包名（
     });
 
 - baseUrl / defaultModel / timeoutMs / keepAlive / escalationEnabled 是 GUI 实时项。
-- ladder / toolName / monitorToolName / spillDirCap 是 YAML 高级或注册期项；不声明 volatile。工具行通过共享总线每次执行读取；改后重载核心行。
+- ladder / spillDirCap 是 YAML 高级项；不声明 volatile。工具行通过共享总线每次执行读取；改后重载核心行。
+- toolName / monitorToolName 是注册期项：改后重载对应的工具行；decision 的 selfToolNames 也快照 monitorToolName，故改 monitorToolName 时 decision 行一并重载。
 - 核心行 apply 只做一件事：把上述字段（含活句柄）发布到 lib/config-bus.js；不注册工具。
 
 ### 4.2 decision 行 decision-tools-decision
@@ -203,7 +204,7 @@ monitor 同理，只是没有 ladder/escalation 消费者；它的判据请求�
 
 ### 5.4 不承诺实时的项
 
-- toolName / monitorToolName：注册期值，改后重载行。
+- toolName / monitorToolName：注册期值；改 toolName 重载 decision 行，改 monitorToolName 重载 monitor 行并一并重载 decision 行。
 - ladder：核心行重载后生效（工具行每次读取，所以不需要重载工具行）。
 - 任何影响工具注册结构的字段（未来若加 prompt 段/工具开关）：注册期。
 
@@ -331,7 +332,8 @@ RowConfigCard 的形态：
 | timeoutMs | number | 是 | 正整数；空串回落默认 |
 | keepAlive | text | 是 | 30m 或秒数；空串 = 不下发该字段 |
 | escalationEnabled | boolean | 是 | 关掉后不升档 |
-| ladder | 不进表单 | 否 | YAML 高级项；核心行重载后生效 |
+| ladder | 不进表单 | 否 | YAML 高级项；空/未设 ⇒ DEFAULT_LADDER；核心行重载后生效 |
+| toolName / monitorToolName / spillDirCap | 不进表单 | 否 | 注册期/高级 YAML；改后重载对应行 |
 
 #### decision 行
 
@@ -344,9 +346,8 @@ RowConfigCard 的形态：
 | minConfidence | number | 是 | 0 = 关闭置信度告警 |
 | maxChoiceOptions | number | 是 | choice 选项上限 |
 | escalationMaxAttempts | number | 是 | 升档尝试上限 |
-| scanFirstChunkBytes / scanMaxChunks / scanMaxTotalBytes / scanDeadlineMs | number | 是 | 放在 Advanced 分组 |
+| scanFirstChunkBytes / scanMaxChunks / scanMaxTotalBytes / scanDeadlineMs | number | 是 | 平铺在 decision 页 |
 | scanAggregate | segmented none/any | 是 | 暂定聚合策略 |
-| toolName | 不进表单 | 否 | YAML；改后重载本行 |
 
 #### monitor 行
 
@@ -356,8 +357,6 @@ RowConfigCard 的形态：
 | minProbeIntervalMs | number | 是 | 探测间隔下限 |
 | notifyCoalesceWindowMs | number | 是 | 同类通知合并窗口 |
 | maxNotificationsPerMinute | number | 是 | 通知限频 |
-| spillDirCap | number | 是 | 上游转储目录总量上限 |
-| monitorToolName | 不进表单 | 否 | YAML；改后重载本行 |
 
 ### 6.7 文案、样式与降级
 
@@ -413,7 +412,7 @@ Plugins 面板 → dsh-decision-tools → 四行：
     { "file": "docs/a.md" }
     { "glob": "docs/*.md" }
 
-等价于 { file: { path: "docs/a.md" } } / { glob: { pattern: "docs/*.md" } }。在 lib/source.js 的 descriptor 归一化处处理；校验错误文案仍指向完整形态。
+等价于 { file: { path: "docs/a.md" } } / { glob: { pattern: "docs/*.md" } }。在 lib/validate.js 的 normalizeMaterial 归一化处处理；校验错误文案仍指向完整形态。
 
 ### 8.4 model: "auto"
 
@@ -469,7 +468,7 @@ model 传 "auto" 等价于省略（走容量选档、允许升档），不再被
 
 ### 10.4 回归
 
-- 全量套件（当前 422 例：421 pass / 1 skip / 0 fail）全绿；test/tool.test.mjs / test/monitor-tool.test.mjs 的入口改为 test/helpers/apply-all.mjs 的测试组合器。
+- 全量套件（当前 425 例：424 pass / 1 skip / 0 fail）全绿；test/tool.test.mjs / test/monitor-tool.test.mjs 的入口改为 test/helpers/apply-all.mjs 的测试组合器。
 - npm test 全量；docs-numbers 守卫更新模块/测试计数（在提交点重新测量）。
 
 ## 11. 风险与缓解
@@ -509,7 +508,6 @@ model 传 "auto" 等价于省略（走容量选档、允许升档），不再被
 - lib/monitor-tool.js — 适配 resolveConfig 的活读取。
 - README.md / README.zh.md — 三张配置表 + GUI 说明（无迁移段）。
 - docs/architecture-current.md — 四行结构、客户端半、模块/用例数字。
-- docs/use-cases.md — GUI 配置工作流。
 - test/tool.test.mjs / test/monitor-tool.test.mjs — 入口改测试组合器。
 - test/parameters.test.mjs / test/validate.test.mjs — 新契约。
 - test/docs-numbers.test.mjs — 数字守卫（未改断言，只更新文档数字）。
