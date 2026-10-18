@@ -122,3 +122,19 @@ test('events 源：注入的环形缓冲优先于 jobs 投影（两条路都在�
   assert.match(out.text, /from-buffer/);
   assert.ok(!/monitor-1/.test(out.text), '有缓冲时不得再走投影');
 });
+test('events 源：limit 在**类型过滤之后**生效（先截断会漏掉更早的匹配事件）', async () => {
+  const log = [
+    { type: 'job.registered', id: 'old-1' },
+    { type: 'job.output', id: 'old-1' },
+    { type: 'job.registered', id: 'old-2' },
+    { type: 'job.settled', id: 'old-2' },
+    { type: 'job.output', id: 'old-2' },
+  ];
+  const sources = createSources({}, { eventLog: log });
+  const out = await sources.read({ kind: 'events', types: ['job.registered'], limit: 1 }, {});
+  assert.equal(out.events, 1, 'limit:1 且只有 1 条匹配（末尾那条不是 registered）⇒ 必须仍取到匹配的那条');
+  assert.match(out.text, /old-2/, '取最近一条匹配（不是最早）');
+  const two = await sources.read({ kind: 'events', types: ['job.registered'], limit: 2 }, {});
+  assert.equal(two.events, 2);
+  assert.match(two.text, /old-1/);
+});
