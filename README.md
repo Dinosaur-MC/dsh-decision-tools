@@ -31,6 +31,24 @@ cordis_inspect_query(platform="host", provider="Tool", method="listTools")
 
 The companion skill `decision-usage` is registered with the tools and documents every parameter; it loads on demand.
 
+### Using a different local model
+
+The shipped defaults (`baseUrl` = `http://localhost:11434`, `defaultModel` = `tev1:0.8b`, and the four-rung `ladder`) are a **snapshot**. Any Ollama model that answers the System One endpoint works:
+
+- pin one for a call — `model: "<name>"` (disables capacity picking and escalation);
+- change the session default — `defaultModel`;
+- point at another host/port — `baseUrl`;
+- control escalation — `ladder: [{ model, numCtx }]` (see Configuration).
+
+To see what is actually installed, and get a paste-ready ladder:
+
+```
+node scripts/list-models.mjs          # name · context · parameters · size
+node scripts/list-models.mjs --json   # { models, ladder }
+```
+
+`numCtx` comes from `/api/show`'s declared context length — an upper bound; the runtime `num_ctx` can be smaller.
+
 ## Quick start
 
 ```jsonc

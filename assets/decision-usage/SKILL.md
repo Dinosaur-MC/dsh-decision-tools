@@ -33,7 +33,7 @@ A file over the cap **fails**; a glob over the total cap is **truncated** (never
 
 - `quick` — default model only; over budget it **fails**. `normal` (default) — smallest fitting model, escalates on overflow. Batching never changes `results[]`: one entry per item. `deep` — starts bigger, may chunk the material.
 
-An explicit `model` disables capacity choice and escalation. Escalation switches to a bigger-context model and stays there (`cost.escalated`) — a different base model, so thresholds calibrated for one may not carry over.
+An explicit `model` disables capacity choice and escalation. Escalation switches to a bigger-context model and stays there (`cost.escalated`) — a different base model, so thresholds calibrated for one may not carry over. Any Ollama model that answers the plugin's System One endpoint works: `model` pins one for a call, `defaultModel` changes the session default, `ladder` (`[{ model, numCtx }]`) controls escalation, and `node scripts/list-models.mjs` lists installed models with a paste-ready ladder.
 
 ## 4. Read `results`, `coverage`, `cost`, `notes`
 

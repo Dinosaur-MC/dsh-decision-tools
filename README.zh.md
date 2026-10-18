@@ -31,6 +31,24 @@ cordis_inspect_query(platform="host", provider="Tool", method="listTools")
 
 随包技能 `decision-usage` 与工具一起注册，写全了每个参数，按需加载。
 
+### 换用本机其它模型
+
+默认值（`baseUrl` = `http://localhost:11434`、`defaultModel` = `tev1:0.8b`、四条 `ladder`）都只是**快照**。任何能应答 System One 端点的 Ollama 模型都能用：
+
+- 单次指定 —— `model: "<名称>"`（同时关闭容量选择与升档）；
+- 改会话默认 —— `defaultModel`；
+- 换主机/端口 —— `baseUrl`；
+- 调升档阶梯 —— `ladder: [{ model, numCtx }]`（见 Configuration）。
+
+想知道本机实际装了哪些、并拿到可直接粘贴的 ladder：
+
+```
+node scripts/list-models.mjs          # 名称 · 上下文 · 参数量 · 大小
+node scripts/list-models.mjs --json   # { models, ladder }
+```
+
+`numCtx` 取自 `/api/show` 的**声明**上下文长度（上限），运行时 `num_ctx` 可能更小。
+
 ## 快速开始
 
 ```jsonc

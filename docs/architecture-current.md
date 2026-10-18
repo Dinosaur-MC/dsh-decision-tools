@@ -25,7 +25,7 @@
 - 打包白名单：`lib/**/*.js`、`assets/**`、`cordis.patch.yml`、两份 README、`LICENSE`、`THIRD_PARTY_NOTICES`；`npm pack --dry-run` 实测 **24 files / 120.3 kB**（unpacked 341.3 kB；`docs/`、`test/`、`smoke/` 在 git 里被跟踪但**不入包**）。
 - 运行态通过 profile 的 `link:` symlink 指向工作区 ⇒ 磁盘代码即运行代码，**改码后要重载宿主**才生效。
 
-### 1.2 模块图（19 个模块 / 6528 行，`wc -l lib/*.js` 实测于 2026-10-18 代码态）
+### 1.2 模块图（20 个模块 / 6691 行，`wc -l lib/*.js` 实测于 2026-10-18 代码态）
 
 | 模块 | 行 | 职责 |
 |---|---|---|
@@ -40,6 +40,7 @@
 | `render.js` | 193 | 把结果渲染成给模型看的文本（**零 import** 的纯函数） |
 | `notify.js` | 178 | 通知策略：合并窗、限频、唤醒预算、投递（**绝不调用 `agent.cancel`**） |
 | `parameters.js` | 173 | 模型可见参数契约（八键）+ 常驻 `TOOL_DESCRIPTION` |
+| `ollama.js` | 163 | 本地 Ollama 模型发现（`/api/tags` + `/api/show`）：名称/上下文长度/参数量；`formatLadder` 生成可粘进 `Config.ladder` 的片段 |
 | `scan.js` | 151 | 分块扫描编排、`MAX_CONCURRENCY`、聚合 `aggregateNoul` |
 | `event-log.js` | 158 | `monitor` 的 `events` 源生产者：定长环形缓冲 + 从 `ctx.jobs` 事件流映射 `job.<status>`（只读不写、故障隔离） |
 | `density.js` | 88 | **语言密度层**：CJK 占比 → 2.32 / 3.33 B per token，`softBytesFor(窗口 × 0.6 × 密度)` |
@@ -154,6 +155,8 @@ JSON Schema 的 `required` **只有 `material`**；模式内部必填由校验�
 | `maxChoiceOptions` | 未设 ⇒ `LIMITS.maxChoiceOptions`(255) | 选项数**宽松默认**；权威是服务端 400 |
 | `escalationEnabled` | `true` | 是否自动提升 |
 | `ladder` | `[]` ⇒ `DEFAULT_LADDER` | 可覆盖阶梯（`{model,numCtx}`） |
+
+- **模型发现**：`lib/ollama.js` + `scripts/list-models.mjs` 读本机 `/api/tags` 与 `/api/show`，输出 `{models, ladder}`；`numCtx` 取**声明的** context_length（上限），实际 `num_ctx` 可能更小（本机实测 tev1 声明 262144 / 实际 8192）。`model_missing` / `model_broken` 的 hint 也指向这个脚本。
 | `escalationMaxAttempts` | `3` | 提升尝试上限 |
 | `scanFirstChunkBytes` / `scanMaxChunks` / `scanMaxTotalBytes` / `scanDeadlineMs` | 未设 ⇒ `LIMITS.softBodyBytes` / `LIMITS.scanMaxChunks` / `LIMITS.scanMaxTotalBytes` / `LIMITS.scanDeadlineMs`（**注意 `LIMITS` 里没有 `scanFirstChunkBytes`，它借的是 `softBodyBytes`**） | 扫描三重预算与墙钟 |
 | `scanAggregate` | 未设 | 聚合模式（仅内部扫描路径使用） |
@@ -247,7 +250,7 @@ JSON Schema 的 `required` **只有 `material`**；模式内部必填由校验�
 
 ## 5. 测试与门禁
 
-- 套件 `node --test test/*.test.mjs` = **397 例**（2026-10-18 代码态实跑核对）= 顶层 `test(` 声明 **373** 条（`grep -c '^test('` 逐文件相加）+ 循环内生成的表驱动用例 **24** 条（§4.9 锚点 10 + skill 锚点 14）；共 **24** 个测试文件（`ls test/*.test.mjs | wc -l` = 24）；另有装置 `test/fake-ollama.mjs`（不匹配 `test/*.test.mjs` 这个 glob，不算例）。
+- 套件 `node --test test/*.test.mjs` = **403 例**（2026-10-18 代码态实跑核对）= 顶层 `test(` 声明 **379** 条（`grep -c '^test('` 逐文件相加）+ 循环内生成的表驱动用例 **24** 条（§4.9 锚点 10 + skill 锚点 14）；共 **25** 个测试文件（`ls test/*.test.mjs | wc -l` = 24）；另有装置 `test/fake-ollama.mjs`（不匹配 `test/*.test.mjs` 这个 glob，不算例）。
 - **墙钟纪律（精确版）**：**不得用真实计时派生判定**（如按 deadline 计数、按耗时决定分支）。deep 的多轮重切预算用可注入时钟 + 纯函数 `scanRoundBudget` 断言（曾有一条用服务端忙等 60 ms 的用例在并行负载下抖红，已重写）。**已登记的例外**：`test/client.test.mjs` 用 `Date.now()` 做 `elapsed < 2000 ms` 的粗上限兜底、`test/escalate.test.mjs` 有一处 10 ms 等待用于让承诺沉降 —— 这两处不派生判定结果，保留并登记（见 §6 #21）。
 - 守卫：§4.9 判别性锚点、skill 锚点（十四条 v3 读法 + 词表负例）、README 配置表与 `Config` 投影一致（**22 键**，两份 README 的键集与顺序 == `Config.dict`）、注入预算上限（`decision` description ≤1900 / 参数 schema ≤3600 / skill ≤8000；`monitor` description ≤1900 / 参数 schema ≤3600）、`COMPANION_SKILL === SKILL_NAME`、缺 skill 拒服务、首次交付 skill 正文；Monitor/管道新增：**零真实墙钟**（clock/sleep/decide/deliver 全注入）、通知三件套（合并 + 限频 + 唤醒预算）、`material.tool` 双形状对齐（模型面 `{name,arguments}` ↔ 校验层 `{tool,arguments}`）、禁自递归（名单含生效的 `toolName` 与 `monitorToolName`）、模型可见文案词表（v2 参数名负例，含 `stateSource`）、**output schema 与返回值键集一致**（monitor 侧 `7a3c104`、decision 侧 `b55b942`，两边都用宿主的 `valueSchemaSpecToJsonSchema` + `validateJsonSchemaValue` 钉住）。
 - 另有：`node --check lib/*.js`、CR 字节 = 0、变异自检（累计 30+ 定点变异全杀）、隔离实例真机冒烟。
