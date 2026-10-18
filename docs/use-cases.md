@@ -138,13 +138,28 @@ v3 形状 —— 判据只写一次，N 项各自只带自己的短对象：
 }
 ```
 
-### 7.2 适合 / 不适合
+### 7.2 `command` 与 `events` 两个源（真机口径）
+
+```jsonc
+// 等一条命令的输出满足判据（自己会重复执行，委托复用 decision 的委托管道）
+{ source: { kind: 'command', argv: ['pwsh', '-Command', 'Get-Content build.log -Tail 20'] },
+  rubric: '输出里是否出现 BUILD SUCCEEDED？', intervalMs: 5000, timeoutMs: 120000 }
+
+// 等某个作业失败（读的是「此刻的作业状态投影」，不是历史事件流）
+{ source: { kind: 'events', types: ['job.failed'] }, rubric: '是否已有作业处于 failed？',
+  mode: 'continuous', countThreshold: 1, timeoutMs: 600000 }
+```
+
+- `command`：`argv[0]` 是解释器（`pwsh` / `git_bash|bash|sh`），其余按空格拼成命令文本；**带空格的参数要自己加引号**（`['bash','-lc','echo "a b"']`）。解释器自己的前导标志会被剥掉。
+- `events`：优先用装配层注入的环形缓冲；没有缓冲时退到 `ctx.jobs.list(sessionId)` 的**当前状态投影** ⇒ 只反映此刻，`job.failed` 表示「现在有作业是 failed」。空样本判 P=0（不调模型），没有数据源当场 `invalid_request`。
+
+### 7.3 适合 / 不适合
 
 - **适合**：判据现在就能写清、事件由外部过程产生、你只想知道「发生了没有」。
 - **不适合**：需要跨多轮推理的复杂目标；候选要边想边发现的开放问题；以及**想让它替你做动作** —— 它只通知。
 - **全程不阻断**：`hit` 只进返回值与通知，绝不进任何 pass / allow / deny 判定。
 
-### 7.3 反场景与硬边界
+### 7.4 反场景与硬边界
 
 | 不要做 | 理由 |
 |---|---|

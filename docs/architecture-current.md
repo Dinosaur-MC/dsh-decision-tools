@@ -179,6 +179,8 @@ JSON Schema 的 `required` **只有 `material`**；模式内部必填由校验�
 - **返回形状**：后台分支 `{background:true, mode, source, jobId, clampNotes, notes}`；前台分支另含 `{hit, count, countThreshold, at, atIso, firstAt, lastAt, elapsedMs, samples, hitSamples, level, probability, confidence, evidence, intervalMs, timeoutMs, aborted, timedOut, errors, cost, coverage}`。`evidence` 是命中那次采样的**有界尾部**（`EVIDENCE_MAX_BYTES` = 1024 B）；采样正文不落盘。
 - **通知**：目标空闲走 `followup`（唤醒）、忙走 `inject`（静默），**合并 + 限频 + 唤醒预算**三件套同时存在；**绝不调用 `agent.cancel`**（实测它会清空整个 inbox）。
 - **file/glob 采样走注入的 `deps.read`**（与 `decision` 同一个 reader）⇒ `monitor-tool.js` 内**没有第二份**文件/glob 读取实现；缺 reader 是**装配错误**，当场报可行动错误，而不是等 deadline 后说「没命中」。
+- **`command` 源（真机口径）**：`argv[0]` 选解释器（`pwsh`/`powershell`、`git_bash`/`bash`/`sh`），其余项**按空格拼成命令文本**；解释器自己的前导标志（`-c`/`-lc`/`-Command`/`-NoProfile`/`-ExecutionPolicy`…）会被剥掉，**判定标志不能限长度**（`-lc` 剥得掉而 `-Command` 剥不掉会静默变成低概率）。⇒ **带空格的参数要由调用方自己加引号**（`['bash','-lc','echo "a b"']`），argv 不承诺 shell 级引用解析。委托复用既有 `runUpstream`（整份 `exec`：`agent`+`parent token`），模块自己**绝不 spawn**。
+- **`events` 源（真机口径）**：数据源优先级 = `deps.eventLog`（装配层环形缓冲）→ `ctx.monitorEventLog` → **`ctx.jobs.list(sessionId)` 的当前状态投影**（每个作业一条 `{type:'job.<status>', id, kind, label, status, startedAt?, finishedAt?}`，`status` ∈ `running`/`stopping`/`completed`/`failed`/`killed`）。投影只反映**此刻**、不保留历史（`types:['job.failed']` 即「现在有作业处于 failed」）。**不用 `jobs.events.subscribe`**：真机实测插件 ctx 上两种 filter 都只注册成功、一条事件都收不到（onFirstEvent 探针确认）。三条都不可用 ⇒ `invalid_request`；空样本 ⇒ 判 P=0 且**不调模型**（不把「没有事件」伪装成错误）。
 - **`output.render` 是全函数**：返回**内容块数组** `[{type:'text',text}]`（宿主拿它直接做 `content.some(block => block.type === 'image')`），任何残缺/异形 value 都退化成占位符、**绝不抛**。
 
 ### 3.7 模块导出面（public surface）
