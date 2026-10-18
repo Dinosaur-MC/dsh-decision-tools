@@ -145,13 +145,13 @@ v3 形状 —— 判据只写一次，N 项各自只带自己的短对象：
 { source: { kind: 'command', argv: ['pwsh', '-Command', 'Get-Content build.log -Tail 20'] },
   rubric: '输出里是否出现 BUILD SUCCEEDED？', intervalMs: 5000, timeoutMs: 120000 }
 
-// 等某个作业失败（读的是「此刻的作业状态投影」，不是历史事件流）
+// 等某个作业失败（有事件缓冲时读历史事件；没有缓冲时退到「此刻的状态投影」）
 { source: { kind: 'events', types: ['job.failed'] }, rubric: '是否已有作业处于 failed？',
   mode: 'continuous', countThreshold: 1, timeoutMs: 600000 }
 ```
 
 - `command`：`argv[0]` 是解释器（`pwsh` / `git_bash|bash|sh`），其余按空格拼成命令文本；**带空格的参数要自己加引号**（`['bash','-lc','echo "a b"']`）。解释器自己的前导标志会被剥掉。
-- `events`：优先用装配层注入的环形缓冲；没有缓冲时退到 `ctx.jobs.list(sessionId)` 的**当前状态投影** ⇒ 只反映此刻，`job.failed` 表示「现在有作业是 failed」。空样本判 P=0（不调模型），没有数据源当场 `invalid_request`。
+- `events`：优先用装配层注入的环形缓冲（**有历史**：`job.registered`/`job.settled`/`job.completed`/`job.failed`/`job.killed` …）；没有缓冲时退到 `ctx.jobs.list(sessionId)` 的**当前状态投影**（只反映此刻）。空样本判 P=0（不调模型），没有数据源当场 `invalid_request`。
 
 ### 7.3 适合 / 不适合
 

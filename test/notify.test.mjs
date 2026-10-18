@@ -159,7 +159,7 @@ test('消息 id 唯一且形状可直接交给 agent.followup / agent.inject', (
   assert.equal(message.id, calls[0].payload.id);
   assert.equal(message.role, 'user');
   assert.deepEqual(message.content, [{ type: 'text', text: 'body 0' }]);
-  assert.equal(message.source.kind, 'user');
+  assert.equal(message.source.kind, 'decision-monitor', 'source.kind 必须是本插件自己的名字（对齐官方 tool-jobs 的写法），不能假托用户');
   assert.equal(message.source.form, 'notice');
   assert.equal(calls[0].payload.text, 'body 0');
   assert.equal(calls[0].payload.event.text, 'body 0');

@@ -49,7 +49,7 @@ test('attachJobEvents：订阅到缓冲、返回 disposer、缺 jobs / 无 subsc
   const calls = [];
   const disposer = () => { calls.push('disposed'); };
   let listener;
-  const ctx = { jobs: { events: { subscribe: (c, filter, fn) => { listener = fn; return disposer; } } } };
+  const ctx = { jobs: { events: { subscribe: (filter, fn) => { listener = fn; return disposer; } } } };
   const log = createEventLog({ capacity: 10, now: () => 7 });
   const off = attachJobEvents(ctx, log);
   assert.equal(typeof off, 'function');
