@@ -144,7 +144,7 @@ test('浏览器半：空值仍投影出生效默认（字段下方的默认值�
       assert.ok(en[field.key + '.label'], 'missing en label for ' + field.key);
     }
   }
-  for (const key of ['modelsTitle', 'modelsHint', 'modelsFilter', 'modelsEmpty', 'modelsNoMatch', 'currentDefault', 'inOrder', 'refreshModels', 'modelsLoading', 'modelLoadFailed', 'useModel', 'addToOrder']) {
+  for (const key of ['modelsTitle', 'modelsHint', 'modelsFilter', 'modelsEmpty', 'modelsNoMatch', 'currentDefault', 'inOrder', 'modelsAddAll', 'modelsColumnModel', 'modelsColumnRole', 'modelsColumnAction', 'refreshModels', 'modelsLoading', 'modelLoadFailed', 'useModel', 'addToOrder']) {
     assert.ok(zh[key] && en[key], 'missing model picker label ' + key);
   }
   for (const group of ['connection', 'runtime', 'models', 'behavior', 'scan', 'probe']) {
