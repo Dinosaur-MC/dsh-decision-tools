@@ -34,6 +34,22 @@ export function hostNodeModulesCandidates() {
   return out;
 }
 
+/**
+ * 目标包是否需要（重新）拷贝：**版本不同就要刷新**。
+ *
+ * 只判「package.json 存在」会让 DSH 升级后静默跑旧包（审查 verifier 的缺口：hasPkg 存在即跳过）。
+ * 读不到源版本（损坏/缺字段）时返回 false（无法判断就不动它）；目标缺 package.json 视为需要。
+ * @param {string} srcDir 宿主源包目录
+ * @param {string} dstDir 工作区目标包目录
+ * @returns {boolean}
+ */
+export function needsRefresh(srcDir, dstDir) {
+  const pkgVersion = (dir) => { try { return JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).version; } catch { return undefined; } };
+  const src = pkgVersion(srcDir);
+  if (typeof src !== 'string' || src === '') return false;
+  return pkgVersion(dstDir) !== src;
+}
+
 export async function rebuild({ hostNodeModules, projectRoot } = {}) {
   const nm = hostNodeModules ?? hostNodeModulesCandidates().find((p) => { try { fs.readdirSync(p); return true; } catch { return false; } });
   if (nm === undefined) throw new Error('找不到宿主 node_modules；请在 DSH 进程内运行（app.asar 只有 DSH 的 fs 能读）。');
@@ -51,15 +67,16 @@ export async function rebuild({ hostNodeModules, projectRoot } = {}) {
     }
   };
   const hasPkg = (name) => { try { return fs.statSync(path.join(dstNm, name, 'package.json')).size > 0; } catch { return false; } };
+
   while (queue.length > 0 && seen.size < 400) {
     const spec = queue.shift();
     const name = spec.startsWith('@') ? spec.split('/').slice(0, 2).join('/') : spec.split('/')[0];
     if (seen.has(name) || BUILTIN.has(name) || name.startsWith('node:')) continue;
     seen.add(name);
     const dst = path.join(dstNm, name);
-    if (!hasPkg(name)) {
-      const src = path.join(nm, name);
-      if (!fs.existsSync(src)) continue;
+    const src = path.join(nm, name);
+    if (!fs.existsSync(src)) continue;
+    if (!hasPkg(name) || needsRefresh(src, dst)) {
       copyDir(src, dst); copied += 1;
     }
     const walk = (d) => {
