@@ -44,14 +44,16 @@ function validateRequest(request) {
   validateQuestions(request.questions, { maxChoiceOptions: request.maxChoiceOptions });
 }
 
-/** 断言被拒，并且消息里含指定模式。 */
-function expectReject(args, matcher) {
+/** 断言被拒，并且消息里含指定模式。第三个参数是 `{ kind }`（缺省 invalid_request）；
+ *  传字符串时按旧用法忽略（历史调用里有把说明文字放第三位的）。 */
+function expectReject(args, matcher, options = {}) {
+  const kind = options !== null && typeof options === 'object' && typeof options.kind === 'string' ? options.kind : 'invalid_request';
   assert.throws(() => validateRequest(args), (error) => {
     assert.ok(
       error instanceof DecisionValidationError,
       `期望 DecisionValidationError，实际得到 ${error?.name}: ${error?.message}`,
     );
-    assert.equal(error.kind, 'invalid_request');
+    assert.equal(error.kind, kind, '错误 kind 是契约的一部分');
     assert.match(error.message, matcher);
     return true;
   });
@@ -81,9 +83,10 @@ test('V10 线格式：questions 被转成「题名 → 问题对象」的映射�
 test('V1 questions 数量 1–64，且必须是数组', () => {
   const noul = (i) => ({ name: `q${i}`, type: 'noul', instructions: 'Is this English?' });
   assert.doesNotThrow(() => validateRequest(base({ questions: Array.from({ length: 64 }, (_, i) => noul(i)) })));
-  expectReject(base({ questions: Array.from({ length: 65 }, (_, i) => noul(i)) }), /questions 有 65 题/);
-  expectReject(base({ questions: [] }), /questions 有 0 题/);
-  expectReject(base({ questions: 'nope' }), /questions 必须是数组/);
+  // 数量与形态属于**模式约束** ⇒ kind=mode_invalid（与 batch 模式 items 超限同口径）。
+  expectReject(base({ questions: Array.from({ length: 65 }, (_, i) => noul(i)) }), /questions 有 65 题/, { kind: 'mode_invalid' });
+  expectReject(base({ questions: [] }), /questions 有 0 题/, { kind: 'mode_invalid' });
+  expectReject(base({ questions: 'nope' }), /questions 必须是数组/, { kind: 'mode_invalid' });
 });
 
 test('V2 问题名必须非空且唯一', () => {

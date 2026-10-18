@@ -25,13 +25,13 @@
 - 打包白名单：`lib/**/*.js`、`assets/**`、`cordis.patch.yml`、两份 README、`LICENSE`、`THIRD_PARTY_NOTICES`；`npm pack --dry-run` 实测 **24 files / 120.3 kB**（unpacked 341.3 kB；`docs/`、`test/`、`smoke/` 在 git 里被跟踪但**不入包**）。
 - 运行态通过 profile 的 `link:` symlink 指向工作区 ⇒ 磁盘代码即运行代码，**改码后要重载宿主**才生效。
 
-### 1.2 模块图（19 个模块 / 6483 行，`wc -l lib/*.js` 实测于 2026-10-18 代码态）
+### 1.2 模块图（19 个模块 / 6494 行，`wc -l lib/*.js` 实测于 2026-10-18 代码态）
 
 | 模块 | 行 | 职责 |
 |---|---|---|
 | `tool.js` | 1324 | **装配与编排中枢**：参数解析、编排（分批 / 三档 depth / 内部扫描）、输出五键与渲染接线；**注册两个工具**（`decision` 与 `monitor`）并把同一 reader 注入 monitor |
 | `monitor.js` | 988 | Monitor 内核：五类采样源适配、探测循环、按探测结果计数、前台 deadline/取消、后台作业注册与进度 |
-| `validate.js` | 826 | 校验层：`LIMITS` / `MONITOR_LIMITS`、两模式互斥、material 归一、depth 解析、逐题校验、`analyzeBody` 体积归因、`validateMonitorArgs` / `validateUpstream` |
+| `validate.js` | 837 | 校验层：`LIMITS` / `MONITOR_LIMITS`、两模式互斥、material 归一、depth 解析、逐题校验、`analyzeBody` 体积归因、`validateMonitorArgs` / `validateUpstream` |
 | `pipe.js` | 525 | 上游委托管道：`runUpstream`（**同时带 agent 与 parent**）、原始输出提取、**无条件**转储 `spillWrite`、白名单读取器、委托深度上限 |
 | `monitor-tool.js` | 580 | `monitor` 的模型可见面：紧凑方言参数契约、**全函数** render（返回内容块数组）、注册 |
 | `source.js` | 361 | 引用式材料：描述符校验、行范围切片、`chunk` 分块、glob 匹配器 |
@@ -126,6 +126,18 @@ JSON Schema 的 `required` **只有 `material`**；模式内部必填由校验�
 
 - **组装唯一产地**：`lib/wire.js` 的 `toWireRequest`（`state` = 材料 + 两换行 + 判据块；判据只出现一次、且在材料之后 —— 位置是契约，见 §8）。
 - **上游词汇仍在**：`noul`/`criteria`/`instructions` 等类型词汇在 `wire.js`（`WIRE_TYPES` 单一来源）与校验层（题型基数规则）出现，这是**业务校验的合法用词**；判据是「body 的构造只有一处」，而不是「字面上不出现上游词」。
+
+### 3.3.1 错误 kind 契约
+
+`DecisionValidationError.kind` 是**契约的一部分**（工具层与调用方按它分支，不能压成一律 `invalid_request`）。口径：
+
+- **模式约束** ⇒ `mode_invalid`：`items`/`questions` 的数量与形态（数组形状、1–64、数量上下限）、模式互斥/缺失、`criteria`/`type` 只属于 batch。
+- **字段级格式** ⇒ `invalid_request`：`name`/`type`/`instructions`/`criteria` 的内容错误（键名、值类型、空串、重名、纯数字题名）。
+- 其余按域前缀：`material_*`（冲突/非法/过大）、`source_*`（非法/缺失/空/越界）、`upstream_*`（非法/自递归/深度）、`monitor_*`（参数/请求体）、以及传输层的 `timeout`/`transport`/`http_error`/`server_error`/`bad_response`。
+
+**全部 67 处抛出点都显式给 `kind`**（不靠默认值）。守卫 `test/error-kinds.test.mjs`：扫描源码确认「缺显式 kind 的抛出点为 0」、kind 取值必须在登记清单内、且 `items`/`questions` 的数量与形态同口径。
+
+**变更记录（2026-10-18）**：`questions` 数量与形态错误由默认 `invalid_request` 改为 `mode_invalid`（与 batch 模式 `items` 对齐）。这是**有意的契约变更**：依赖该 kind 的调用方需同步。
 
 ### 3.4 配置接口（22 键）
 
