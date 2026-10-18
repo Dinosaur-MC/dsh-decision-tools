@@ -1,6 +1,6 @@
 # dsh-decision-tools — 现状盘点（架构 / 功能 / 接口）
 
-> 快照时点：代码 HEAD `b55b942`（2026-10-17）· 套件 **345/345 绿** · 工作树干净（本轮文档提交在其上）。已过一轮三人交叉对抗复审（task-12/13/14）与 Lead 终检、四轮修复（`3475758` / `588015d` / `5dba57d`+`2540e30` / `a0ad872`）；其后新增 Monitor 与上游委托管道（`b1485e6`→`fcc1d86`），修掉一条真机 P0（`7a3c104`，见 §6 #22），并由 task-31 给 `decision` 补了同类宿主校验守卫（`b55b942`），本文已回填。
+> 快照时点：代码 HEAD 2026-10-18（本轮三人交叉审查修复后）· 套件 **374/374 绿** · 工作树干净（本轮文档提交在其上）。已过一轮三人交叉对抗复审（task-12/13/14）与 Lead 终检、四轮修复（`3475758` / `588015d` / `5dba57d`+`2540e30` / `a0ad872`）；其后新增 Monitor 与上游委托管道（`b1485e6`→`fcc1d86`），修掉一条真机 P0（`7a3c104`，见 §6 #22），并由 task-31 给 `decision` 补了同类宿主校验守卫（`b55b942`），本文已回填。
 > 本文描述 **v3 现状**（as-is）：`decision` 工具面为 material/rubric/items/questions/type/criteria/depth/model 八键，输出统一五键；同时注册第二个模型可见工具 `monitor`。
 
 ## 0. 一句话
@@ -25,22 +25,23 @@
 - 打包白名单：`lib/**/*.js`、`assets/**`、`cordis.patch.yml`、两份 README、`LICENSE`、`THIRD_PARTY_NOTICES`；`npm pack --dry-run` 实测 **24 files / 120.3 kB**（unpacked 341.3 kB；`docs/`、`test/`、`smoke/` 在 git 里被跟踪但**不入包**）。
 - 运行态通过 profile 的 `link:` symlink 指向工作区 ⇒ 磁盘代码即运行代码，**改码后要重载宿主**才生效。
 
-### 1.2 模块图（17 个模块 / 5906 行，`wc -l lib/*.js` 实测于 `8bddf05`）
+### 1.2 模块图（18 个模块 / 6386 行，`wc -l lib/*.js` 实测于本轮审查修复后）
 
 | 模块 | 行 | 职责 |
 |---|---|---|
-| `tool.js` | 1207 | **装配与编排中枢**：参数解析、编排（分批 / 三档 depth / 内部扫描）、输出五键与渲染接线；**注册两个工具**（`decision` 与 `monitor`）并把同一 reader 注入 monitor |
-| `monitor.js` | 882 | Monitor 内核：五类采样源适配、探测循环、按探测结果计数、前台 deadline/取消、后台作业注册与进度 |
-| `validate.js` | 790 | 校验层：`LIMITS` / `MONITOR_LIMITS`、两模式互斥、material 归一、depth 解析、逐题校验、`analyzeBody` 体积归因、`validateMonitorArgs` / `validateUpstream` |
-| `pipe.js` | 494 | 上游委托管道：`runUpstream`（**同时带 agent 与 parent**）、原始输出提取、**无条件**转储 `spillWrite`、白名单读取器、委托深度上限 |
-| `monitor-tool.js` | 477 | `monitor` 的模型可见面：紧凑方言参数契约、**全函数** render（返回内容块数组）、注册 |
+| `tool.js` | 1338 | **装配与编排中枢**：参数解析、编排（分批 / 三档 depth / 内部扫描）、输出五键与渲染接线；**注册两个工具**（`decision` 与 `monitor`）并把同一 reader 注入 monitor |
+| `monitor.js` | 957 | Monitor 内核：五类采样源适配、探测循环、按探测结果计数、前台 deadline/取消、后台作业注册与进度 |
+| `validate.js` | 807 | 校验层：`LIMITS` / `MONITOR_LIMITS`、两模式互斥、material 归一、depth 解析、逐题校验、`analyzeBody` 体积归因、`validateMonitorArgs` / `validateUpstream` |
+| `pipe.js` | 525 | 上游委托管道：`runUpstream`（**同时带 agent 与 parent**）、原始输出提取、**无条件**转储 `spillWrite`、白名单读取器、委托深度上限 |
+| `monitor-tool.js` | 563 | `monitor` 的模型可见面：紧凑方言参数契约、**全函数** render（返回内容块数组）、注册 |
 | `source.js` | 361 | 引用式材料：描述符校验、行范围切片、`chunk` 分块、glob 匹配器 |
 | `client.js` | 346 | HTTP 层：`callSystemOne`、错误分类（含溢出与 **fetch blocked port** 分支）、`SystemOneError` |
 | `escalate.js` | 328 | 阶梯、选档、单飞、容量分派 `selectByCapacity`、终态 `describeExhausted` |
 | `render.js` | 193 | 把结果渲染成给模型看的文本（**零 import** 的纯函数） |
-| `notify.js` | 174 | 通知策略：合并窗、限频、唤醒预算、投递（**绝不调用 `agent.cancel`**） |
+| `notify.js` | 178 | 通知策略：合并窗、限频、唤醒预算、投递（**绝不调用 `agent.cancel`**） |
 | `parameters.js` | 172 | 模型可见参数契约（八键）+ 常驻 `TOOL_DESCRIPTION` |
 | `scan.js` | 151 | 分块扫描编排、`MAX_CONCURRENCY`、聚合 `aggregateNoul` |
+| `event-log.js` | 136 | `monitor` 的 `events` 源生产者：定长环形缓冲 + 从 `ctx.jobs` 事件流映射 `job.<status>`（只读不写、故障隔离） |
 | `density.js` | 88 | **语言密度层**：CJK 占比 → 2.32 / 3.33 B per token，`softBytesFor(窗口 × 0.6 × 密度)` |
 | `skill.js` | 88 | 注册随包 skill（provider、frontmatter 解析、资产定位） |
 | `wire.js` | 76 | **线格式唯一产地**：`WIRE_TYPES`、`toWireRequest`（判据写在材料之后） |
@@ -53,7 +54,7 @@
 
 1. **入口**：`execute(args, exec)`；先 `ctx.skills.get('decision-usage')`，拿不到 ⇒ 抛 `kind=skill_missing` **拒绝服务**。
 2. **模式与参数校验**：`assertModeExclusive` —— `items`（批量）与 `questions`（异质）**恰有其一**，同给即 `mode_conflict`、都不给即 `mode_missing`；`resolveDepth` 解析三档（缺省 `normal`）；逐题校验（题名唯一、题型合法、选项/档位按题型各自的 LIMITS）。
-3. **材料物化**：`normalizeMaterial` 归一**四形态**（内联字符串 / `file` / `glob` / `tool`）。前三种由 `resolveMaterial` 经 `source.js` 读盘（三道闸：描述符校验 / `ctx.fs.contains(root)` / `readBytes` 上限）：**单文件超限报错**；**glob 总量超限截断**并报 `coverage.truncated`/`truncatedBy`。第四种 `material:{tool:{name,arguments?}}` 走 `resolveUpstreamMaterial`：在**插件内**委托执行上游工具（`ctx.tools.execute`，**必须同时带 `agent` 与 `parent`**）、取**原始输出**、**无条件**转储到自建目录，并把 `material.spillPath`/`bytes`/`fullBytes`/`truncated`(/`exitCode`) 回传 —— **原始输出不被吞掉**；禁自递归（名单含生效的 `toolName` 与 `monitorToolName`）。材料一律**不进模型上下文**。
+3. **材料物化**：`normalizeMaterial` 归一**三形态**（内联字符串 / `file` / `glob`）；`tool` 由 `execute` 走 `resolveUpstreamMaterial` 旁路（不经 `normalizeMaterial`，故 `{tool,file}` 这类双给由 `execute` 显式报 `material_conflict`）。三种由 `resolveMaterial` 经 `source.js` 读盘（三道闸：描述符校验 / `ctx.fs.contains(root)` / `readBytes` 上限）：**单文件超限报错**；**glob 总量超限截断**并报 `coverage.truncated`/`truncatedBy`。第四种 `material:{tool:{name,arguments?}}` 走 `resolveUpstreamMaterial`：在**插件内**委托执行上游工具（`ctx.tools.execute`，**必须同时带 `agent` 与 `parent`**）、取**原始输出**、**无条件**转储到自建目录，并把 `material.spillPath`/`bytes`/`fullBytes`/`truncated`(/`exitCode`) 回传 —— **原始输出不被吞掉**；禁自递归（名单含生效的 `toolName` 与 `monitorToolName`）。材料一律**不进模型上下文**。
 4. **模型选择**：`selectByCapacity` —— 显式 `model` 优先 → 估算字节（`softBytesFor`，按窗口与语言密度）≤ 默认档阈值走默认档 → 否则取阶梯里容量足够的最小档 → 都不够取最大档 → 阶梯空/容量未知才用粘滞兜底。选档结论以 `notes` 首行对外可见。
 5. **线格式组装**：`wire.js` 的 `toWireRequest` 把 `material + rubric + items/questions + type + criteria + model + keepAlive` 组装成 `{model, state, questions}`：**`state` = 材料 + 两换行 + 判据块**（判据只出现一次、位于材料之后），`questions` 为对象映射（键为题名或 1-based 序号，值不含 name）。
 6. **请求与提升**：单飞闸 `createSingleFlight`（互斥，不共享结果）；命中 `context_overflow` 且未显式指定模型 ⇒ 沿阶梯逐档重试（`escalationMaxAttempts`，默认 3）；**只有容量类错误才升档**，**只有成功才写粘滞**；用尽时抛统一终态 `escalation_exhausted`（附 `attempts`）。
@@ -125,7 +126,7 @@ JSON Schema 的 `required` **只有 `material`**；模式内部必填由校验�
 - **组装唯一产地**：`lib/wire.js` 的 `toWireRequest`（`state` = 材料 + 两换行 + 判据块；判据只出现一次、且在材料之后 —— 位置是契约，见 §8）。
 - **上游词汇仍在**：`noul`/`criteria`/`instructions` 等类型词汇在 `wire.js`（`WIRE_TYPES` 单一来源）与校验层（题型基数规则）出现，这是**业务校验的合法用词**；判据是「body 的构造只有一处」，而不是「字面上不出现上游词」。
 
-### 3.4 配置接口（21 键）
+### 3.4 配置接口（22 键）
 
 | 键 | 默认 | 说明 |
 |---|---|---|
@@ -177,9 +178,9 @@ JSON Schema 的 `required` **只有 `material`**；模式内部必填由校验�
 - **计数口径**：按**探测结果**累加（电平）—— 每次判定命中就 +1，**没有去抖、没有冷却窗**。⇒ `countThreshold` 等价于「以探测为单位的持续时间」（`countThreshold × intervalMs` 量级）。`minGapMs`/`countMode`/`persistCount`/`resetCount` **不存在**，传了会**显式报错**（静默忽略会让调用方以为冷却生效了）。
 - **只记录**：`at`/`atIso`/`firstAt`/`lastAt` 是 epoch 毫秒整数，**不参与任何命中判定**。
 - **返回形状**：后台分支 `{background:true, mode, source, jobId, clampNotes, notes}`；前台分支另含 `{hit, count, countThreshold, at, atIso, firstAt, lastAt, elapsedMs, samples, hitSamples, level, probability, confidence, evidence, intervalMs, timeoutMs, aborted, timedOut, errors, cost, coverage}`。`evidence` 是命中那次采样的**有界尾部**（`EVIDENCE_MAX_BYTES` = 1024 B）；采样正文不落盘。
-- **通知（对齐宿主 `dsh-tool-jobs` 的官方范式）**：消息用 `createUserMessage` 形状 `{id, role:'user', content:[{type:'text',text}], source:{kind:'decision-monitor', form:'notice', summary}}` —— **`source.kind` 必须是本插件自己的名字**（假托 `kind:'user'` 等于把通知伪装成用户输入，且 `user` 分支本身没有 `form` 字段）；投递：目标空闲**且唤醒预算未耗尽** ⇒ `followup`（入队并唤醒），否则 ⇒ `inject`（不唤醒、下一 step 生效）；**合并 + 限频 + 唤醒预算**三件套同时存在；**绝不调用 `agent.cancel`**（实测它会清空整个 inbox）。
+- **通知（仅 `background:true`；前台传 `notify:'inbox'` 会当场报错，不再静默忽略）**（对齐宿主 `dsh-tool-jobs` 的官方范式）：消息用 `createUserMessage` 形状 `{id, role:'user', content:[{type:'text',text}], source:{kind:'decision-monitor', form:'notice', summary}}` —— **`source.kind` 必须是本插件自己的名字**（假托 `kind:'user'` 等于把通知伪装成用户输入，且 `user` 分支本身没有 `form` 字段）；投递：目标空闲**且唤醒预算未耗尽** ⇒ `followup`（入队并唤醒），否则 ⇒ `inject`（不唤醒、下一 step 生效）；**合并 + 限频 + 唤醒预算**三件套同时存在；**绝不调用 `agent.cancel`**（实测它会清空整个 inbox）。
 - **file/glob 采样走注入的 `deps.read`**（与 `decision` 同一个 reader）⇒ `monitor-tool.js` 内**没有第二份**文件/glob 读取实现；缺 reader 是**装配错误**，当场报可行动错误，而不是等 deadline 后说「没命中」。
-- **`command` 源（真机口径）**：`argv[0]` 选解释器（`pwsh`/`powershell`、`git_bash`/`bash`/`sh`），其余项**按空格拼成命令文本**；解释器自己的前导标志（`-c`/`-lc`/`-Command`/`-NoProfile`/`-ExecutionPolicy`…）会被剥掉，**判定标志不能限长度**（`-lc` 剥得掉而 `-Command` 剥不掉会静默变成低概率）。⇒ **带空格的参数要由调用方自己加引号**（`['bash','-lc','echo "a b"']`），argv 不承诺 shell 级引用解析。委托复用既有 `runUpstream`（整份 `exec`：`agent`+`parent token`），模块自己**绝不 spawn**。
+- **`command` 源（真机口径）**：`argv[0]` 选解释器（`pwsh`/`powershell`、`git_bash`/`bash`/`sh`/`zsh`），其余项**按空格拼成命令文本**；解释器自己的前导标志（`-c`/`-lc`/`-Command`/`-NoProfile`/`-ExecutionPolicy`…）会被剥掉，**判定标志不能限长度**（`-lc` 剥得掉而 `-Command` 剥不掉会静默变成低概率）。⇒ **带空格的参数要由调用方自己加引号**（`['bash','-lc','echo "a b"']`），argv 不承诺 shell 级引用解析。委托复用既有 `runUpstream`（整份 `exec`：`agent`+`parent token`），模块自己**绝不 spawn**。
 - **`events` 源（真机口径）**：数据源优先级 = `deps.eventLog`（装配层环形缓冲，**有历史**）→ `ctx.monitorEventLog` → **`ctx.jobs.list(sessionId)` 的当前状态投影**（每个作业一条 `{type:'job.<status>', …}`，只反映此刻）。缓冲由 `lib/event-log.js` 通过 **`ctx.jobs.events.subscribe({ owners: 'scope' }, listener)` 两参服务**订阅 `registered/stopping/output/progress/settled/removed` 填充，`settled` 额外派生 `job.completed`/`job.failed`/`job.killed`。
 - **⚠️ subscribe 的元数是坑**：服务层是 **`(filter, listener)` 两参**（底层 `JobEventHub` 才是三参、服务层已绑定 ctx）。照三参 `subscribe(ctx, {}, listener)` 调用会「注册成功但**永远收不到事件**」——真机用 onFirstEvent 探针确认监听器从未被调用；改为两参后 `job.registered` 立即可命中。三条数据源都不可用 ⇒ `invalid_request`；空样本 ⇒ P=0 且**不调模型**（不把「没有事件」伪装成错误）。
 - **`output.render` 是全函数**：返回**内容块数组** `[{type:'text',text}]`（宿主拿它直接做 `content.some(block => block.type === 'image')`），任何残缺/异形 value 都退化成占位符、**绝不抛**。
@@ -232,9 +233,9 @@ JSON Schema 的 `required` **只有 `material`**；模式内部必填由校验�
 
 ## 5. 测试与门禁
 
-- 套件 `node --test test/*.test.mjs` = **345 例**（`b55b942` 代码态，本文档提交时实跑核对）= 顶层 `test(` 声明 **321** 条（`grep -c '^test('` 逐文件相加）+ 循环内生成的表驱动用例 **24** 条（§4.9 锚点 10 + skill 锚点 14）；共 **18** 个测试文件（`ls test/*.test.mjs | wc -l` = 18）；另有装置 `test/fake-ollama.mjs`（不匹配 `test/*.test.mjs` 这个 glob，不算例）。
+- 套件 `node --test test/*.test.mjs` = **374 例**（本轮审查修复后实跑核对）= 顶层 `test(` 声明 **350** 条（`grep -c '^test('` 逐文件相加）+ 循环内生成的表驱动用例 **24** 条（§4.9 锚点 10 + skill 锚点 14）；共 **18** 个测试文件（`ls test/*.test.mjs | wc -l` = 18）；另有装置 `test/fake-ollama.mjs`（不匹配 `test/*.test.mjs` 这个 glob，不算例）。
 - **墙钟纪律（精确版）**：**不得用真实计时派生判定**（如按 deadline 计数、按耗时决定分支）。deep 的多轮重切预算用可注入时钟 + 纯函数 `scanRoundBudget` 断言（曾有一条用服务端忙等 60 ms 的用例在并行负载下抖红，已重写）。**已登记的例外**：`test/client.test.mjs` 用 `Date.now()` 做 `elapsed < 2000 ms` 的粗上限兜底、`test/escalate.test.mjs` 有一处 10 ms 等待用于让承诺沉降 —— 这两处不派生判定结果，保留并登记（见 §6 #21）。
-- 守卫：§4.9 判别性锚点、skill 锚点（十四条 v3 读法 + 词表负例）、README 配置表与 `Config` 投影一致（**21 键**，两份 README 的键集与顺序 == `Config.dict`）、注入预算上限（`decision` description ≤1900 / 参数 schema ≤3600 / skill ≤4000；`monitor` description ≤1900 / 参数 schema ≤3600）、`COMPANION_SKILL === SKILL_NAME`、缺 skill 拒服务、首次交付 skill 正文；Monitor/管道新增：**零真实墙钟**（clock/sleep/decide/deliver 全注入）、通知三件套（合并 + 限频 + 唤醒预算）、`material.tool` 双形状对齐（模型面 `{name,arguments}` ↔ 校验层 `{tool,arguments}`）、禁自递归（名单含生效的 `toolName` 与 `monitorToolName`）、模型可见文案词表（v2 参数名负例，含 `stateSource`）、**output schema 与返回值键集一致**（monitor 侧 `7a3c104`、decision 侧 `b55b942`，两边都用宿主的 `valueSchemaSpecToJsonSchema` + `validateJsonSchemaValue` 钉住）。
+- 守卫：§4.9 判别性锚点、skill 锚点（十四条 v3 读法 + 词表负例）、README 配置表与 `Config` 投影一致（**22 键**，两份 README 的键集与顺序 == `Config.dict`）、注入预算上限（`decision` description ≤1900 / 参数 schema ≤3600 / skill ≤4000；`monitor` description ≤1900 / 参数 schema ≤3600）、`COMPANION_SKILL === SKILL_NAME`、缺 skill 拒服务、首次交付 skill 正文；Monitor/管道新增：**零真实墙钟**（clock/sleep/decide/deliver 全注入）、通知三件套（合并 + 限频 + 唤醒预算）、`material.tool` 双形状对齐（模型面 `{name,arguments}` ↔ 校验层 `{tool,arguments}`）、禁自递归（名单含生效的 `toolName` 与 `monitorToolName`）、模型可见文案词表（v2 参数名负例，含 `stateSource`）、**output schema 与返回值键集一致**（monitor 侧 `7a3c104`、decision 侧 `b55b942`，两边都用宿主的 `valueSchemaSpecToJsonSchema` + `validateJsonSchemaValue` 钉住）。
 - 另有：`node --check lib/*.js`、CR 字节 = 0、变异自检（累计 30+ 定点变异全杀）、隔离实例真机冒烟。
 - **装置不变量**（`cee0baa` 之后）：假服务永不交出 fetch 禁用端口；并发负载下错误分类不退化为 `unreachable`。
 - **冒烟必须真断言**（`fca5d2f`）：`smoke/live.mjs` 必须按**工具的五键形状**组装 value 再渲染，并断言「有 answers / 有 `usage.input_tokens` / 渲染文本非空占位 / 无 `undefined|NaN`」，任一不成立即**非 0 退出**并打印拿到了什么。历史教训：该脚本曾把原始回包（`{model,answers,usage}`）当五键喂 `renderAnswers` ⇒ 永远打印 `(no results returned)` 且 exit 0（假绿，见 §6 #21）。

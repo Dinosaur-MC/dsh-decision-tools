@@ -124,8 +124,8 @@
 - **按探测结果计数（电平口径）**：每次判定命中就 +1。**没有去抖、没有冷却窗** —— `countThreshold: 3` 大致等于「连续三次探测都命中」（量级 `3 × intervalMs`）。`minGapMs`、`countMode`、`persistCount`、`resetCount` **不存在**，传了会被**显式拒绝**而不是静默忽略。
 - **时间戳只作记录**（`at`、`atIso`、`firstAt`、`lastAt`）—— 不参与命中判定。
 - `intervalMs` 会被抬到部署下限（`Config.minProbeIntervalMs`）；`timeoutMs` 是**自管** deadline（宿主不抢占阻塞调用），被抬到不小于 `intervalMs`。两处钳制都写进 `notes`。
-- `background: true` 注册宿主作业并立刻返回 `jobId`（之后用 `job_output` 读）。`notify: "inbox"` 在达到门槛时发通知，带合并 + 每分钟上限 + 唤醒预算 —— inbox 自身没有任何背压。
-- `source.kind` 取 `job` / `file` / `glob` / `command` / `events` 之一。`file` 与 `glob` 走**与 `decision` 同一个 reader**（工作区相对、同一道 containment 闸）；`command` 与 `events` 需要部署支持。
+- `background: true` 注册宿主作业并立刻返回 `jobId`（之后用 `job_output` 读）。`notify: "inbox"` 在达到门槛时发通知（**仅 `background: true`**；前台传它会被当场拒绝），带合并 + 每分钟上限 + 唤醒预算 —— inbox 自身没有任何背压。
+- `source.kind` 取 `job` / `file` / `glob` / `command` / `events` 之一。`file` 与 `glob` 走**与 `decision` 同一个 reader**（工作区相对、同一道 containment 闸）；`command` 走插件自己的上游管道（与 `decision` 的 `material.tool` 同一条）：`argv[0]` 选解释器（`pwsh`/`powershell`、`git_bash`/`bash`/`sh`/`zsh`），其余**按空格拼接**、解释器自身前导标志（`-c`/`-lc`/`-Command`/`-NoProfile`…）会被剥掉 —— **带空格的参数要自己加引号**。`events` 读插件的作业事件环形缓冲（`job.registered` / `job.settled` / `job.completed` / `job.failed` / `job.killed` …），没有缓冲时退到本会话**当前**作业列表。
 - **命中只通知**。它绝不 kill、重试、派发或取消任何东西 —— 那由你决定。计数只在内存：每次调用从 0 起算，宿主重启即丢。
 - **不适合**需要多轮推理、或候选要边想边发现的复杂目标 —— 它只回答你**现在就能写清**的有界问题。
 
@@ -156,6 +156,7 @@
 | `notifyCoalesceWindowMs` | 未设（用 `MONITOR_LIMITS.defaultNotifyCoalesceWindowMs`，5000） | 同类 `monitor` 通知的合并窗口 —— inbox 自身没有任何背压。 |
 | `maxNotificationsPerMinute` | 未设（用 `MONITOR_LIMITS.defaultMaxNotificationsPerMinute`，6） | `monitor` 通知的每分钟上限。 |
 | `spillDirCap` | 未设（用 `DEFAULT_SPILL_MAX_BYTES`，16 MiB） | 管道自建转储目录（系统临时区）的总字节上限。 |
+| `monitorToolName` | `monitor` | 第二个工具（`monitor`）的**模型可见名**。与其它工具重名时改它。 |
 
 `softBodyBytes` 会被**静默钳到** `LIMITS.maxBodyBytes`（65536）—— 高于该字节硬上限的阈值
 永远不可能触发；而把阈值设到模型**真实**容量（其 `num_ctx`）之上会让告警**静默失效**，

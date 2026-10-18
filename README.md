@@ -128,8 +128,10 @@ descending order.
 - **Counting is level-based**: every probe that answers a hit increments the counter. **There is no debounce and no cooldown window** — `countThreshold: 3` means roughly "hit on three probes" (order of `3 × intervalMs`). `minGapMs`, `countMode`, `persistCount` and `resetCount` do not exist and are **rejected explicitly** rather than silently ignored.
 - **Timestamps are recorded only** (`at`, `atIso`, `firstAt`, `lastAt`) — they never take part in the hit decision.
 - `intervalMs` is raised to the deployment floor (`Config.minProbeIntervalMs`); `timeoutMs` is a **self-managed** deadline (the host does not preempt a blocking call), raised to at least `intervalMs`. Both clamps are written into `notes`.
-- `background: true` registers a host job and returns a `jobId` immediately (read it later with `job_output`). `notify: "inbox"` sends a notice when the threshold is reached, with coalescing + a per-minute cap + a wake budget — the inbox has no backpressure of its own.
-- `source.kind` is one of `job` / `file` / `glob` / `command` / `events`. `file` and `glob` go through the **same reader as `decision`** (workspace-relative, same containment gate); `command` and `events` need deployment support.
+- `background: true` registers a host job and returns a `jobId` immediately (read it later with `job_output`). `notify: "inbox"` sends a notice when the threshold is reached (**`background: true` only** — a foreground call with `notify: "inbox"` is rejected), with coalescing + a per-minute cap + a wake budget — the inbox has no backpressure of its own.
+- `source.kind` is one of `job` / `file` / `glob` / `command` / `events`. `file` and `glob` go through the **same reader as `decision`** (workspace-relative, same containment gate).
+- `command` re-runs a host command through the plugin's own upstream pipe (the same one behind `decision`'s `material.tool`): `argv[0]` picks the interpreter (`pwsh`/`powershell`, `git_bash`/`bash`/`sh`/`zsh`), the rest are **joined by spaces**, and the interpreter's own leading flags (`-c`/`-lc`/`-Command`/`-NoProfile`…) are stripped — **quote any argument that contains spaces yourself** (`['bash','-lc','echo "a b"']`).
+- `events` reads the plugin's job-event ring buffer (`job.registered` / `job.settled` / `job.completed` / `job.failed` / `job.killed` / …); with no buffer available it falls back to the session's **current** job list (`types: ['job.failed']` then means “some job is failed right now”).
 - **On a hit the plugin NOTIFIES only.** It never kills, retries, dispatches or cancels anything — that stays your call. The counter lives in memory only: it starts at 0 on every call and is lost when the host restarts.
 - **Not for** goals that need multi-turn reasoning or candidates discovered while thinking — it only answers a bounded question you can already state.
 
@@ -160,6 +162,7 @@ A foreground call returns `hit` / `count` / `countThreshold`, the timestamps, a 
 | `notifyCoalesceWindowMs` | unset (uses `MONITOR_LIMITS.defaultNotifyCoalesceWindowMs`, 5000) | Window in which same-kind `monitor` notifications are coalesced — the inbox has no backpressure of its own. |
 | `maxNotificationsPerMinute` | unset (uses `MONITOR_LIMITS.defaultMaxNotificationsPerMinute`, 6) | Per-minute cap on `monitor` notifications. |
 | `spillDirCap` | unset (uses `DEFAULT_SPILL_MAX_BYTES`, 16 MiB) | Total byte cap for the pipe's own spill directory under the system temp area. |
+| `monitorToolName` | `monitor` | Model-visible name of the second tool (`monitor`). Set it if that name collides with another tool in your composition. |
 
 `softBodyBytes` is silently clamped to `LIMITS.maxBodyBytes` (65536) — a threshold above
 that byte cap could never fire — and a threshold set above the model's **real** capacity

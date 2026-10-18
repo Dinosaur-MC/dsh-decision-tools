@@ -138,3 +138,33 @@ test('events 源：limit 在**类型过滤之后**生效（先截断会漏掉更
   assert.equal(two.events, 2);
   assert.match(two.text, /old-1/);
 });
+// ── 审查 E 抓到的两处缺陷的守卫（2026-10-18）────────────────────────────────
+import { registerMonitorTool } from '../lib/monitor-tool.js';
+
+test('前台 notify:inbox 必须当场失败（不能被静默忽略）', async () => {
+  const { definition } = registerMonitorTool({ tools: { register() {} } }, {
+    deps: {
+      register: false,
+      read: async () => ({ source: { kind: 'file' }, text: 'MARKER-X' }),
+      decide: async () => ({ probability: 0.9 }),
+      notifier: { notify: () => ({ delivered: true }) },
+    },
+  });
+  await assert.rejects(
+    () => definition.execute({ rubric: 'x', source: { kind: 'file', path: 'tmp/a.txt' }, notify: 'inbox' }, {}),
+    (error) => error.kind === 'invalid_request' && /background:true/.test(error.message),
+    '前台传 notify:inbox ⇒ 必须给可行动错误；静默忽略会让调用方以为通知会来',
+  );
+});
+
+test('events 无数据源时报错文案必须完整（历史 bug：行首一元加号把后半句变成 NaN）', async () => {
+  const sources = createSources({ jobs: { list: async () => { throw new Error('boom'); } } }, { sessionId: 's1' });
+  await assert.rejects(
+    () => sources.read({ kind: 'events', types: ['job.completed'] }, {}),
+    (error) => {
+      assert.match(error.message, /deps\.eventLog/, '文案前半句要有');
+      assert.match(error.message, /jobs\.list/, '文案后半句也要有（一元加号 bug 会让它丢掉）');
+      return error.kind === 'invalid_request';
+    },
+  );
+});

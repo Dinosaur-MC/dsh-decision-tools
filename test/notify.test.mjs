@@ -128,16 +128,30 @@ test('唤醒预算：连续唤醒用尽后 followup 降级为 inject（消息仍
   assert.equal(calls.length, 3);
 });
 
-test('唤醒预算按「连续」计：目标忙的那次不唤醒，并重置连续计数', () => {
+test('唤醒预算只增不减（对齐宿主 dsh-tool-jobs 的 spentWakes）：忙闲交替不得无限唤醒', () => {
   const { deliver } = recorder();
   const t = fakeClock();
   const notifier = createNotifier({ deliver, clock: t.clock, coalesceWindowMs: 0, maxPerMinute: 100, wakeBudget: 1 });
 
-  const r1 = notifier.notify({ key: 'a', text: '1', idle: true });
-  const r2 = notifier.notify({ key: 'b', text: '2', idle: false });
-  const r3 = notifier.notify({ key: 'c', text: '3', idle: true });
-  assert.deepEqual([r1.mode, r2.mode, r3.mode], ['followup', 'inject', 'followup']);
-  assert.equal(notifier.stats().wakeDegradedCount, 0);
+  const r1 = notifier.notify({ key: 'a', text: '1', idle: true });  // 花掉唯一一次唤醒
+  const r2 = notifier.notify({ key: 'b', text: '2', idle: false }); // 忙 ⇒ inject，**不回填**预算
+  const r3 = notifier.notify({ key: 'c', text: '3', idle: true });  // 仍应为 inject（此前会重置成 followup）
+  assert.deepEqual([r1.mode, r2.mode, r3.mode], ['followup', 'inject', 'inject']);
+  assert.equal(r3.wakeDegraded, true, '预算用尽后必须降级');
+  assert.equal(notifier.stats().wakeDegradedCount, 1);
+  assert.equal(notifier.stats().wakesUsed, 1, '只花一次');
+});
+
+test('限频窗口按 RATE_WINDOW_MS：窗口内超额进 rateLimited，越过窗口后恢复', () => {
+  const { calls, deliver } = recorder();
+  const t = fakeClock();
+  const notifier = createNotifier({ deliver, clock: t.clock, coalesceWindowMs: 0, maxPerMinute: 2 });
+  for (let i = 0; i < 5; i += 1) notifier.notify({ key: 'k' + i, text: 't' + i });
+  assert.equal(calls.length, 2, '每分钟上限 2 ⇒ 同一窗口内只投 2 条');
+  assert.equal(notifier.stats().rateLimitedCount, 3);
+  t.advance(60001);
+  const after = notifier.notify({ key: 'k-after', text: 'a' });
+  assert.equal(after.delivered, true, '越过 60s 窗口后恢复投递（窗口不能被写小）');
 });
 
 test('消息 id 唯一且形状可直接交给 agent.followup / agent.inject', () => {

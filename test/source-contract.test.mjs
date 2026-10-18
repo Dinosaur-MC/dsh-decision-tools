@@ -42,17 +42,23 @@ test('参数面的每个 source 键都必须被其声明 kind 的校验白名单
   // 参数面是**各 kind 共用的联合体**：每个键用描述前缀声明自己属于哪个 kind（如 'job: …'）。
   // 这里按前缀推断适用范围 —— 既避免把 path 误测到 job 上，也强制「每个键都要标明所属 kind」。
   const problems = [];
+  const KIND = '(?:job|file|glob|command|events)';
   for (const key of keys) {
-    if (SAMPLE[key] === undefined) continue;
+    // ⚠️ 不许「没进 SAMPLE 就跳过」：verifier 证明过 `SAMPLE.limit` 一删、glob 白名单再删 limit，
+    // 全套件仍绿（新键忘补 SAMPLE 即静默放行）。缺样本一律算缺口。
+    if (SAMPLE[key] === undefined) { problems.push(key + ' ⇒ 缺 SAMPLE 样本（新键必须补样本，否则永远不会被校验）'); continue; }
     const description = String(sourceProps[key]?.description ?? '');
-    const declared = description.match(/^(job|file|glob|command|events):\s/)?.[1];
-    if (declared === undefined) { problems.push(key + ' ⇒ 描述必须以 kind 前缀开头（如 "job: …"），实际：' + description.slice(0, 40)); continue; }
-    const source = { kind: declared, ...BASE[declared], [key]: SAMPLE[key] };
-    try {
-      validateMonitorArgs({ rubric: 'x', source });
-    } catch (error) {
-      const message = String(error?.message ?? error);
-      if (message.includes('不接受 ' + key)) problems.push(declared + '.' + key + ' ⇒ ' + message.slice(0, 90));
+    const prefix = description.match(new RegExp('^(' + KIND + '(?:/' + KIND + ')*):\\s'))?.[1];
+    if (prefix === undefined) { problems.push(key + ' ⇒ 描述必须以 kind 前缀开头（如 "job: …"），实际：' + description.slice(0, 40)); continue; }
+    for (const declared of prefix.split('/')) {
+      const source = { kind: declared, ...BASE[declared], [key]: SAMPLE[key] };
+      try {
+        validateMonitorArgs({ rubric: 'x', source });
+      } catch (error) {
+        // 判红**看 kind**、不看文案字面（verifier 证明过把「不接受」改成「不支持」就能骗过旧守卫）。
+        const message = String(error?.message ?? error);
+        if (error?.kind === 'source_invalid' && message.includes(key)) problems.push(declared + '.' + key + ' ⇒ ' + message.slice(0, 90));
+      }
     }
   }
   assert.deepEqual(problems, [], '参数面声明了、校验层却拒收的键（模型照参数面传就会失败）：\n' + problems.join('\n'));

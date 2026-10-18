@@ -80,7 +80,12 @@ export async function rebuild({ hostNodeModules, projectRoot } = {}) {
   return { hostNodeModules: nm, copied, files, bytes, packages: [...seen].sort() };
 }
 
-if (import.meta.url === `file://${process.argv[1]?.replace(/\\/g, '/')}`) {
+// Windows 上 `file://F:/…` 与 `import.meta.url`（`file:///F:/…`）永不相等 ⇒ 旧判断让 CLI 静默 exit 0。
+// 用 pathToFileURL 归一化两侧（node:url）。
+const invokedDirectly = (() => {
+  try { return import.meta.url === pathToFileURL(process.argv[1]).href; } catch { return false; }
+})();
+if (invokedDirectly) {
   const r = await rebuild();
   console.log('rebuilt from', r.hostNodeModules);
   console.log('copied', r.copied, 'packages /', r.files, 'files /', (r.bytes / 1048576).toFixed(1), 'MB');
