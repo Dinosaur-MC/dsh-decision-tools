@@ -27,7 +27,7 @@
 - 打包白名单：`lib/**/*.js`、`assets/**`、`cordis.patch.yml`、两份 README、`LICENSE`、`THIRD_PARTY_NOTICES`；`npm pack --dry-run` 实测 **32 files**（大小以实跑为准；`docs/`、`test/`、`smoke/` 在 git 里被跟踪但**不入包**）。
 - 运行态通过 profile 的 `link:` symlink 指向工作区 ⇒ 磁盘代码即运行代码，**改码后要重载宿主**才生效。
 
-### 1.2 模块图（25 个模块 / 7985 行，`wc -l lib/*.js` 实测于 2026-10-18 代码态）
+### 1.2 模块图（25 个模块 / 8098 行，`wc -l lib/*.js` 实测于 2026-10-18 代码态）
 
 | 模块 | 行 | 职责 |
 |---|---|---|
@@ -42,7 +42,7 @@
 | `render.js` | 193 | 把结果渲染成给模型看的文本（零 import 的纯函数） |
 | `notify.js` | 178 | 通知策略：合并窗、限频、唤醒预算、投递（绝不调用 agent.cancel） |
 | `parameters.js` | 183 | 模型可见参数契约（八键，含 material 简写分支）+ 常驻 TOOL_DESCRIPTION |
-| `ollama.js` | 183 | 模型发现（Ollama /api/tags 或 OpenAI /v1/models + /api/show）：名称/上下文长度/参数量；支持 modelsPath 与 Bearer apiKey |
+| `ollama.js` | 198 | 模型发现（Ollama /api/tags 或 OpenAI /v1/models + /api/show）：名称/上下文长度/参数量；支持 modelsPath 与 Bearer apiKey |
 | `scan.js` | 151 | 分块扫描编排、MAX_CONCURRENCY、聚合 aggregateNoul |
 | `event-log.js` | 158 | monitor 的 events 源生产者：定长环形缓冲 + 从 ctx.jobs 事件流映射 job.<status>（只读不写、故障隔离） |
 | `density.js` | 88 | 语言密度层：CJK 占比 → 2.32 / 3.33 B per token，softBytesFor(窗口 × 0.6 × 密度) |
@@ -51,7 +51,7 @@
 | `plan.js` | 73 | 决策表：planAction（send/scan/escalate/fail）—— depth=deep 分块的唯一入口 |
 | `deliver.js` | 43 | 通知的最后一跳：deliverNotice(agents, mode, payload, info)（followup/inject 二分、绝不 cancel、失败静默） |
 | `index.js` | 75 | 核心行入口：发布共享模型/运行时配置；裸包名承载 dsh.client 与浏览器半 |
-| `browser.js` | 916 | 浏览器半：核心 bundle 卡片 + 两个工具行 Configure 表单、模型发现/顺序按钮、字段默认值、locale / CSS、staged save + revision fence；缺 primitives 用 HTML 兜底 |
+| `browser.js` | 1014 | 浏览器半：核心 bundle 卡片 + 两个工具行 Configure 表单、模型发现/顺序按钮、字段默认值、locale / CSS、staged save + revision fence；缺 primitives 用 HTML 兜底 |
 | `config-bus.js` | 133 | 共享活配置总线：核心行发布 baseUrl/defaultModel/timeoutMs/keepAlive/apiKey/modelsPath/systemOnePath/modelOrder/escalationEnabled/ladder/toolName/monitorToolName/spillDirCap 的句柄，工具行每次读取；modelOrder 重排 ladder |
 | `configs.js` | 56 | 三条行的 Config schema：SharedConfig / DecisionConfig / MonitorConfig（GUI 字段 .volatile()） |
 | `decision-entry.js` | 15 | decision 行入口：Config + 只注册 decision 工具 |
