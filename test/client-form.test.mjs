@@ -131,3 +131,29 @@ test('浏览器半：数字格式与空值语义', () => {
   assert.equal(form.project().fields.find((entry) => entry.key === 'timeoutMs').text, '');
   form.dispose();
 });
+
+test('浏览器半：空值仍投影出生效默认（字段下方的默认值）', () => {
+  const client = loadClient();
+  const { RowConfigForm, ROWS, FIELD_DEFAULTS } = client.__internals;
+  const scope = fakeScope({ status: 'ready', writable: true, revision: 1, value: {}, base: {}, user: {} });
+  const core = new RowConfigForm(scope, ROWS[0]);
+  for (const row of ROWS) {
+    for (const field of row.fields) {
+      assert.ok(FIELD_DEFAULTS[field.key] && FIELD_DEFAULTS[field.key].text, 'missing default for ' + field.key);
+    }
+  }
+  const coreFields = core.project().fields;
+  assert.equal(coreFields.find((entry) => entry.key === 'defaultModel').defaultText, 'tev1:0.8b');
+  assert.equal(coreFields.find((entry) => entry.key === 'timeoutMs').defaultText, '120000 ms');
+  assert.equal(coreFields.find((entry) => entry.key === 'escalationEnabled').checked, true);
+  const decision = new RowConfigForm(scope, ROWS.find((row) => row.rowId === 'decision-tools-decision'));
+  const decisionFields = decision.project().fields;
+  assert.equal(decisionFields.find((entry) => entry.key === 'bodyWarning').checked, true);
+  assert.equal(decisionFields.find((entry) => entry.key === 'defaultDepth').value, 'normal');
+  assert.equal(decisionFields.find((entry) => entry.key === 'softBodyBytes').defaultText, '4096 B');
+  const monitor = new RowConfigForm(scope, ROWS.find((row) => row.rowId === 'decision-tools-monitor'));
+  assert.equal(monitor.project().fields.find((entry) => entry.key === 'minProbeIntervalMs').defaultText, '1000 ms');
+  core.dispose();
+  decision.dispose();
+  monitor.dispose();
+});
