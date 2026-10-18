@@ -25,13 +25,13 @@
 - 打包白名单：`lib/**/*.js`、`assets/**`、`cordis.patch.yml`、两份 README、`LICENSE`、`THIRD_PARTY_NOTICES`；`npm pack --dry-run` 实测 **24 files / 120.3 kB**（unpacked 341.3 kB；`docs/`、`test/`、`smoke/` 在 git 里被跟踪但**不入包**）。
 - 运行态通过 profile 的 `link:` symlink 指向工作区 ⇒ 磁盘代码即运行代码，**改码后要重载宿主**才生效。
 
-### 1.2 模块图（19 个模块 / 6494 行，`wc -l lib/*.js` 实测于 2026-10-18 代码态）
+### 1.2 模块图（19 个模块 / 6528 行，`wc -l lib/*.js` 实测于 2026-10-18 代码态）
 
 | 模块 | 行 | 职责 |
 |---|---|---|
 | `tool.js` | 1324 | **装配与编排中枢**：参数解析、编排（分批 / 三档 depth / 内部扫描）、输出五键与渲染接线；**注册两个工具**（`decision` 与 `monitor`）并把同一 reader 注入 monitor |
 | `monitor.js` | 988 | Monitor 内核：五类采样源适配、探测循环、按探测结果计数、前台 deadline/取消、后台作业注册与进度 |
-| `validate.js` | 837 | 校验层：`LIMITS` / `MONITOR_LIMITS`、两模式互斥、material 归一、depth 解析、逐题校验、`analyzeBody` 体积归因、`validateMonitorArgs` / `validateUpstream` |
+| `validate.js` | 849 | 校验层：`LIMITS` / `MONITOR_LIMITS`、两模式互斥、material 归一、depth 解析、逐题校验、`analyzeBody` 体积归因、`validateMonitorArgs` / `validateUpstream` |
 | `pipe.js` | 525 | 上游委托管道：`runUpstream`（**同时带 agent 与 parent**）、原始输出提取、**无条件**转储 `spillWrite`、白名单读取器、委托深度上限 |
 | `monitor-tool.js` | 580 | `monitor` 的模型可见面：紧凑方言参数契约、**全函数** render（返回内容块数组）、注册 |
 | `source.js` | 361 | 引用式材料：描述符校验、行范围切片、`chunk` 分块、glob 匹配器 |
@@ -41,7 +41,7 @@
 | `notify.js` | 178 | 通知策略：合并窗、限频、唤醒预算、投递（**绝不调用 `agent.cancel`**） |
 | `parameters.js` | 173 | 模型可见参数契约（八键）+ 常驻 `TOOL_DESCRIPTION` |
 | `scan.js` | 151 | 分块扫描编排、`MAX_CONCURRENCY`、聚合 `aggregateNoul` |
-| `event-log.js` | 136 | `monitor` 的 `events` 源生产者：定长环形缓冲 + 从 `ctx.jobs` 事件流映射 `job.<status>`（只读不写、故障隔离） |
+| `event-log.js` | 158 | `monitor` 的 `events` 源生产者：定长环形缓冲 + 从 `ctx.jobs` 事件流映射 `job.<status>`（只读不写、故障隔离） |
 | `density.js` | 88 | **语言密度层**：CJK 占比 → 2.32 / 3.33 B per token，`softBytesFor(窗口 × 0.6 × 密度)` |
 | `skill.js` | 88 | 注册随包 skill（provider、frontmatter 解析、资产定位） |
 | `wire.js` | 76 | **线格式唯一产地**：`WIRE_TYPES`、`toWireRequest`（判据写在材料之后） |
@@ -196,7 +196,7 @@ JSON Schema 的 `required` **只有 `material`**；模式内部必填由校验�
 - **file/glob 采样走注入的 `deps.read`**（与 `decision` 同一个 reader）⇒ `monitor-tool.js` 内**没有第二份**文件/glob 读取实现；缺 reader 是**装配错误**，当场报可行动错误，而不是等 deadline 后说「没命中」。
 - **`command` 源（真机口径）**：`argv[0]` 选解释器（`pwsh`/`powershell`、`git_bash`/`bash`/`sh`/`zsh`），其余项**按空格拼成命令文本**；解释器自己的前导标志（`-c`/`-lc`/`-Command`/`-NoProfile`/`-ExecutionPolicy`…）会被剥掉，**判定标志不能限长度**（`-lc` 剥得掉而 `-Command` 剥不掉会静默变成低概率）。⇒ **带空格的参数要由调用方自己加引号**（`['bash','-lc','echo "a b"']`），argv 不承诺 shell 级引用解析。委托复用既有 `runUpstream`（整份 `exec`：`agent`+`parent token`），模块自己**绝不 spawn**。
 - **`events` 源（真机口径）**：数据源优先级 = `deps.eventLog`（装配层环形缓冲，**有历史**）→ `ctx.monitorEventLog` → **`ctx.jobs.list(sessionId)` 的当前状态投影**（每个作业一条 `{type:'job.<status>', …}`，只反映此刻）。缓冲由 `lib/event-log.js` 通过 **`ctx.jobs.events.subscribe({ owners: 'scope' }, listener)` 两参服务**订阅 `registered/stopping/output/progress/settled/removed` 填充，`settled` 额外派生 `job.completed`/`job.failed`/`job.killed`。
-- **⚠️ subscribe 的元数是坑**：服务层是 **`(filter, listener)` 两参**（底层 `JobEventHub` 才是三参、服务层已绑定 ctx）。照三参 `subscribe(ctx, {}, listener)` 调用会「注册成功但**永远收不到事件**」——真机用 onFirstEvent 探针确认监听器从未被调用；改为两参后 `job.registered` 立即可命中。三条数据源都不可用 ⇒ `invalid_request`；空样本 ⇒ P=0 且**不调模型**（不把「没有事件」伪装成错误）。
+- **⚠️ subscribe 的元数是坑**：服务层是 **`(filter, listener)` 两参**（底层 `JobEventHub` 才是三参、服务层已绑定 ctx）。照三参 `subscribe(ctx, {}, listener)` 调用会「注册成功但**永远收不到事件**」——真机用 onFirstEvent 探针确认监听器从未被调用；改为两参后 `job.registered` 立即可命中。三条数据源都不可用 ⇒ `invalid_request`；空样本 ⇒ P=0 且**不调模型**（不把「没有事件」伪装成错误）。**`types` 由 `EVENT_TYPES`（`lib/event-log.js` 单一来源）在参数阶段校验**：拼错直接 `source_invalid` 并列出合法值（`job.registered`/`stopping`/`output`/`progress`/`settled`/`completed`/`failed`/`killed`/`removed`/`running`/`unknown`）。
 - **`output.render` 是全函数**：返回**内容块数组** `[{type:'text',text}]`（宿主拿它直接做 `content.some(block => block.type === 'image')`），任何残缺/异形 value 都退化成占位符、**绝不抛**。
 
 ### 3.7 模块导出面（public surface）

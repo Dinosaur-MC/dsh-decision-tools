@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { validateQuestions } from '../lib/validate.js';
+import { validateQuestions, validateMonitorArgs } from '../lib/validate.js';
 
 const noul = (criteria) => ({ name: 'q', type: 'noul', instructions: 'x', ...(criteria === undefined ? {} : { criteria }) });
 
@@ -48,4 +48,12 @@ test('空源短路：execute 返回 samples=1、不调 decide，并在 notes 里
   assert.ok(value.notes.some((n) => /空内容/.test(n)), 'notes 必须说明短路：' + JSON.stringify(value.notes));
 
   assert.equal(value.emptyReason, undefined, '内部字段不得外泄');
+});
+test('events.types 词表：拼错在参数阶段被拒并列出合法值', () => {
+  const out = (() => { try { validateMonitorArgs({ rubric: 'x', source: { kind: 'events', types: ['job.failedd'] } }); return null; } catch (e) { return e; } })();
+  assert.ok(out, '拼错的类型必须被拒');
+  assert.equal(out.kind, 'source_invalid');
+  assert.match(out.message, /job\.failedd/);
+  assert.match(out.message, /job\.failed/, '必须列出合法值');
+  assert.doesNotThrow(() => validateMonitorArgs({ rubric: 'x', source: { kind: 'events', types: ['job.failed', 'job.completed'] } }));
 });
