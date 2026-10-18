@@ -54,7 +54,7 @@ function fakeCtx() {
   };
 }
 
-test('apply 注册三行 page + core note，并保持 key/whileServed 契约', () => {
+test('apply 注册两行 row page + core bundle page + core note', () => {
   const client = loadClient((name) => {
     if (name === 'react') return react();
     if (name === '@deepseek-ai/dsh-client-ui-primitives') return primitives();
@@ -63,21 +63,27 @@ test('apply 注册三行 page + core note，并保持 key/whileServed 契约', (
   assert.deepEqual([...client.inject], ['slots', 'locale', 'configForms']);
   const { ctx, registered, injected, served } = fakeCtx();
   client.apply(ctx);
-  const pages = registered.filter((entry) => entry.kind === 'slot' && entry.spec.name === 'plugins.row.config');
-  assert.equal(pages.length, 3);
-  assert.deepEqual(pages.map((entry) => entry.spec.key).sort(), [
+  const rowPages = registered.filter((entry) => entry.kind === 'slot' && entry.spec.name === 'plugins.row.config');
+  assert.equal(rowPages.length, 2);
+  assert.deepEqual(rowPages.map((entry) => entry.spec.key).sort(), [
     'dsh-decision-tools#decision-tools-decision',
     'dsh-decision-tools#decision-tools-monitor',
-    'dsh-decision-tools#decision-tools-plugin',
   ]);
-  for (const page of pages) {
+  const bundlePages = registered.filter((entry) => entry.kind === 'slot' && entry.spec.name === 'plugins.bundle.config');
+  assert.equal(bundlePages.length, 2);
+  assert.deepEqual(bundlePages.map((entry) => entry.spec.key).sort(), [
+    'decision-tools-plugin',
+    'dsh-decision-tools',
+  ]);
+  for (const page of rowPages.concat(bundlePages)) {
     const face = page.spec.inject();
     assert.equal(typeof face.hooks.rowForm.getSnapshot, 'function');
     assert.equal(typeof face.edit, 'function');
     assert.equal(typeof face.save, 'function');
   }
-  assert.equal(injected.filter((name) => name === 'plugins.row.config').length, 3);
-  assert.deepEqual(served.sort(), ['decision-tools-decision', 'decision-tools-monitor', 'decision-tools-plugin']);
+  assert.equal(injected.filter((name) => name === 'plugins.row.config').length, 2);
+  assert.equal(injected.filter((name) => name === 'plugins.bundle.config').length, 2);
+  assert.deepEqual(served.sort(), ['decision-tools-decision', 'decision-tools-monitor']);
   const notes = registered.filter((entry) => entry.kind === 'slot' && entry.spec.name === 'plugins.detail.section');
   assert.equal(notes.length, 1);
 });
@@ -108,7 +114,7 @@ test('缺 primitives / 单个导出：用 HTML 兜底继续注册，并 warn', (
     const client = loadClient(requireFn);
     const { ctx, registered, warnings } = fakeCtx();
     client.apply(ctx);
-    assert.equal(registered.filter((entry) => entry.kind === 'slot').length, 4, label + ' must register');
+    assert.equal(registered.filter((entry) => entry.kind === 'slot').length, 5, label + ' must register');
     assert.ok(warnings.some((message) => message.includes('HTML fallback')), label + ' must warn');
   }
 });
@@ -122,5 +128,5 @@ test('没有 ctx.effect 时仍注册，不提前 dispose form', () => {
   const { ctx, registered } = fakeCtx();
   delete ctx.effect;
   client.apply(ctx);
-  assert.equal(registered.filter((entry) => entry.kind === 'slot').length, 4);
+  assert.equal(registered.filter((entry) => entry.kind === 'slot').length, 5);
 });

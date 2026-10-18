@@ -36,7 +36,7 @@
 | .volatile() 字段在 apply(ctx, config) 里是活句柄 | **硬** | dsh-win-multi-bash/lib/index.js 注释与实测；typeof value.get === function |
 | 浏览器半由裸包名行的 package.json dsh.client + exports["./client"] 发现 | **硬** | dsh-client-modules 的 dsh.client 解析；dsh-win-multi-bash 的 win-mb-plugin 核心行注释 |
 | 行配置槽 key = 包名#行 id | **硬** | dsh-client-ui-plugin-manager 的 rowConfigKey() |
-| 行页只在对应设置命名空间被服务时出现 | **硬** | ConfigForms.whileServed(namespaces, register) |
+| 工具行页在对应设置命名空间被服务时出现；核心行用 bundle 页无条件降级 | **硬** | 工具行 ConfigForms.whileServed；核心行 plugins.bundle.config + fallback scope |
 | 表单写入是 revision-fenced 的 staged save | **硬** | ConfigFormController.mutate(ops, expectedRevision)；冲突抛 SettingsConflictError |
 | 浏览器半 import 抛错会拖垮 web boot | **硬（本机事故）** | 既有记忆与 dsh-win-multi-bash/lib/client.js 注释；必须可选 require + safely() |
 | 词典值必须是字符串 | **硬（本机实测）** | t() 内部 template.replace；函数/数字会抛 |
@@ -291,9 +291,10 @@ package.json 必须新增：
       });
     }
 
-- 不能无条件注册：行未加载时其命名空间不被服务，whileServed 保证页面只在该行活着时出现。
+- 工具行不能无条件注册：行未加载时其命名空间不被服务，whileServed 保证页面只在该行活着时出现。
+- **核心行例外**：多部署实测核心行设置命名空间不会被服务；核心表单必须无条件挂 `plugins.bundle.config`（key 同时尝试 core row id 与包名），内部用 fallback scope 显示 unavailable，而不是让整个 Configure 入口消失。
 - 槽 key 必须是「包名#行 id」；行 id 与 cordis.patch.yml 完全一致。
-- 不注册 conversation.header 等首方单槽；只碰 plugins.row.config 与 plugins.detail.section。
+- 不注册 conversation.header 等首方单槽；只碰 plugins.row.config、plugins.bundle.config（仅核心行）与 plugins.detail.section。
 
 ### 6.5 表单模型（staged save）
 
@@ -477,8 +478,8 @@ model 传 "auto" 等价于省略（走容量选档、允许升档），不再被
 |---|---|
 | volatile 活句柄被当普通值快照 | 统一 live()；test/live-config 用假句柄证明两次调用不同值 |
 | 浏览器半 import 失败导致 web boot fatal | 可选 require + 每个贡献 safely()；顶层不抛 |
-| 跨插件槽位注册导致首方插件崩溃 | 只注册 plugins.row.config / plugins.detail.section；whileServed 门控；不碰首方 single 槽 |
-| 行未加载导致页面不出现 | 预期行为；whileServed 而不是无条件注册 |
+| 跨插件槽位注册导致首方插件崩溃 | 只注册 plugins.row.config / plugins.bundle.config（核心）/ plugins.detail.section；工具行 whileServed 门控；不碰首方 single 槽 |
+| 行未加载导致页面不出现 | 工具行预期行为（whileServed）；核心行改用无条件 bundle 页 + fallback scope |
 | 核心行被关 | 工具回退默认值；插件页/README 明说 |
 | 设置服务缺失 | configForms required inject ⇒ 浏览器半不激活；host 工具不受影响 |
 | 旧 profile 覆盖失效 | 一次性切换；README 直接写新行 id，不保留旧键别名 |
@@ -516,7 +517,7 @@ model 传 "auto" 等价于省略（走容量选档、允许升档），不再被
 
 1. **host 最终结构**：新增 configs / config-bus / decision-entry / monitor-entry；lib/tool.js 拆成 applyDecision / applyMonitor；cordis.patch.yml 写四行；package.json 写 exports 与 dsh.client。
 2. **实时配置**：三条 Config 的 GUI 字段声明 .volatile()；核心行发布句柄；工具行每次 execute / 探测读取；删除 decisionEnabled / monitorEnabled。
-3. **浏览器半**：lib/browser.js 注册三个 plugins.row.config 页面；locale / CSS；staged save + revision fence；契约守卫。
+3. **浏览器半**：lib/browser.js 注册两个 plugins.row.config 页面 + 一个核心 plugins.bundle.config 页面；locale / CSS；staged save + revision fence；契约守卫。
 4. **工具接口增量**：choice string[]、score {min,max}、material 简写、model auto；文档 + 测试。
 5. **收口**：README 三张表；architecture 数字重测；use-cases；全量回归；真机验收。
 

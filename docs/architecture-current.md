@@ -27,7 +27,7 @@
 - 打包白名单：`lib/**/*.js`、`assets/**`、`cordis.patch.yml`、两份 README、`LICENSE`、`THIRD_PARTY_NOTICES`；`npm pack --dry-run` 实测 **32 files**（大小以实跑为准；`docs/`、`test/`、`smoke/` 在 git 里被跟踪但**不入包**）。
 - 运行态通过 profile 的 `link:` symlink 指向工作区 ⇒ 磁盘代码即运行代码，**改码后要重载宿主**才生效。
 
-### 1.2 模块图（25 个模块 / 7562 行，`wc -l lib/*.js` 实测于 2026-10-18 代码态）
+### 1.2 模块图（25 个模块 / 7597 行，`wc -l lib/*.js` 实测于 2026-10-18 代码态）
 
 | 模块 | 行 | 职责 |
 |---|---|---|
@@ -51,7 +51,7 @@
 | `plan.js` | 73 | 决策表：planAction（send/scan/escalate/fail）—— depth=deep 分块的唯一入口 |
 | `deliver.js` | 43 | 通知的最后一跳：deliverNotice(agents, mode, payload, info)（followup/inject 二分、绝不 cancel、失败静默） |
 | `index.js` | 42 | 核心行入口：发布共享模型/运行时配置；裸包名承载 dsh.client 与浏览器半 |
-| `browser.js` | 619 | 浏览器半：Plugins 页三个 Configure 表单（plugins.row.config）、locale / CSS、staged save + revision fence；缺 React/primitives 时安静降级 |
+| `browser.js` | 654 | 浏览器半：Plugins 页三个 Configure 表单（plugins.row.config）、locale / CSS、staged save + revision fence；缺 React/primitives 时安静降级 |
 | `config-bus.js` | 83 | 共享活配置总线：核心行发布 baseUrl/defaultModel/timeoutMs/keepAlive/escalationEnabled/ladder/toolName/monitorToolName/spillDirCap 的句柄，工具行每次读取 |
 | `configs.js` | 52 | 三条行的 Config schema：SharedConfig / DecisionConfig / MonitorConfig（GUI 字段 .volatile()） |
 | `decision-entry.js` | 15 | decision 行入口：Config + 只注册 decision 工具 |
