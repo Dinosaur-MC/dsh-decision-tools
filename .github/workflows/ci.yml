@@ -1,0 +1,24 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [22.19.0, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - name: Install test-only host peers
+        run: npm install --no-save --ignore-scripts --legacy-peer-deps @deepseek-ai/dsh-tools@0.2.1-rc.2 @deepseek-ai/schemastery@3.18.5
+      - name: Test
+        run: npm test
+      - name: Verify package contents
+        run: npm pack --dry-run

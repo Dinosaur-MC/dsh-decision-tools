@@ -23,7 +23,19 @@
 
 ## 安装
 
-开发期把工作区链进 profile，或启用已发布包，然后确认工具可见：
+npm 发布后：
+
+```sh
+dsh plugin --profile web add dsh-decision-tools
+```
+
+开发期从工作区链接：
+
+```sh
+dsh plugin --profile web add link:/absolute/path/to/dsh-decision-tools
+```
+
+然后确认工具可见：
 
 ```
 cordis_inspect_query(platform="host", provider="Tool", method="listTools")

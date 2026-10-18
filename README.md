@@ -23,7 +23,19 @@ Judgements run on **your own Ollama** (`/v1/systemone`). Nothing goes to a cloud
 
 ## Install
 
-Link the workspace into your profile (development) or enable the published bundle, then confirm the tools are visible:
+From npm, once the package is published:
+
+```sh
+dsh plugin --profile web add dsh-decision-tools
+```
+
+For development from a checkout, link it into the profile:
+
+```sh
+dsh plugin --profile web add link:/absolute/path/to/dsh-decision-tools
+```
+
+Then confirm the tools are visible:
 
 ```
 cordis_inspect_query(platform="host", provider="Tool", method="listTools")

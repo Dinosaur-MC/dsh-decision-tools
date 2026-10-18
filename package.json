@@ -2,9 +2,24 @@
   "name": "dsh-decision-tools",
   "version": "0.3.0",
   "description": "DSH agent tools for local Ollama System One decision models: classify, answer yes/no, and score against a rubric in one batched request.",
-  "keywords": ["dsh-plugin", "ollama", "decision", "system-one", "classification", "reranking"],
+  "keywords": [
+    "dsh-plugin",
+    "ollama",
+    "decision",
+    "system-one",
+    "classification",
+    "reranking"
+  ],
   "license": "MIT",
   "author": "Dinosaur_MC",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Dinosaur-MC/dsh-decision-tools.git"
+  },
+  "homepage": "https://github.com/Dinosaur-MC/dsh-decision-tools#readme",
+  "bugs": {
+    "url": "https://github.com/Dinosaur-MC/dsh-decision-tools/issues"
+  },
   "type": "module",
   "main": "lib/index.js",
   "exports": {
@@ -18,14 +33,18 @@
   "files": [
     "lib/**/*.js",
     "assets/**",
+    "docs/*.md",
+    "scripts/*.mjs",
     "cordis.patch.yml",
     "README.md",
     "README.zh.md",
+    "CHANGELOG.md",
     "LICENSE",
     "THIRD_PARTY_NOTICES"
   ],
   "engines": {
-    "node": "^22.19.0 || >=24.0.0"
+    "node": "^22.19.0 || >=24.0.0",
+    "dsh": ">=0.2.0-rc.2"
   },
   "dsh": {
     "bundle": {
@@ -33,6 +52,9 @@
     },
     "client": {
       "platform": "web"
+    },
+    "engines": {
+      "dsh": ">=0.2.0-rc.2"
     }
   },
   "scripts": {
@@ -46,9 +68,20 @@
     "@deepseek-ai/schemastery": ">=3.18.0"
   },
   "peerDependenciesMeta": {
-    "@deepseek-ai/dsh-skill": { "optional": true },
-    "@deepseek-ai/cordis": { "optional": true },
-    "@deepseek-ai/dsh-tools": { "optional": true },
-    "@deepseek-ai/schemastery": { "optional": true }
+    "@deepseek-ai/dsh-skill": {
+      "optional": true
+    },
+    "@deepseek-ai/cordis": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    },
+    "@deepseek-ai/schemastery": {
+      "optional": true
+    }
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

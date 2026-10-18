@@ -167,8 +167,6 @@ JSON Schema 的 `required` **只有 `material`**；模式内部必填由校验�
 | `maxChoiceOptions` | 未设 ⇒ `LIMITS.maxChoiceOptions`(255) | 选项数**宽松默认**；权威是服务端 400 |
 | `escalationEnabled` | `true` | 是否自动提升 |
 | `ladder` | `[]` ⇒ `DEFAULT_LADDER` | 可覆盖阶梯（`{model,numCtx}`） |
-
-- **模型发现**：`lib/ollama.js` + `scripts/list-models.mjs` 读本机 `/api/tags` 与 `/api/show`，输出 `{models, ladder}`；`numCtx` 取**声明的** context_length（上限），实际 `num_ctx` 可能更小（本机实测 tev1 声明 262144 / 实际 8192）。`model_missing` / `model_broken` 的 hint 也指向这个脚本。
 | `escalationMaxAttempts` | `3` | 额外升档次数（不含首次；deep +2；空 = 3） |
 | `scanFirstChunkBytes` / `scanMaxChunks` / `scanMaxTotalBytes` / `scanDeadlineMs` | 未设 ⇒ `LIMITS.softBodyBytes` / `LIMITS.scanMaxChunks` / `LIMITS.scanMaxTotalBytes` / `LIMITS.scanDeadlineMs`（**注意 `LIMITS` 里没有 `scanFirstChunkBytes`，它借的是 `softBodyBytes`**） | 扫描三重预算与墙钟 |
 | `scanAggregate` | 未设 | 聚合模式（仅内部扫描路径使用） |

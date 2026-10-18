@@ -4,6 +4,7 @@ dsh-decision-tools — third-party notices
 Runtime peer dependencies (provided by the DSH host, not bundled here):
 
   @deepseek-ai/cordis        — MIT
+  @deepseek-ai/dsh-skill     — MIT
   @deepseek-ai/dsh-tools     — MIT
   @deepseek-ai/schemastery   — MIT
 
