@@ -103,6 +103,8 @@ test('插件导出形状与默认配置', () => {
     escalationEnabled: true,
     escalationMaxAttempts: 3,
     ladder: [],
+    decisionEnabled: true,
+    monitorEnabled: true,
   });
 });
 

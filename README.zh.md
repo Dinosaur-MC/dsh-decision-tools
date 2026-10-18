@@ -144,6 +144,8 @@ node scripts/list-models.mjs --json   # { models, ladder }
 | `maxNotificationsPerMinute` | 未设（用 `MONITOR_LIMITS.defaultMaxNotificationsPerMinute`，6） | `monitor` 通知的每分钟上限。 |
 | `spillDirCap` | 未设（用 `DEFAULT_SPILL_MAX_BYTES`，16 MiB） | 管道自建转储目录（系统临时区）的总字节上限。 |
 | `monitorToolName` | `monitor` | 第二个工具（`monitor`）的**模型可见名**。与其它工具重名时改它。 |
+| `decisionEnabled` | `true` | 是否注册 `decision` 工具。设为 `false` 时 `monitor` 与 skill 照常工作，只是模型看不到这个工具。 |
+| `monitorEnabled` | `true` | 是否注册 `monitor` 工具。与 `decisionEnabled` 相互独立，可单独关闭任一个。 |
 
 `softBodyBytes` 会被**静默钳到** `LIMITS.maxBodyBytes`（65536）—— 高于该字节硬上限的阈值
 永远不可能触发；而把阈值设到模型**真实**容量（其 `num_ctx`）之上会让告警**静默失效**，

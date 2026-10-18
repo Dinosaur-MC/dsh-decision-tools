@@ -144,6 +144,8 @@ Parameters: `rubric` (required) · `source` (required) · `type` (`noul` only) �
 | `maxNotificationsPerMinute` | unset (uses `MONITOR_LIMITS.defaultMaxNotificationsPerMinute`, 6) | Per-minute cap on `monitor` notifications. |
 | `spillDirCap` | unset (uses `DEFAULT_SPILL_MAX_BYTES`, 16 MiB) | Total byte cap for the pipe's own spill directory under the system temp area. |
 | `monitorToolName` | `monitor` | Model-visible name of the second tool (`monitor`). Set it if that name collides with another tool in your composition. |
+| `decisionEnabled` | `true` | Register the `decision` tool. `false` leaves `monitor` and the skill working; the tool simply does not exist for the model. |
+| `monitorEnabled` | `true` | Register the `monitor` tool. Independent of `decisionEnabled`, so either tool can be switched off on its own. |
 
 `softBodyBytes` is silently clamped to `LIMITS.maxBodyBytes` (65536) — a threshold above
 that byte cap could never fire — and a threshold set above the model's **real** capacity
